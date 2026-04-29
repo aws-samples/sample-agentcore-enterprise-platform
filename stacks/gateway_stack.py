@@ -16,7 +16,7 @@ class GatewayStack(cdk.Stack):
         super().__init__(scope, id, **kwargs)
 
         prefix = f"{project_name}-{environment}"
-        gw_name = f"{project_name}_{environment}_gateway".replace("-", "_")
+        gw_name = f"{project_name}-{environment}-gateway"
 
         # Gateway IAM role
         gw_role = iam.Role(self, "GatewayRole",
