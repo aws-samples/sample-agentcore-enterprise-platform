@@ -8,26 +8,6 @@ Modular AWS CDK (Python) infrastructure for the **AgentCore Platform and Securit
 
 ![AgentCore Workshop Architecture](docs/architecture.png)
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    OBSERVABILITY LAYER                       │
-│  CloudWatch Vended Logs + X-Ray per AgentCore resource      │
-├─────────────────────────────────────────────────────────────┤
-│                      RUNTIME LAYER                          │
-│  Orchestrator (HTTP) │ Code Agent (A2A) │ Research Agent    │
-│  ECR + CodeBuild + CfnRuntime per component                │
-├─────────────────────────────────────────────────────────────┤
-│                      SERVICE LAYER                          │
-│  Gateway (MCP + CUSTOM_JWT)  │  Memory (semantic + prefs)   │
-├─────────────────────────────────────────────────────────────┤
-│                     IDENTITY LAYER                          │
-│  Auth (Cognito + Entra/Okta/Ping)  │  Identity (3LO OAuth) │
-├─────────────────────────────────────────────────────────────┤
-│                    FOUNDATION LAYER                         │
-│  Networking (VPC, optional)  │  Security (KMS, CloudTrail)  │
-└─────────────────────────────────────────────────────────────┘
-```
-
 ## Stacks
 
 | Stack | Resources | Description |
