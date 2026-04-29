@@ -6,6 +6,8 @@ Modular AWS CDK (Python) infrastructure for the **AgentCore Platform and Securit
 
 ## Architecture
 
+![AgentCore Workshop Architecture](docs/architecture.png)
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    OBSERVABILITY LAYER                       │
