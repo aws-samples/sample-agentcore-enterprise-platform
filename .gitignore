@@ -1,0 +1,14 @@
+*.swp
+package-lock.json
+__pycache__
+.pytest_cache
+.venv
+*.egg-info
+dist
+.cdk.staging
+cdk.out
+node_modules
+.DS_Store
+.env
+.cdk-placeholder
+cdk.context.json

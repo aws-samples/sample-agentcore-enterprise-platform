@@ -1,0 +1,144 @@
+{
+  "timestamp": "2026-04-29T13:00:00Z",
+  "project": "agentcore-workshop",
+  "environment": "dev",
+  "region": "us-east-1",
+  "account": "123456789012",
+  "summary": {
+    "total_stacks": 10,
+    "deployed": 5,
+    "in_progress": 1,
+    "failed": 0,
+    "not_deployed": 4
+  },
+  "stacks": {
+    "agentcore-workshop-dev-auth": {
+      "module": "3/4", "team": "platform", "layer": "identity",
+      "description": "Cognito User Pool + federated IdP + 3 OAuth clients",
+      "status": "CREATE_COMPLETE",
+      "outputs": {
+        "UserPoolId": "us-east-1_aBcDeFgHi",
+        "IssuerUrl": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_aBcDeFgHi",
+        "AppClientId": "1a2b3c4d5e6f7g8h9i0j",
+        "M2MClientId": "9z8y7x6w5v4u3t2s1r0q",
+        "DomainUrl": "https://agentcore-workshop-dev-123456789012.auth.us-east-1.amazoncognito.com",
+        "IdPType": "entra_id"
+      },
+      "resources": [
+        {"type": "AWS::Cognito::UserPool", "logical": "UserPool", "status": "CREATE_COMPLETE"},
+        {"type": "AWS::Cognito::UserPoolDomain", "logical": "Domain", "status": "CREATE_COMPLETE"},
+        {"type": "AWS::Cognito::UserPoolResourceServer", "logical": "AgentCoreRS", "status": "CREATE_COMPLETE"},
+        {"type": "AWS::Cognito::UserPoolClient", "logical": "AppClient", "status": "CREATE_COMPLETE"},
+        {"type": "AWS::Cognito::UserPoolClient", "logical": "WebClient", "status": "CREATE_COMPLETE"},
+        {"type": "AWS::Cognito::UserPoolClient", "logical": "M2MClient", "status": "CREATE_COMPLETE"},
+        {"type": "AWS::Cognito::UserPoolIdentityProvider", "logical": "EntraIdProvider", "status": "CREATE_COMPLETE"},
+        {"type": "AWS::SSM::Parameter", "logical": "SSMIssuerUrl", "status": "CREATE_COMPLETE"},
+        {"type": "AWS::SSM::Parameter", "logical": "SSMUserPoolId", "status": "CREATE_COMPLETE"},
+        {"type": "AWS::SSM::Parameter", "logical": "SSMAppClientId", "status": "CREATE_COMPLETE"}
+      ]
+    },
+    "agentcore-workshop-dev-identity": {
+      "module": "4", "team": "platform", "layer": "identity",
+      "description": "OAuth2 credential providers (Google, GitHub, Notion)",
+      "status": "CREATE_COMPLETE",
+      "outputs": {"GoogleProviderArn": "arn:aws:bedrock-agentcore:us-east-1:123456789012:oauth2-credential-provider/google-oauth"},
+      "resources": [
+        {"type": "AWS::BedrockAgentCore::OAuth2CredentialProvider", "logical": "GoogleOAuth", "status": "CREATE_COMPLETE"}
+      ]
+    },
+    "agentcore-workshop-dev-memory": {
+      "module": "A", "team": "agent", "layer": "service",
+      "description": "AgentCore Memory + semantic/user_preference strategies",
+      "status": "CREATE_COMPLETE",
+      "outputs": {
+        "MemoryId": "mem-abc123def456",
+        "MemoryArn": "arn:aws:bedrock-agentcore:us-east-1:123456789012:memory/mem-abc123def456"
+      },
+      "resources": [
+        {"type": "AWS::BedrockAgentCore::Memory", "logical": "Memory", "status": "CREATE_COMPLETE"},
+        {"type": "AWS::SSM::Parameter", "logical": "SSMMemoryId", "status": "CREATE_COMPLETE"},
+        {"type": "AWS::SSM::Parameter", "logical": "SSMMemoryArn", "status": "CREATE_COMPLETE"}
+      ]
+    },
+    "agentcore-workshop-dev-gateway": {
+      "module": "5/7", "team": "platform", "layer": "service",
+      "description": "MCP Gateway + CUSTOM_JWT auth + Lambda tool targets",
+      "status": "CREATE_COMPLETE",
+      "outputs": {
+        "GatewayUrl": "https://gateway.bedrock-agentcore.us-east-1.amazonaws.com/gw-xyz789",
+        "GatewayArn": "arn:aws:bedrock-agentcore:us-east-1:123456789012:gateway/gw-xyz789",
+        "GatewayId": "gw-xyz789"
+      },
+      "resources": [
+        {"type": "AWS::IAM::Role", "logical": "GatewayRole", "status": "CREATE_COMPLETE"},
+        {"type": "AWS::IAM::Policy", "logical": "GatewayRolePolicy", "status": "CREATE_COMPLETE"},
+        {"type": "AWS::BedrockAgentCore::Gateway", "logical": "Gateway", "status": "CREATE_COMPLETE"},
+        {"type": "AWS::SSM::Parameter", "logical": "SSMGatewayUrl", "status": "CREATE_COMPLETE"}
+      ]
+    },
+    "agentcore-workshop-dev-runtime-orchestrator": {
+      "module": "6", "team": "agent", "layer": "runtime",
+      "description": "Orchestrator agent (HTTP) — ECR + CodeBuild + CfnRuntime",
+      "status": "CREATE_IN_PROGRESS",
+      "outputs": {},
+      "resources": [
+        {"type": "AWS::ECR::Repository", "logical": "ECR", "status": "CREATE_COMPLETE"},
+        {"type": "AWS::CodeBuild::Project", "logical": "Build", "status": "CREATE_COMPLETE"},
+        {"type": "AWS::Lambda::Function", "logical": "BuildTrigger", "status": "CREATE_COMPLETE"},
+        {"type": "AWS::CloudFormation::CustomResource", "logical": "BuildTriggerCR", "status": "CREATE_IN_PROGRESS"},
+        {"type": "AWS::IAM::Role", "logical": "RuntimeRole", "status": "CREATE_COMPLETE"}
+      ]
+    },
+    "agentcore-workshop-dev-runtime-code-agent": {
+      "module": "8", "team": "agent", "layer": "runtime",
+      "description": "Code Agent (A2A protocol)",
+      "status": "NOT_DEPLOYED",
+      "outputs": {},
+      "resources": []
+    },
+    "agentcore-workshop-dev-runtime-research-agent": {
+      "module": "8", "team": "agent", "layer": "runtime",
+      "description": "Research Agent (A2A protocol)",
+      "status": "NOT_DEPLOYED",
+      "outputs": {},
+      "resources": []
+    },
+    "agentcore-workshop-dev-observability": {
+      "module": "9", "team": "platform", "layer": "observability",
+      "description": "CloudWatch vended logs + X-Ray per resource",
+      "status": "NOT_DEPLOYED",
+      "outputs": {},
+      "resources": []
+    },
+    "agentcore-workshop-dev-networking": {
+      "module": "3/C", "team": "platform", "layer": "foundation",
+      "description": "VPC + subnets + VPC endpoints (optional)",
+      "status": "NOT_DEPLOYED",
+      "outputs": {},
+      "resources": []
+    },
+    "agentcore-workshop-dev-security": {
+      "module": "6a/S2", "team": "security", "layer": "foundation",
+      "description": "KMS CMK + CloudTrail (optional)",
+      "status": "CREATE_COMPLETE",
+      "outputs": {"KmsKeyArn": "arn:aws:kms:us-east-1:123456789012:key/mrk-abc123"},
+      "resources": [
+        {"type": "AWS::KMS::Key", "logical": "AgentCoreKey", "status": "CREATE_COMPLETE"},
+        {"type": "AWS::KMS::Alias", "logical": "AgentCoreKeyAlias", "status": "CREATE_COMPLETE"},
+        {"type": "AWS::S3::Bucket", "logical": "TrailBucket", "status": "CREATE_COMPLETE"},
+        {"type": "AWS::CloudTrail::Trail", "logical": "AgentCoreTrail", "status": "CREATE_COMPLETE"}
+      ]
+    }
+  },
+  "ssm_parameters": {
+    "auth/issuer-url": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_aBcDeFgHi",
+    "auth/user-pool-id": "us-east-1_aBcDeFgHi",
+    "auth/app-client-id": "1a2b3c4d5e6f7g8h9i0j",
+    "auth/web-client-id": "2b3c4d5e6f7g8h9i0j1k",
+    "auth/m2m-client-id": "9z8y7x6w5v4u3t2s1r0q",
+    "gateway/url": "https://gateway.bedrock-agentcore.us-east-1.amazonaws.com/gw-xyz789",
+    "memory/memory-id": "mem-abc123def456",
+    "memory/memory-arn": "arn:aws:bedrock-agentcore:us-east-1:123456789012:memory/mem-abc123def456",
+    "identity/google-provider-arn": "arn:aws:bedrock-agentcore:us-east-1:123456789012:oauth2-credential-provider/google-oauth"
+  }
+}
