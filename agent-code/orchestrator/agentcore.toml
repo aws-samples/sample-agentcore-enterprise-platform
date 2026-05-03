@@ -1,0 +1,5 @@
+[project]
+name = "agentcore_workshop_dev_orchestrator"
+
+[runtime]
+name = "agentcore_workshop_dev_orchestrator"

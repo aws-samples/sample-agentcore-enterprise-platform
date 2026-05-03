@@ -1,0 +1,6 @@
+# Adapted from fullstack-solution-template-for-agentcore
+# Strands agent dependencies
+strands-agents==1.32.0
+bedrock-agentcore==1.4.7
+mcp==1.26.0
+PyJWT[crypto]==2.12.1

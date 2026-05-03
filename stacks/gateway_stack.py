@@ -38,7 +38,7 @@ class GatewayStack(cdk.Stack):
             authorizer_configuration={
                 "customJwtAuthorizer": {
                     "discoveryUrl": f"{cognito_issuer_url}/.well-known/openid-configuration",
-                    "allowedAudience": cognito_allowed_clients,
+                    "allowedClients": cognito_allowed_clients,
                 },
             },
             protocol_configuration={
@@ -59,7 +59,7 @@ class GatewayStack(cdk.Stack):
             fn = _lambda.Function(self, f"Tool-{tool_name}",
                 function_name=f"{prefix}-tool-{tool_name}",
                 runtime=_lambda.Runtime.PYTHON_3_13,
-                handler="index.handler",
+                handler="handler.handler",
                 code=_lambda.Code.from_asset(config["source_dir"]),
                 architecture=_lambda.Architecture.ARM_64,
                 timeout=cdk.Duration.seconds(30),
@@ -71,23 +71,24 @@ class GatewayStack(cdk.Stack):
                 source_arn=self._gateway.attr_gateway_arn,
             )
 
-            agentcore.CfnGatewayTarget(self, f"Target-{tool_name}",
+            target = agentcore.CfnGatewayTarget(self, f"Target-{tool_name}",
                 name=tool_name,
                 gateway_identifier=self._gateway.attr_gateway_identifier,
                 credential_provider_configurations=[
                     {"credentialProviderType": "GATEWAY_IAM_ROLE"},
                 ],
                 target_configuration={
-                    "mcp": {
-                        "lambda_": {
-                            "lambdaArn": fn.function_arn,
-                            "toolSchema": {
-                                "inlinePayload": config.get("tool_schema", []),
-                            },
-                        },
-                    },
+                    "mcp": {},
                 },
             )
+            # Override the target configuration directly — CDK strips the "lambda" key
+            # because it's a Python reserved word and the L1 property mapping doesn't handle it
+            target.add_property_override("TargetConfiguration.Mcp.Lambda", {
+                "LambdaArn": fn.function_arn,
+                "ToolSchema": {
+                    "InlinePayload": config.get("tool_schema", []),
+                },
+            })
 
         # SSM
         ssm.StringParameter(self, "SSMGatewayUrl",

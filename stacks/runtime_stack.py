@@ -81,6 +81,7 @@ class RuntimeStack(cdk.Stack):
         subnet_ids: list[str] | None = None,
         security_group_ids: list[str] | None = None,
         extra_env_vars: dict[str, str] | None = None,
+        dockerfile_pattern: str = "",
         **kwargs,
     ):
         super().__init__(scope, id, **kwargs)
@@ -119,6 +120,10 @@ class RuntimeStack(cdk.Stack):
             source_asset = s3_assets.Asset(self, "SourceAsset", path=placeholder_dir)
 
         # ── CodeBuild Project (ARM64, privileged for Docker) ──
+        docker_build_cmd = "docker build --platform linux/arm64 -t $REPO_URI:$IMAGE_TAG ."
+        if dockerfile_pattern:
+            docker_build_cmd = f"docker build --platform linux/arm64 -f {dockerfile_pattern}/Dockerfile -t $REPO_URI:$IMAGE_TAG ."
+
         build_project = codebuild.Project(self, "Build",
             project_name=f"{prefix}-build-{component_name}",
             description=f"Build container for {component_name}",
@@ -145,7 +150,7 @@ class RuntimeStack(cdk.Stack):
                     "build": {
                         "commands": [
                             "cd source/",
-                            "docker build --platform linux/arm64 -t $REPO_URI:$IMAGE_TAG .",
+                            docker_build_cmd,
                             "docker tag $REPO_URI:$IMAGE_TAG $REPO_URI:latest",
                         ],
                     },
@@ -241,7 +246,7 @@ class RuntimeStack(cdk.Stack):
             runtime_props["authorizer_configuration"] = {
                 "customJwtAuthorizer": {
                     "discoveryUrl": f"{cognito_issuer_url}/.well-known/openid-configuration",
-                    "allowedAudience": cognito_allowed_clients or [],
+                    "allowedClients": cognito_allowed_clients or [],
                 },
             }
 
@@ -305,8 +310,12 @@ class RuntimeStack(cdk.Stack):
             # Bedrock model invocation
             iam.PolicyStatement(
                 sid="BedrockModels",
-                actions=["bedrock:InvokeModel", "bedrock:Converse", "bedrock:ConverseStream"],
-                resources=["arn:aws:bedrock:*::foundation-model/*"],
+                actions=["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream",
+                         "bedrock:Converse", "bedrock:ConverseStream"],
+                resources=[
+                    "arn:aws:bedrock:*::foundation-model/*",
+                    "arn:aws:bedrock:*:*:inference-profile/*",
+                ],
             ),
             # SSM Parameter Store (cross-stack discovery)
             iam.PolicyStatement(
@@ -332,6 +341,8 @@ class RuntimeStack(cdk.Stack):
                     "bedrock-agentcore:GetResourceOauth2Token",
                     "bedrock-agentcore:CreateWorkloadIdentity",
                     "bedrock-agentcore:GetWorkloadAccessToken",
+                    "bedrock-agentcore:GetWorkloadAccessTokenForJWT",
+                    "bedrock-agentcore:GetWorkloadAccessTokenForUserId",
                 ],
                 resources=["*"],
             ),
