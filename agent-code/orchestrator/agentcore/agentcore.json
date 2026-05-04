@@ -1,0 +1,21 @@
+{
+  "name": "agentcore_workshop_dev_orchestrator",
+  "agents": [
+    {
+      "name": "agentcore_workshop_dev_orchestrator",
+      "type": "python",
+      "framework": "strands",
+      "sourceDir": ".",
+      "runtimeType": "orchestrator"
+    }
+  ],
+  "agentCoreGateways": [],
+  "memories": [],
+  "credentials": [],
+  "awsDeploymentTargets": [
+    {
+      "name": "default",
+      "region": "us-east-1"
+    }
+  ]
+}

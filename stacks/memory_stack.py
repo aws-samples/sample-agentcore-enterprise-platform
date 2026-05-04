@@ -20,6 +20,9 @@ class MemoryStack(cdk.Stack):
         environment: str,
         kms_key_arn: str = "",
         event_expiry_days: int = 30,
+        use_long_term_memory: bool = False,
+        ltm_top_k: int = 10,
+        ltm_relevance_score: float = 0.3,
         **kwargs,
     ):
         super().__init__(scope, id, **kwargs)
@@ -29,13 +32,6 @@ class MemoryStack(cdk.Stack):
         # ── Memory Strategies (typed property objects) ──
         strategies = [
             agentcore.CfnMemory.MemoryStrategyProperty(
-                semantic_memory_strategy=agentcore.CfnMemory.SemanticMemoryStrategyProperty(
-                    name=f"{name}_semantic",
-                    description="Semantic fact extraction and override strategy",
-                    namespaces=["AGENT_ID"],
-                ),
-            ),
-            agentcore.CfnMemory.MemoryStrategyProperty(
                 user_preference_memory_strategy=agentcore.CfnMemory.UserPreferenceMemoryStrategyProperty(
                     name=f"{name}_user_pref",
                     description="User preference tracking strategy",
@@ -43,6 +39,16 @@ class MemoryStack(cdk.Stack):
                 ),
             ),
         ]
+
+        # Long-term memory (semantic fact extraction) — optional, incurs additional cost
+        if use_long_term_memory:
+            strategies.insert(0, agentcore.CfnMemory.MemoryStrategyProperty(
+                semantic_memory_strategy=agentcore.CfnMemory.SemanticMemoryStrategyProperty(
+                    name=f"{name}_semantic",
+                    description="Semantic fact extraction and override strategy",
+                    namespaces=["AGENT_ID"],
+                ),
+            ))
 
         # ── CfnMemory ──
         props: dict = {

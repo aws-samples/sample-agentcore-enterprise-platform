@@ -49,6 +49,16 @@ enable_a2a = (app.node.try_get_context("enable_a2a") or os.environ.get("ENABLE_A
 idp_type = app.node.try_get_context("idp_type") or os.environ.get("IDP_TYPE", "cognito")
 obs_backend = app.node.try_get_context("observability_backend") or os.environ.get("OBSERVABILITY_BACKEND", "cloudwatch")
 
+# Agent pattern selection (from FAST reference patterns)
+# Options: strands-agent, langgraph-agent, claude-sdk-agent, claude-sdk-multi-agent,
+#          agui-strands-agent, agui-langgraph-agent
+agent_pattern = app.node.try_get_context("agent_pattern") or os.environ.get("AGENT_PATTERN", "orchestrator")
+
+# Long-term memory configuration
+use_long_term_memory = (app.node.try_get_context("use_long_term_memory") or os.environ.get("USE_LONG_TERM_MEMORY", "false")) == "true"
+ltm_top_k = int(app.node.try_get_context("ltm_top_k") or os.environ.get("LTM_TOP_K", "10"))
+ltm_relevance_score = float(app.node.try_get_context("ltm_relevance_score") or os.environ.get("LTM_RELEVANCE_SCORE", "0.3"))
+
 # IdP config from context or env
 idp_config = {
     "tenant_id": app.node.try_get_context("idp_tenant_id") or os.environ.get("IDP_TENANT_ID", ""),
@@ -118,6 +128,9 @@ memory_stack = MemoryStack(app, f"{prefix}-memory",
     project_name=project, environment=env_name,
     kms_key_arn=security_stack.kms_key.key_arn if (security_stack and security_stack.kms_key) else "",
     event_expiry_days=30,
+    use_long_term_memory=use_long_term_memory,
+    ltm_top_k=ltm_top_k,
+    ltm_relevance_score=ltm_relevance_score,
     env=cdk_env)
 memory_stack.add_dependency(auth_stack)
 if security_stack:
@@ -128,15 +141,26 @@ gateway_stack = GatewayStack(app, f"{prefix}-gateway",
     project_name=project, environment=env_name,
     cognito_issuer_url=auth_stack.issuer_url,
     cognito_allowed_clients=[auth_stack.app_client_id, auth_stack.m2m_client_id],
-    # tool_configs can be passed here for Lambda-backed tools
-    # Example:
-    # tool_configs={
-    #     "weather": {
-    #         "source_dir": "tools/weather",
-    #         "env_vars": {"API_KEY_SECRET": "tavily-api-key"},
-    #         "tool_schema": [{"name": "get_weather", "description": "...", "inputSchema": {...}}],
-    #     },
-    # },
+    tool_configs={
+        "sample-tool": {
+            "source_dir": "tools/sample_tool",
+            "env_vars": {},
+            "tool_schema": [
+                {
+                    "Name": "text_analysis_tool",
+                    "Description": "Analyzes text to count words and find most frequent characters.",
+                    "InputSchema": {
+                        "Type": "object",
+                        "Properties": {
+                            "text": {"Type": "string", "Description": "Input text to analyze"},
+                            "N": {"Type": "integer", "Description": "Number of most frequent characters to return (default: 5)"},
+                        },
+                        "Required": ["text"],
+                    },
+                },
+            ],
+        },
+    },
     env=cdk_env)
 gateway_stack.add_dependency(auth_stack)
 
@@ -145,16 +169,22 @@ gateway_stack.add_dependency(auth_stack)
 # ═══════════════════════════════════════════════════════════════
 
 # ── Orchestrator Runtime (HTTP protocol) ──
+# Agent pattern selects source directory: cdk deploy -c agent_pattern=langgraph-agent
 runtime_orchestrator = RuntimeStack(app, f"{prefix}-runtime-orchestrator",
     project_name=project, environment=env_name,
     component_name="orchestrator",
-    source_dir="agent-code/orchestrator",
+    source_dir="agent-code",
+    dockerfile_pattern=agent_pattern,
     runtime_type="orchestrator",
     cognito_issuer_url=auth_stack.issuer_url,
     cognito_allowed_clients=[auth_stack.app_client_id, auth_stack.m2m_client_id],
     extra_env_vars={
         "GATEWAY_URL": gateway_stack.gateway_url,
         "MEMORY_ID": memory_stack.memory_id,
+        "STACK_NAME": prefix,
+        "USE_LONG_TERM_MEMORY": str(use_long_term_memory).lower(),
+        "LTM_TOP_K": str(ltm_top_k),
+        "LTM_RELEVANCE_SCORE": str(ltm_relevance_score),
     },
     env=cdk_env)
 runtime_orchestrator.add_dependency(gateway_stack)
