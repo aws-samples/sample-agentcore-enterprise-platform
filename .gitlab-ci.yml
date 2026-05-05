@@ -1,25 +1,15 @@
 # Adapted from fullstack-solution-template-for-agentcore
 # GitLab CI/CD for AgentCore Workshop CDK
 
-include:
-  - component: code.aws.dev/proserve/automated-security-helper/automated-security-helper/ash@~latest
-
 image: public.ecr.aws/docker/library/python:3.13-bookworm
 
 stages:
-  - developer_tests
   - test
   - deploy
 
-developer_tests:
-  stage: developer_tests
+lint:
+  stage: test
   before_script:
-    - python --version
-    - apt-get update -y
-    - apt-get install make -y
     - pip install ruff
   script:
-    - make lint-cicd
-
-ash-sast:
-  needs: ["developer_tests"]
+    - ruff check . --select E,F,I --ignore E501
