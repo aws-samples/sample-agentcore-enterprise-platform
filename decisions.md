@@ -1,0 +1,1 @@
+2026-05-05 | Workshop simulation tested end-to-end. Fixed runtime container crashes caused by broken imports in strands-agent (gateway credential provider + code interpreter). Simplified agent code to work standalone. A2A agents use SigV4 auth (not JWT).

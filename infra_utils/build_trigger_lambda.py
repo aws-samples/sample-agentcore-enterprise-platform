@@ -47,5 +47,7 @@ def _send(url, event, status, data, reason=""):
         "LogicalResourceId": event["LogicalResourceId"],
         "Data": data,
     }).encode()
+    if not url.startswith("https://"):
+        raise ValueError(f"Response URL must use HTTPS scheme, got: {url[:20]}")
     req = urllib.request.Request(url, data=body, headers={"Content-Type": ""}, method="PUT")
-    urllib.request.urlopen(req)
+    urllib.request.urlopen(req)  # nosec B310 — URL validated above, CloudFormation pre-signed S3 URL

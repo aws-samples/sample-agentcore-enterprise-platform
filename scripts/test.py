@@ -39,7 +39,9 @@ def get_jwt_token():
             "Authorization": f"Basic {auth}",
         },
     )
-    resp = json.loads(urllib.request.urlopen(req).read())
+    if not req.full_url.startswith("https://"):
+        raise ValueError("Token endpoint must use HTTPS")
+    resp = json.loads(urllib.request.urlopen(req).read())  # nosec B310 — HTTPS validated above
     return resp["access_token"]
 
 

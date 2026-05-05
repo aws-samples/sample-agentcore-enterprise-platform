@@ -1,14 +1,12 @@
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+FROM public.ecr.aws/docker/library/python:3.13-slim
 
 WORKDIR /app
 
-ENV UV_SYSTEM_PYTHON=1 \
-    UV_COMPILE_BYTECODE=1 \
-    PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1
 
 COPY strands-agent/requirements.txt requirements.txt
-RUN uv pip install --no-cache -r requirements.txt && \
-    uv pip install --no-cache aws-opentelemetry-distro==0.16.0
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir aws-opentelemetry-distro==0.16.0
 
 RUN useradd -m -u 1000 bedrock_agentcore
 USER bedrock_agentcore
