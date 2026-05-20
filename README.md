@@ -31,6 +31,7 @@ python3.13 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 # 2. Deploy (interactive)
+# 2.The script requires at bash 4 or higher to run.
 ./scripts/deploy.sh deploy
 
 # 3. Deploy specific workshop module

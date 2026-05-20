@@ -67,11 +67,21 @@ def get_workshop_config(project: Optional[str] = None, env: Optional[str] = None
     }
 
 
+def _compute_secret_hash(username: str, client_id: str, client_secret: str) -> str:
+    """Compute Cognito SECRET_HASH = Base64(HMAC_SHA256(client_secret, username + client_id))."""
+    import hmac
+    import hashlib
+    message = username + client_id
+    dig = hmac.new(client_secret.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).digest()
+    return base64.b64encode(dig).decode()
+
+
 def authenticate_cognito(
     user_pool_id: str, client_id: str, username: str, password: str
 ) -> Tuple[str, str, str]:
     """
     Authenticate with Cognito and return (access_token, id_token, user_id).
+    Handles app clients with or without a client secret.
     """
     print("\nAuthenticating...")
     cognito = boto3.client("cognito-idp")
@@ -83,10 +93,23 @@ def authenticate_cognito(
             print_msg(f"User '{username}' does not exist", "error")
             sys.exit(1)
 
+        auth_params = {"USERNAME": username, "PASSWORD": password}
+
+        # If the app client has a secret, compute SECRET_HASH
+        try:
+            client_desc = cognito.describe_user_pool_client(
+                UserPoolId=user_pool_id, ClientId=client_id
+            )["UserPoolClient"]
+            client_secret = client_desc.get("ClientSecret")
+            if client_secret:
+                auth_params["SECRET_HASH"] = _compute_secret_hash(username, client_id, client_secret)
+        except Exception:
+            pass  # If we can't describe the client, try without SECRET_HASH
+
         response = cognito.initiate_auth(
             AuthFlow="USER_PASSWORD_AUTH",
             ClientId=client_id,
-            AuthParameters={"USERNAME": username, "PASSWORD": password},
+            AuthParameters=auth_params,
         )
 
         access_token = response["AuthenticationResult"]["AccessToken"]

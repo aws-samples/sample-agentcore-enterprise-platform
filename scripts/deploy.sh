@@ -73,7 +73,8 @@ check_prereqs() {
     log_header "Prerequisite Checks"
     local missing=0
 
-    for cmd in node npm python3.13 aws docker; do
+    # Note: docker is NOT required — container images are built remotely in AWS CodeBuild.
+    for cmd in node npm python3.13 aws; do
         if command -v "$cmd" &>/dev/null; then
             local ver
             case "$cmd" in
@@ -81,7 +82,6 @@ check_prereqs() {
                 npm)        ver=$(npm --version) ;;
                 python3.13) ver=$(python3.13 --version 2>&1) ;;
                 aws)        ver=$(aws --version 2>&1 | head -1) ;;
-                docker)     ver=$(docker --version 2>&1) ;;
             esac
             log_info "✓ $cmd: $ver"
         else
@@ -89,6 +89,13 @@ check_prereqs() {
             missing=1
         fi
     done
+
+    # Optional: report docker if present, but don't fail without it.
+    if command -v docker &>/dev/null; then
+        log_info "✓ docker: $(docker --version 2>&1) (optional — used only for local container testing)"
+    else
+        log_info "○ docker: not installed (optional — image builds run in AWS CodeBuild)"
+    fi
 
     # Check CDK CLI
     if npx cdk --version &>/dev/null 2>&1; then

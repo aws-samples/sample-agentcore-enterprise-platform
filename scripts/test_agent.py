@@ -55,28 +55,53 @@ def invoke_agent(
             return
 
         print(f"{Fore.GREEN}Agent:{Style.RESET_ALL} ", end="", flush=True)
+        printed_something = False
         for line in response.iter_lines(decode_unicode=True):
-            if not line or not line.startswith("data: "):
+            if not line:
                 continue
-            try:
-                chunk = json.loads(line[6:])
 
-                # Strands: text token
-                if isinstance(chunk.get("data"), str):
-                    print(chunk["data"], end="", flush=True)
-                # Strands: tool use
-                elif chunk.get("current_tool_use", {}).get("name"):
-                    tool = chunk["current_tool_use"]
-                    if chunk.get("delta", {}).get("toolUse", {}).get("input") == "":
-                        print(f"\n{Fore.YELLOW}[Tool: {tool['name']}]{Style.RESET_ALL} ", end="", flush=True)
-                # Strands: tool result
-                elif chunk.get("message", {}).get("role") == "user":
-                    for content in chunk["message"].get("content", []):
-                        if "toolResult" in content:
-                            result = str(content["toolResult"].get("content", ""))[:200]
-                            print(f"\n{Fore.YELLOW}[Result: {result}]{Style.RESET_ALL}", flush=True)
-            except (json.JSONDecodeError, KeyError):
-                continue
+            # SSE format: "data: {...}"
+            if line.startswith("data: "):
+                try:
+                    chunk = json.loads(line[6:])
+
+                    # Strands: text token
+                    if isinstance(chunk.get("data"), str):
+                        print(chunk["data"], end="", flush=True)
+                        printed_something = True
+                    # JSON response envelope
+                    elif isinstance(chunk.get("response"), str):
+                        print(chunk["response"], end="", flush=True)
+                        printed_something = True
+                    # Strands: tool use
+                    elif chunk.get("current_tool_use", {}).get("name"):
+                        tool = chunk["current_tool_use"]
+                        if chunk.get("delta", {}).get("toolUse", {}).get("input") == "":
+                            print(f"\n{Fore.YELLOW}[Tool: {tool['name']}]{Style.RESET_ALL} ", end="", flush=True)
+                            printed_something = True
+                    # Strands: tool result
+                    elif chunk.get("message", {}).get("role") == "user":
+                        for content in chunk["message"].get("content", []):
+                            if "toolResult" in content:
+                                result = str(content["toolResult"].get("content", ""))[:200]
+                                print(f"\n{Fore.YELLOW}[Result: {result}]{Style.RESET_ALL}", flush=True)
+                                printed_something = True
+                except (json.JSONDecodeError, KeyError):
+                    continue
+            else:
+                # Non-SSE: try parsing as raw JSON (runtime returns {"status":"success","response":"..."})
+                try:
+                    data = json.loads(line)
+                    if isinstance(data.get("response"), str):
+                        print(data["response"], end="", flush=True)
+                        printed_something = True
+                    elif isinstance(data.get("data"), str):
+                        print(data["data"], end="", flush=True)
+                        printed_something = True
+                except (json.JSONDecodeError, KeyError):
+                    # Plain text fallback
+                    print(line, end="", flush=True)
+                    printed_something = True
         print()
 
     except requests.exceptions.ConnectionError:

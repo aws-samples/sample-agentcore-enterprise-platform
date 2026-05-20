@@ -12,3 +12,9 @@ node_modules
 .env
 .cdk-placeholder
 cdk.context.json
+
+# Local-only deployment tracker
+DEPLOYMENTS.md
+
+# Dashboard monitor output (account-specific, auto-generated)
+dashboard/public/status.json
