@@ -52,3 +52,17 @@ controls:
         required: true
         description: AWS Organizations ID (o-xxxx) used in the aws:PrincipalOrgID deny guard.
     validate: [checkov, access-analyzer]
+
+  # ── Items 5+6: Bedrock Guardrails config for the egress interceptor (workload scope, CDK) ──
+  # CloudFormation PascalCase shape (AWS::Bedrock::Guardrail properties). Applied to the
+  # Gateway egress interceptor Lambda via ApplyGuardrail. Not an IAM policy document, so it
+  # has no Version/Statement.
+  - id: guardrail.egress-default
+    file: guardrails/egress-default.json
+    type: GUARDRAIL
+    scope: workload
+    attach_to: [GATEWAY]
+    engine: [cdk]
+    default_mode: enforce
+    params: {}
+    validate: [json]

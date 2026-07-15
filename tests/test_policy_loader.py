@@ -72,6 +72,17 @@ def test_load_control_json_is_compact_string():
     assert json.loads(s)["Version"] == "2012-10-17"
 
 
+def test_guardrail_artifact_loads_with_expected_policies():
+    doc = load_control("guardrail.egress-default")
+    assert "BlockedInputMessaging" in doc
+    filter_types = [f["Type"] for f in doc["ContentPolicyConfig"]["FiltersConfig"]]
+    assert "PROMPT_ATTACK" in filter_types
+    pii_types = {
+        p["Type"] for p in doc["SensitiveInformationPolicyConfig"]["PiiEntitiesConfig"]
+    }
+    assert {"EMAIL", "US_SOCIAL_SECURITY_NUMBER"} <= pii_types
+
+
 # ── Substitution semantics against a temp library ──
 
 
