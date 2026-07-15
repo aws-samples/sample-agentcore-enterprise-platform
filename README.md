@@ -2,6 +2,10 @@
 
 Modular AWS CDK (Python) infrastructure for the **AgentCore Platform and Security Accelerator** 2-day workshop.
 
+> **Security controls:** opt-in SCPs, VPC endpoint / IAM policies, Cedar policies, resource
+> policies, Bedrock Guardrails + egress interceptor, and traceability alerting are documented
+> in [`docs/SECURITY_CONTROLS.md`](docs/SECURITY_CONTROLS.md). Test guide: [`docs/TESTING.md`](docs/TESTING.md).
+
 ![Workshop Dashboard — Monitor Tab](docs/dashboard-monitor.png)
 
 ## Architecture

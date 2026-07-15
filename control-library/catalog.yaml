@@ -96,3 +96,45 @@ controls:
           AgentCore action name (<TargetName>___<tool_name>) for the read-only tool to permit.
           Matches the sample gateway target 'sample-tool' and tool 'text_analysis_tool'.
     validate: [cedar]
+
+  # ── Item 2: fine-grained VPC endpoint policy (account scope, CDK) ──
+  # Attached to AgentCore interface VPC endpoints so only org principals can invoke through
+  # them. Allows the AgentCore invoke actions from the org and denies everything else.
+  - id: vpce.agentcore-in-org
+    file: vpce/agentcore-in-org.json
+    type: VPCE
+    scope: account
+    attach_to: [VPCE]
+    engine: [cdk]
+    default_mode: enforce
+    params:
+      org_id:
+        required: true
+        description: AWS Organizations ID (o-xxxx) allowed to use the endpoint.
+    validate: [checkov, access-analyzer]
+
+  # ── Item 2: least-privilege AgentCore Runtime execution role policy (account scope, CDK) ──
+  # Reference least-privilege policy for a Runtime execution role. Consumed as a template;
+  # scope the ECR repo prefix / SSM path to your project.
+  - id: iam.runtime-execution-least-privilege
+    file: iam/runtime-execution-least-privilege.json
+    type: IAM
+    scope: account
+    attach_to: [ROLE]
+    engine: [cdk]
+    default_mode: enforce
+    params:
+      region:
+        required: true
+        description: AWS region of the runtime.
+      account_id:
+        required: true
+        description: AWS account ID that owns the runtime.
+      project:
+        required: true
+        description: Project name; scopes the SSM parameter path (/project/*).
+      ecr_repo_prefix:
+        required: false
+        default: "bedrock-agentcore-"
+        description: ECR repository name prefix the runtime pulls its image from.
+    validate: [checkov, access-analyzer]

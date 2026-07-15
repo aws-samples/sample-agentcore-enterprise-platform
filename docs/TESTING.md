@@ -10,6 +10,10 @@ How to test everything added on the `feat/security-controls` branch:
   on the Gateway (`enable_egress_filter`)
 - **Item 3 (Cedar):** AgentCore policy engine with default-forbid + read permit on the
   Gateway (`enable_cedar`, `cedar_mode` LOG_ONLY/ENFORCE)
+- **Item 2 (VPCE + IAM):** fine-grained AgentCore VPC endpoint policy + tightened execution
+  role (`enable_networking`, `org_id`)
+- **Item 7 (observability):** SNS + EventBridge alerting on sensitive AgentCore API calls
+  (`enable_traceability`)
 
 There are two layers of testing:
 
@@ -154,6 +158,49 @@ rm -rf cdk.out
 cdk synth agentcore-workshop-dev-gateway 2>/dev/null | grep -c 'PolicyEngineConfiguration'  # → 0
 ```
 
+### A7b. VPC endpoint policy synthesizes with the org-scoped policy (item 2)
+
+The networking VPC needs Availability Zone context to synth offline. Provide it once with a
+temporary `cdk.context.json` (git-ignored), then synth:
+
+```bash
+source .venv/bin/activate
+cat > cdk.context.json <<'JSON'
+{ "availability-zones:account=111122223333:region=us-east-1": ["us-east-1a","us-east-1b"] }
+JSON
+
+rm -rf cdk.out
+CDK_DEFAULT_ACCOUNT=111122223333 CDK_DEFAULT_REGION=us-east-1 \
+  cdk synth agentcore-workshop-dev-networking -c enable_networking=true -c org_id=o-example123 2>/dev/null \
+  | grep -cE 'bedrock-agentcore.gateway|PrincipalOrgID'
+# → 3  (the AgentCore gateway endpoint service + org condition in allow & deny)
+
+rm -f cdk.context.json cdk.out -r
+```
+
+Also confirm the tightened execution role scopes SSM to the project path (no `"*"`):
+
+```bash
+grep -A2 '"ssm:GetParameter"' -r infra_utils/agentcore_role.py
+# resources = arn:aws:ssm:*:*:parameter/{project_name}/*
+```
+
+### A7c. Observability alerting synthesizes only when enabled (item 7)
+
+```bash
+source .venv/bin/activate
+export CDK_DEFAULT_ACCOUNT=111122223333 CDK_DEFAULT_REGION=us-east-1
+
+# Flag ON → SNS topic + EventBridge rule on sensitive AgentCore events
+rm -rf cdk.out
+cdk synth agentcore-workshop-dev-observability -c enable_traceability=true 2>/dev/null \
+  | grep -cE 'AWS::SNS::Topic|AWS::Events::Rule'          # → 3 (topic, topic policy, rule)
+
+# Flag OFF → none
+rm -rf cdk.out
+cdk synth agentcore-workshop-dev-observability 2>/dev/null | grep -c 'AWS::Events::Rule'  # → 0
+```
+
 ### A8. Lint (matches CI)
 
 ```bash
@@ -235,6 +282,29 @@ terraform apply -var 'target_ids=["ou-abcd-1234wxyz"]'
 Then, from a member account under that OU, attempt `CreateMemory` **without** a KMS key —
 expect an explicit `AccessDenied` from the SCP. Creating with a CMK should succeed.
 
+### B4b. Verify the VPC endpoint policy + IAM (item 2)
+
+```bash
+# Endpoint policy is attached to the AgentCore gateway interface endpoint:
+aws ec2 describe-vpc-endpoints \
+  --filters Name=service-name,Values="com.amazonaws.us-east-1.bedrock-agentcore.gateway" \
+  --query 'VpcEndpoints[0].PolicyDocument'
+
+# Execution role SSM scope (should be the project path, not "*"):
+aws iam get-role-policy --role-name agentcore-workshop-dev-orchestrator-role \
+  --policy-name <inline-policy-name>
+```
+
+### B4c. Verify observability alerting (item 7)
+
+```bash
+aws sns list-topics | grep agentcore-security-alerts
+aws events list-rules --name-prefix agentcore-workshop-dev-agentcore-sensitive
+# Subscribe an email/SNS endpoint, then trigger a sensitive event (e.g. PutResourcePolicy or
+# DeleteGateway in a test resource) and confirm the alert fires. Requires CloudTrail
+# management events (enabled by the security stack / enable_security).
+```
+
 ### B5. Cleanup
 
 ```bash
@@ -256,5 +326,11 @@ cd terraform/org-guardrails && terraform destroy && cd ../..
    `AWS::BedrockAgentCore::Policy`; CloudFormation does not parse Cedar at synth time. Validate
    allow/deny behaviour on a live gateway in `LOG_ONLY` mode (inspect decision logs) before
    switching `cedar_mode=ENFORCE`. Action names must match `<TargetName>___<tool_name>`.
-4. **Resolved:** the Memory resource policy now uses the native
+4. **VPCE service name.** The AgentCore Gateway endpoint uses
+   `com.amazonaws.<region>.bedrock-agentcore.gateway` (confirmed). If you also need a Runtime
+   data-plane endpoint, confirm its exact service name in your region before adding it.
+5. **Traceability depends on CloudTrail.** The EventBridge rule only fires if CloudTrail
+   management events are being recorded (the `security` stack / `enable_security` provides a
+   trail). Subscribe an endpoint to the SNS topic to actually receive alerts.
+6. **Resolved:** the Memory resource policy now uses the native
    `AWS::BedrockAgentCore::ResourcePolicy` L1 (no custom resource / SDK-name guess).

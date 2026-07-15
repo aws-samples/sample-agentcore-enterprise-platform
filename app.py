@@ -58,6 +58,8 @@ enable_egress_filter = (app.node.try_get_context("enable_egress_filter") or os.e
 # LOG_ONLY (evaluate + log) or ENFORCE (block); ships LOG_ONLY for safe rollout.
 enable_cedar = (app.node.try_get_context("enable_cedar") or os.environ.get("ENABLE_CEDAR", "false")) == "true"
 cedar_mode = app.node.try_get_context("cedar_mode") or os.environ.get("CEDAR_MODE", "LOG_ONLY")
+# Detective controls: SNS + EventBridge alerting on sensitive AgentCore API calls (item 7).
+enable_traceability = (app.node.try_get_context("enable_traceability") or os.environ.get("ENABLE_TRACEABILITY", "false")) == "true"
 # AWS Organizations ID (o-xxxx). Required when enable_resource_policies is on, so the
 # in-account-only resource policies can render their aws:PrincipalOrgID deny guard.
 org_id = app.node.try_get_context("org_id") or os.environ.get("ORG_ID", "")
@@ -103,6 +105,7 @@ if enable_networking:
     networking_stack = NetworkingStack(app, f"{prefix}-networking",
         project_name=project, environment=env_name,
         enable_vpc_endpoints=True,
+        org_id=org_id,
         env=cdk_env)
 
 # ── Optional: Security (KMS CMK, CloudTrail) ──
@@ -253,6 +256,7 @@ obs_stack = ObservabilityStack(app, f"{prefix}-observability",
     project_name=project, environment=env_name,
     backend=obs_backend,
     monitored_resources=monitored_resources,
+    enable_traceability=enable_traceability,
     env=cdk_env)
 obs_stack.add_dependency(runtime_orchestrator)
 obs_stack.add_dependency(gateway_stack)
