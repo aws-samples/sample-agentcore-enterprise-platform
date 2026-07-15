@@ -16,5 +16,16 @@ cdk.context.json
 # Local-only deployment tracker
 DEPLOYMENTS.md
 
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+override.tf
+override.tf.json
+
 # Dashboard monitor output (account-specific, auto-generated)
 dashboard/public/status.json

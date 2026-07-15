@@ -1,0 +1,54 @@
+# control-library catalog — machine-readable index of security control definitions.
+#
+# Each control declares:
+#   id          Stable identifier used by policy_loader.load_control(id, params).
+#   file         Path relative to this control-library/ root.
+#   type         SCP | RCP | RESOURCE_POLICY | IAM | VPCE | CEDAR | GUARDRAIL
+#   scope        org | account | workload
+#   attach_to    Valid attach points (informational + used for validation).
+#   engine       IaC engines that consume this control today.
+#   default_mode enforce | log_only | audit  (safe default posture)
+#   params       name -> {required, default?, description}. Values inject over <<NAME>> tokens.
+#   validate     CI validators that must pass for this artifact.
+version: 1
+description: AgentCore security control definitions (SCP, RCP, resource, IAM, VPCE, Cedar, Guardrails).
+
+controls:
+  # ── Item 1: SCP — enforce CMK on Memory creation (org scope, Terraform) ──
+  - id: scp.memory.enforce-cmk
+    file: scp/memory/enforce-cmk.json
+    type: SCP
+    scope: org
+    attach_to: [OU, ACCOUNT]
+    engine: [terraform]
+    default_mode: enforce
+    params:
+      kms_key_arn_pattern:
+        required: false
+        default: "arn:aws:kms:*:*:key/*"
+        description: >-
+          KMS key ARN pattern that CreateMemory must reference. Default requires any CMK.
+          Narrow to a specific key/OU-owned key ARN pattern to restrict further.
+    validate: [checkov, access-analyzer]
+
+  # ── Item 4: Resource-based policy — Memory in-account-only (workload scope, CDK) ──
+  - id: resource-policy.memory.in-account-only
+    file: resource-policies/memory/in-account-only.json
+    type: RESOURCE_POLICY
+    scope: workload
+    attach_to: [MEMORY]
+    engine: [cdk]
+    default_mode: enforce
+    params:
+      account_id:
+        required: true
+        description: AWS account ID that owns the Memory resource.
+      memory_arn:
+        required: true
+        description: >-
+          Exact ARN of the Memory resource. AgentCore resource-based policies do not
+          support "*" in the Resource field.
+      org_id:
+        required: true
+        description: AWS Organizations ID (o-xxxx) used in the aws:PrincipalOrgID deny guard.
+    validate: [checkov, access-analyzer]

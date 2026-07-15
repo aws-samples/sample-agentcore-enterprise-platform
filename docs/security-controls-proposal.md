@@ -2,7 +2,7 @@
 
 **Status:** Draft for discussion. No implementation code yet.
 **Branch:** `feat/security-controls`
-**Author:** (add your name)
+**Author:** (@khurpas)
 **Date:** 2026-07-14
 
 This document proposes how we add reusable, customer-tweakable security controls to the

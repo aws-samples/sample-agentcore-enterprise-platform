@@ -6,8 +6,15 @@ Implements Requirement 8: AgentCore Memory Configuration
 - SSM Parameters for cross-stack consumption
 """
 import aws_cdk as cdk
-from aws_cdk import aws_bedrockagentcore as agentcore, aws_ssm as ssm
+from aws_cdk import (
+    aws_bedrockagentcore as agentcore,
+    aws_iam as iam,
+    aws_ssm as ssm,
+    custom_resources as cr,
+)
 from constructs import Construct
+
+from infra_utils.policy_loader import load_control_json
 
 
 class MemoryStack(cdk.Stack):
@@ -23,6 +30,8 @@ class MemoryStack(cdk.Stack):
         use_long_term_memory: bool = False,
         ltm_top_k: int = 10,
         ltm_relevance_score: float = 0.3,
+        enable_resource_policies: bool = False,
+        org_id: str = "",
         **kwargs,
     ):
         super().__init__(scope, id, **kwargs)
@@ -61,6 +70,70 @@ class MemoryStack(cdk.Stack):
             props["encryption_key_arn"] = kms_key_arn
 
         self.memory = agentcore.CfnMemory(self, "Memory", **props)
+
+        # ── Resource-based policy (optional, control-library) ──
+        # Attaches an "in-account-only" resource policy to the Memory resource so principals
+        # outside this AWS Organization cannot call the memory data-plane APIs directly.
+        # AgentCore Memory has no L1/CFN property for resource policies, so we call the
+        # PutResourcePolicy control-plane API via a custom resource.
+        if enable_resource_policies:
+            if not org_id:
+                raise ValueError(
+                    "MemoryStack: enable_resource_policies=True requires org_id "
+                    "(pass -c org_id=o-xxxx or set ORG_ID) so the aws:PrincipalOrgID "
+                    "deny guard can render."
+                )
+            policy_json = load_control_json(
+                "resource-policy.memory.in-account-only",
+                {
+                    "account_id": self.account,
+                    "memory_arn": self.memory.attr_memory_arn,
+                    "org_id": org_id,
+                },
+            )
+            # NOTE: the AWS SDK service/action identifiers below must be confirmed on first
+            # `cdk synth`/deploy against the installed SDK version. boto3 exposes this as
+            # bedrock-agentcore-control.put_resource_policy; the JS SDK client used by
+            # AwsCustomResource is @aws-sdk/client-bedrock-agentcore-control.
+            sdk_service = "bedrock-agentcore-control"
+            cr.AwsCustomResource(
+                self,
+                "MemoryResourcePolicy",
+                on_create=cr.AwsSdkCall(
+                    service=sdk_service,
+                    action="putResourcePolicy",
+                    parameters={
+                        "resourceArn": self.memory.attr_memory_arn,
+                        "policy": policy_json,
+                    },
+                    physical_resource_id=cr.PhysicalResourceId.of(f"{name}-resource-policy"),
+                ),
+                on_update=cr.AwsSdkCall(
+                    service=sdk_service,
+                    action="putResourcePolicy",
+                    parameters={
+                        "resourceArn": self.memory.attr_memory_arn,
+                        "policy": policy_json,
+                    },
+                    physical_resource_id=cr.PhysicalResourceId.of(f"{name}-resource-policy"),
+                ),
+                on_delete=cr.AwsSdkCall(
+                    service=sdk_service,
+                    action="deleteResourcePolicy",
+                    parameters={"resourceArn": self.memory.attr_memory_arn},
+                ),
+                policy=cr.AwsCustomResourcePolicy.from_statements([
+                    iam.PolicyStatement(
+                        actions=[
+                            "bedrock-agentcore:PutResourcePolicy",
+                            "bedrock-agentcore:DeleteResourcePolicy",
+                            "bedrock-agentcore:GetResourcePolicy",
+                        ],
+                        resources=["*"],
+                    ),
+                ]),
+                install_latest_aws_sdk=True,
+            )
 
         # ── SSM Parameters ──
         ssm.StringParameter(self, "SSMMemoryId",

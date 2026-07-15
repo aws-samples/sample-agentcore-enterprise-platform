@@ -64,7 +64,7 @@ PROFILE_FLAGS[greenfield]="enable_networking=false enable_security=false enable_
 PROFILE_FLAGS[migration]="enable_networking=false enable_security=false enable_a2a=false"
 PROFILE_FLAGS[multi-agent]="enable_networking=false enable_security=false enable_a2a=true"
 PROFILE_FLAGS[platform-team]="enable_networking=true enable_security=true enable_a2a=true"
-PROFILE_FLAGS[security-focused]="enable_networking=true enable_security=true enable_a2a=false"
+PROFILE_FLAGS[security-focused]="enable_networking=true enable_security=true enable_a2a=false enable_resource_policies=true"
 
 # ═══════════════════════════════════════════════════════════════
 # Prerequisite Checks (Requirement 18)
@@ -258,6 +258,10 @@ build_context_args() {
     [ -n "${ENABLE_NETWORKING:-}" ] && args+=" -c enable_networking=${ENABLE_NETWORKING}"
     [ -n "${ENABLE_SECURITY:-}" ]   && args+=" -c enable_security=${ENABLE_SECURITY}"
     [ -n "${ENABLE_A2A:-}" ]        && args+=" -c enable_a2a=${ENABLE_A2A}"
+
+    # Security control feature flags (control-library / scope-split model)
+    [ -n "${ENABLE_RESOURCE_POLICIES:-}" ] && args+=" -c enable_resource_policies=${ENABLE_RESOURCE_POLICIES}"
+    [ -n "${ORG_ID:-}" ]                   && args+=" -c org_id=${ORG_ID}"
 
     echo "$args"
 }

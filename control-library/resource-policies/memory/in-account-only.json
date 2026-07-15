@@ -1,0 +1,29 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowInAccountMemoryAccess",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::<<account_id>>:root"
+      },
+      "Action": "bedrock-agentcore:*",
+      "Resource": "<<memory_arn>>"
+    },
+    {
+      "Sid": "DenyAccessFromOutsideOrg",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "bedrock-agentcore:*",
+      "Resource": "<<memory_arn>>",
+      "Condition": {
+        "StringNotEquals": {
+          "aws:PrincipalOrgID": "<<org_id>>"
+        },
+        "Bool": {
+          "aws:ViaAWSService": "false"
+        }
+      }
+    }
+  ]
+}
