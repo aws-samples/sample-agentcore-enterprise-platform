@@ -8,9 +8,7 @@ Implements Requirement 8: AgentCore Memory Configuration
 import aws_cdk as cdk
 from aws_cdk import (
     aws_bedrockagentcore as agentcore,
-    aws_iam as iam,
     aws_ssm as ssm,
-    custom_resources as cr,
 )
 from constructs import Construct
 
@@ -74,8 +72,7 @@ class MemoryStack(cdk.Stack):
         # ── Resource-based policy (optional, control-library) ──
         # Attaches an "in-account-only" resource policy to the Memory resource so principals
         # outside this AWS Organization cannot call the memory data-plane APIs directly.
-        # AgentCore Memory has no L1/CFN property for resource policies, so we call the
-        # PutResourcePolicy control-plane API via a custom resource.
+        # Uses the native AWS::BedrockAgentCore::ResourcePolicy L1 (maps to PutResourcePolicy).
         if enable_resource_policies:
             if not org_id:
                 raise ValueError(
@@ -91,48 +88,9 @@ class MemoryStack(cdk.Stack):
                     "org_id": org_id,
                 },
             )
-            # NOTE: the AWS SDK service/action identifiers below must be confirmed on first
-            # `cdk synth`/deploy against the installed SDK version. boto3 exposes this as
-            # bedrock-agentcore-control.put_resource_policy; the JS SDK client used by
-            # AwsCustomResource is @aws-sdk/client-bedrock-agentcore-control.
-            sdk_service = "bedrock-agentcore-control"
-            cr.AwsCustomResource(
-                self,
-                "MemoryResourcePolicy",
-                on_create=cr.AwsSdkCall(
-                    service=sdk_service,
-                    action="putResourcePolicy",
-                    parameters={
-                        "resourceArn": self.memory.attr_memory_arn,
-                        "policy": policy_json,
-                    },
-                    physical_resource_id=cr.PhysicalResourceId.of(f"{name}-resource-policy"),
-                ),
-                on_update=cr.AwsSdkCall(
-                    service=sdk_service,
-                    action="putResourcePolicy",
-                    parameters={
-                        "resourceArn": self.memory.attr_memory_arn,
-                        "policy": policy_json,
-                    },
-                    physical_resource_id=cr.PhysicalResourceId.of(f"{name}-resource-policy"),
-                ),
-                on_delete=cr.AwsSdkCall(
-                    service=sdk_service,
-                    action="deleteResourcePolicy",
-                    parameters={"resourceArn": self.memory.attr_memory_arn},
-                ),
-                policy=cr.AwsCustomResourcePolicy.from_statements([
-                    iam.PolicyStatement(
-                        actions=[
-                            "bedrock-agentcore:PutResourcePolicy",
-                            "bedrock-agentcore:DeleteResourcePolicy",
-                            "bedrock-agentcore:GetResourcePolicy",
-                        ],
-                        resources=["*"],
-                    ),
-                ]),
-                install_latest_aws_sdk=True,
+            agentcore.CfnResourcePolicy(self, "MemoryResourcePolicy",
+                resource_arn=self.memory.attr_memory_arn,
+                policy=policy_json,
             )
 
         # ── SSM Parameters ──

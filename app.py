@@ -54,6 +54,10 @@ obs_backend = app.node.try_get_context("observability_backend") or os.environ.ge
 enable_resource_policies = (app.node.try_get_context("enable_resource_policies") or os.environ.get("ENABLE_RESOURCE_POLICIES", "false")) == "true"
 # Egress Lambda interceptor + Bedrock Guardrail on the Gateway (PII masking, prompt injection).
 enable_egress_filter = (app.node.try_get_context("enable_egress_filter") or os.environ.get("ENABLE_EGRESS_FILTER", "false")) == "true"
+# AgentCore Cedar policy engine on the Gateway (default-forbid on writes). cedar_mode is
+# LOG_ONLY (evaluate + log) or ENFORCE (block); ships LOG_ONLY for safe rollout.
+enable_cedar = (app.node.try_get_context("enable_cedar") or os.environ.get("ENABLE_CEDAR", "false")) == "true"
+cedar_mode = app.node.try_get_context("cedar_mode") or os.environ.get("CEDAR_MODE", "LOG_ONLY")
 # AWS Organizations ID (o-xxxx). Required when enable_resource_policies is on, so the
 # in-account-only resource policies can render their aws:PrincipalOrgID deny guard.
 org_id = app.node.try_get_context("org_id") or os.environ.get("ORG_ID", "")
@@ -173,6 +177,8 @@ gateway_stack = GatewayStack(app, f"{prefix}-gateway",
         },
     },
     enable_egress_filter=enable_egress_filter,
+    enable_cedar=enable_cedar,
+    cedar_mode=cedar_mode,
     env=cdk_env)
 gateway_stack.add_dependency(auth_stack)
 

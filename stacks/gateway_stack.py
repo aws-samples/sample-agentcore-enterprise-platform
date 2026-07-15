@@ -9,13 +9,14 @@ from aws_cdk import (
 )
 from constructs import Construct
 
-from infra_utils.policy_loader import load_control
+from infra_utils.policy_loader import load_control, load_control_text
 
 
 class GatewayStack(cdk.Stack):
     def __init__(self, scope: Construct, id: str, *, project_name: str, environment: str,
                  cognito_issuer_url: str, cognito_allowed_clients: list[str],
                  tool_configs: dict | None = None, enable_egress_filter: bool = False,
+                 enable_cedar: bool = False, cedar_mode: str = "LOG_ONLY",
                  **kwargs):
         super().__init__(scope, id, **kwargs)
 
@@ -91,6 +92,35 @@ class GatewayStack(cdk.Stack):
                 ),
             ]
 
+        # ── Optional: AgentCore Cedar policy engine (control-library) ──
+        # Deterministic, identity-aware authorization of tool calls. Ships default-forbid +
+        # an explicit read permit. Runs in LOG_ONLY by default (evaluate + log, no block);
+        # set cedar_mode=ENFORCE once decision logs are validated.
+        policy_engine_configuration = None
+        if enable_cedar:
+            policy_engine = agentcore.CfnPolicyEngine(self, "PolicyEngine",
+                name=f"{project_name}_{environment}_policy_engine".replace("-", "_"),
+                description=f"Cedar policy engine for {project_name}/{environment} gateway.",
+            )
+            # One CfnPolicy per Cedar artifact in the control-library.
+            cedar_controls = {
+                "DefaultForbid": "cedar.gateway-default.forbid",
+                "PermitReadTools": "cedar.gateway-default.permit-read",
+            }
+            for construct_id, control_id in cedar_controls.items():
+                statement = load_control_text(control_id)
+                agentcore.CfnPolicy(self, construct_id,
+                    name=construct_id,
+                    policy_engine_id=policy_engine.attr_policy_engine_id,
+                    definition=agentcore.CfnPolicy.PolicyDefinitionProperty(
+                        cedar=agentcore.CfnPolicy.CedarPolicyProperty(statement=statement),
+                    ),
+                )
+            policy_engine_configuration = agentcore.CfnGateway.GatewayPolicyEngineConfigurationProperty(
+                arn=policy_engine.attr_policy_engine_arn,
+                mode=cedar_mode,
+            )
+
         # Gateway
         self._gateway = agentcore.CfnGateway(self, "Gateway",
             name=gw_name,
@@ -108,6 +138,7 @@ class GatewayStack(cdk.Stack):
                 "mcp": {"supportedVersions": ["2025-03-26", "2025-06-18"]},
             },
             interceptor_configurations=interceptor_configurations,
+            policy_engine_configuration=policy_engine_configuration,
         )
 
         # Allow the Gateway to invoke the interceptor Lambda (after gateway ARN is known).

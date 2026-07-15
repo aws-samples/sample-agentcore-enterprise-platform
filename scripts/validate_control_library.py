@@ -25,7 +25,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from infra_utils.policy_loader import load_catalog, load_control  # noqa: E402
+from infra_utils.policy_loader import (  # noqa: E402
+    load_catalog,
+    load_control,
+    load_control_text,
+)
 
 _TOKEN_RE = re.compile(r"<<\s*([A-Za-z0-9_]+)\s*>>")
 _LIBRARY_ROOT = Path(__file__).resolve().parents[1] / "control-library"
@@ -67,18 +71,21 @@ def validate() -> None:
             continue
 
         raw = path.read_text()
-        try:
-            doc = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            _err(f"[{cid}] invalid JSON in {rel}: {exc}")
-            continue
+        is_cedar = entry.get("type") == "CEDAR"
 
-        # Policy shape
-        if entry.get("type") in _POLICY_TYPES:
-            if doc.get("Version") != "2012-10-17":
-                _warn(f"[{cid}] Version is not '2012-10-17'")
-            if not doc.get("Statement"):
-                _err(f"[{cid}] policy has no Statement")
+        if not is_cedar:
+            try:
+                doc = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                _err(f"[{cid}] invalid JSON in {rel}: {exc}")
+                continue
+
+            # Policy shape (IAM-style policy documents only)
+            if entry.get("type") in _POLICY_TYPES:
+                if doc.get("Version") != "2012-10-17":
+                    _warn(f"[{cid}] Version is not '2012-10-17'")
+                if not doc.get("Statement"):
+                    _err(f"[{cid}] policy has no Statement")
 
         # Sentinel <-> param consistency
         sentinels = set(_TOKEN_RE.findall(raw))
@@ -96,8 +103,9 @@ def validate() -> None:
             spec = spec or {}
             if "default" not in spec:
                 params[name] = f"VALIDATION_PLACEHOLDER_{name}"
+        loader = load_control_text if is_cedar else load_control
         try:
-            load_control(cid, params, library_root=_LIBRARY_ROOT, catalog=catalog)
+            loader(cid, params, library_root=_LIBRARY_ROOT, catalog=catalog)
         except Exception as exc:  # noqa: BLE001 - report any render failure
             _err(f"[{cid}] failed to render: {exc}")
 

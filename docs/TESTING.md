@@ -8,6 +8,8 @@ How to test everything added on the `feat/security-controls` branch:
 - **Item 4 (resource policy):** Memory in-account-only resource policy (`enable_resource_policies`)
 - **Items 5+6 (Guardrails + interceptor):** egress Lambda interceptor + Bedrock Guardrail
   on the Gateway (`enable_egress_filter`)
+- **Item 3 (Cedar):** AgentCore policy engine with default-forbid + read permit on the
+  Gateway (`enable_cedar`, `cedar_mode` LOG_ONLY/ENFORCE)
 
 There are two layers of testing:
 
@@ -130,7 +132,29 @@ cdk synth agentcore-workshop-dev-gateway 2>/dev/null \
   | grep -c 'AWS::Bedrock::Guardrail'                                                  # → 0
 ```
 
-### A7. Lint (matches CI)
+### A7. Cedar policy engine synthesizes only when enabled (item 3)
+
+```bash
+source .venv/bin/activate
+export CDK_DEFAULT_ACCOUNT=111122223333 CDK_DEFAULT_REGION=us-east-1
+
+# Flag ON → policy engine + policies + LOG_ONLY policy-engine config on the gateway
+rm -rf cdk.out
+cdk synth agentcore-workshop-dev-gateway -c enable_cedar=true 2>/dev/null \
+  | grep -cE 'AWS::BedrockAgentCore::PolicyEngine|PolicyEngineConfiguration|forbid\(principal'
+# → 3 (engine, config, and the default-forbid Cedar statement)
+
+# Try enforce mode
+rm -rf cdk.out
+cdk synth agentcore-workshop-dev-gateway -c enable_cedar=true -c cedar_mode=ENFORCE 2>/dev/null \
+  | grep -c 'ENFORCE'                                                                  # → 1
+
+# Flag OFF → no policy engine config
+rm -rf cdk.out
+cdk synth agentcore-workshop-dev-gateway 2>/dev/null | grep -c 'PolicyEngineConfiguration'  # → 0
+```
+
+### A8. Lint (matches CI)
 
 ```bash
 source .venv/bin/activate
@@ -188,6 +212,19 @@ Then invoke the gateway tool through the agent with:
 
 Interceptor logs: `/aws/lambda/agentcore-workshop-dev-egress-interceptor`.
 
+### B3b. Verify the Cedar policy engine (item 3)
+
+```bash
+# The policy engine is attached to the gateway; deploy with enable_cedar=true (or the
+# security-focused profile). Start in LOG_ONLY so nothing is blocked while you validate.
+NON_INTERACTIVE=1 cdk deploy agentcore-workshop-dev-gateway \
+  -c enable_cedar=true -c cedar_mode=LOG_ONLY
+```
+
+Invoke a permitted (read) tool and a non-permitted (write) tool through the agent, then check
+the policy decision logs. Only after confirming the expected allow/deny decisions, redeploy
+with `-c cedar_mode=ENFORCE` to actively block.
+
 ### B4. Verify the CMK SCP (item 1) — management account
 
 ```bash
@@ -209,12 +246,15 @@ cd terraform/org-guardrails && terraform destroy && cd ../..
 
 ## Known caveats to validate on first live deploy
 
-1. **Memory resource policy custom resource** uses AWS SDK service `bedrock-agentcore-control`,
-   action `putResourcePolicy`. This synthesizes correctly but the exact SDK service/action
-   string should be confirmed on first deploy (see the comment in `stacks/memory_stack.py`).
-2. **Interceptor event shape.** The Lambda scans all string leaves in
+1. **Interceptor event shape.** The Lambda scans all string leaves in
    `mcp.gatewayRequest` / `mcp.gatewayResponse`. The output contract
    (`interceptorOutputVersion` + `transformedGateway*`) is per AWS docs; confirm the nested
    request/response shape against live Gateway traces for your target type.
-3. **Guardrail version.** The interceptor uses the guardrail `DRAFT` version by default. For
+2. **Guardrail version.** The interceptor uses the guardrail `DRAFT` version by default. For
    production, publish a numbered version and pin `GUARDRAIL_VERSION`.
+3. **Cedar semantics.** The Cedar policies (`control-library/cedar/`) synthesize as text into
+   `AWS::BedrockAgentCore::Policy`; CloudFormation does not parse Cedar at synth time. Validate
+   allow/deny behaviour on a live gateway in `LOG_ONLY` mode (inspect decision logs) before
+   switching `cedar_mode=ENFORCE`. Action names must match `<TargetName>___<tool_name>`.
+4. **Resolved:** the Memory resource policy now uses the native
+   `AWS::BedrockAgentCore::ResourcePolicy` L1 (no custom resource / SDK-name guess).

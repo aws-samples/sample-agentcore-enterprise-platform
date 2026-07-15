@@ -153,3 +153,40 @@ def load_control_json(
         load_control(control_id, params, library_root=library_root, catalog=catalog),
         separators=(",", ":"),
     )
+
+
+def load_control_text(
+    control_id: str,
+    params: dict[str, Any] | None = None,
+    *,
+    library_root: str | Path | None = None,
+    catalog: dict[str, Any] | None = None,
+) -> str:
+    """Load a non-JSON control artifact (e.g. Cedar) as text, with sentinels substituted.
+
+    Unlike :func:`load_control`, this does not parse the file as JSON — it treats it as raw
+    text and replaces ``<<token>>`` sentinels with string parameter values.
+    """
+    params = dict(params or {})
+    root = _library_root(library_root)
+    catalog = catalog if catalog is not None else load_catalog(root)
+    entry = _find_control(catalog, control_id)
+
+    artifact_path = root / entry["file"]
+    if not artifact_path.is_file():
+        raise FileNotFoundError(f"control file not found: {artifact_path}")
+
+    resolved = _resolve_params(entry, params)
+
+    def _repl(match: re.Match) -> str:
+        name = match.group(1)
+        return str(resolved[name]) if name in resolved else match.group(0)
+
+    rendered = _TOKEN_RE.sub(_repl, artifact_path.read_text())
+    leftover = sorted(set(_TOKEN_RE.findall(rendered)))
+    if leftover:
+        raise ValueError(
+            f"control '{control_id}' has unresolved tokens: {', '.join(leftover)}. "
+            "Pass them in params or add defaults in catalog.yaml."
+        )
+    return rendered

@@ -66,3 +66,33 @@ controls:
     default_mode: enforce
     params: {}
     validate: [json]
+
+  # ── Item 3: AgentCore Cedar policies for the Gateway policy engine (workload scope, CDK) ──
+  # Plain-text Cedar (not JSON). Loaded via load_control_text and attached to a CfnPolicyEngine.
+  # Shipped in LOG_ONLY mode by default (evaluate + log, do not block); flip to ENFORCE via
+  # the cedar_mode context/flag once decision logs are validated.
+  - id: cedar.gateway-default.forbid
+    file: cedar/gateway-default/00-default-forbid.cedar
+    type: CEDAR
+    scope: workload
+    attach_to: [GATEWAY]
+    engine: [cdk]
+    default_mode: log_only
+    params: {}
+    validate: [cedar]
+
+  - id: cedar.gateway-default.permit-read
+    file: cedar/gateway-default/10-permit-read-tools.cedar
+    type: CEDAR
+    scope: workload
+    attach_to: [GATEWAY]
+    engine: [cdk]
+    default_mode: log_only
+    params:
+      read_action:
+        required: false
+        default: "sample-tool___text_analysis_tool"
+        description: >-
+          AgentCore action name (<TargetName>___<tool_name>) for the read-only tool to permit.
+          Matches the sample gateway target 'sample-tool' and tool 'text_analysis_tool'.
+    validate: [cedar]

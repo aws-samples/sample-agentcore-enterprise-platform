@@ -4,7 +4,12 @@ import json
 
 import pytest
 
-from infra_utils.policy_loader import load_catalog, load_control, load_control_json
+from infra_utils.policy_loader import (
+    load_catalog,
+    load_control,
+    load_control_json,
+    load_control_text,
+)
 
 
 # ── Against the real control-library ──
@@ -81,6 +86,20 @@ def test_guardrail_artifact_loads_with_expected_policies():
         p["Type"] for p in doc["SensitiveInformationPolicyConfig"]["PiiEntitiesConfig"]
     }
     assert {"EMAIL", "US_SOCIAL_SECURITY_NUMBER"} <= pii_types
+
+
+def test_cedar_default_forbid_loads_as_text():
+    text = load_control_text("cedar.gateway-default.forbid")
+    assert "forbid(principal, action, resource);" in text
+
+
+def test_cedar_permit_substitutes_read_action():
+    text = load_control_text(
+        "cedar.gateway-default.permit-read",
+        {"read_action": "my-target___my_read_tool"},
+    )
+    assert 'AgentCore::Action::"my-target___my_read_tool"' in text
+    assert "<<" not in text
 
 
 # ── Substitution semantics against a temp library ──
