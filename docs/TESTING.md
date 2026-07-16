@@ -77,7 +77,7 @@ scan; without it you get a single warning (non-fatal).
 
 ```bash
 make test-controls
-# or: python -m pytest tests/ -q      → 10 passed
+# or: python -m pytest tests/ -q      → 12 passed
 ```
 
 ### A4. CMK-for-Memory SCP via Terraform (item 1)
@@ -116,19 +116,23 @@ controls (`aws:SourceVpc`, `InboundJwtClaim/*`) and RCP support are on the roadm
 
 ### A5. Memory resource policy synthesizes only when enabled (item 4)
 
+The Memory resource policy is attached with the native `AWS::BedrockAgentCore::ResourcePolicy`.
+
 ```bash
 source .venv/bin/activate
 export CDK_DEFAULT_ACCOUNT=111122223333 CDK_DEFAULT_REGION=us-east-1
 
-# Flag OFF → no resource-policy custom resource
+# Flag OFF → no resource policy
 rm -rf cdk.out
-cdk synth agentcore-workshop-dev-memory 2>/dev/null | grep -c 'Custom::AWS'          # → 0
+cdk synth agentcore-workshop-dev-memory 2>/dev/null \
+  | grep -c 'AWS::BedrockAgentCore::ResourcePolicy'                                   # → 0
 
-# Flag ON → PutResourcePolicy custom resource with the rendered policy
+# Flag ON → one native ResourcePolicy with the rendered in-account-only policy
 rm -rf cdk.out
 cdk synth agentcore-workshop-dev-memory \
   -c enable_resource_policies=true -c org_id=o-example123 2>/dev/null \
-  | grep -oE 'putResourcePolicy|o-example123|PrincipalOrgID' | sort | uniq -c
+  | grep -oE 'AWS::BedrockAgentCore::ResourcePolicy|o-example123|PrincipalOrgID' | sort | uniq -c
+# → 1 each (resource policy present, org_id + PrincipalOrgID deny guard rendered)
 
 # Flag ON but missing org_id → clean failure
 rm -rf cdk.out
@@ -223,14 +227,21 @@ cdk synth agentcore-workshop-dev-observability 2>/dev/null | grep -c 'AWS::Event
 
 ```bash
 source .venv/bin/activate
-ruff check .
-# New security-controls files are ruff-format clean:
+
+# Lint the new/changed security-controls files (all clean):
+ruff check infra_utils/policy_loader.py scripts/validate_control_library.py \
+  stacks/gateway_stack.py stacks/memory_stack.py stacks/networking_stack.py \
+  stacks/observability_stack.py infra_utils/agentcore_role.py tests/
+
+# New security-controls files are also ruff-format clean:
 ruff format --check infra_utils/policy_loader.py scripts/validate_control_library.py \
   tests/ tools/egress_interceptor/handler.py
 ```
 
-> Note: `app.py` and `stacks/memory_stack.py` predate ruff-format on `main` and are left in
-> their existing style to avoid noisy, unrelated diffs.
+> Note: repo-wide `ruff check .` reports **pre-existing** findings in files this branch
+> doesn't touch (`stacks/runtime_stack.py`, `stacks/auth_stack.py`, `scripts/test_*.py`).
+> CI only lints changed files, so those don't affect this MR. `app.py` and `memory_stack.py`
+> predate ruff-format on `main` and are left in their existing style to avoid noisy diffs.
 
 ---
 
