@@ -17,6 +17,7 @@ source of truth, no duplicated policy bodies.
 | Control id | Resource | Default |
 |---|---|---|
 | `scp.memory.enforce-cmk` | `aws_organizations_policy` + attachment | Deny `CreateMemory` unless a CMK is specified |
+| `scp.gateway.*` (8 SCPs, `gateway.tf`) | `aws_organizations_policy` + attachment | Gateway configuration hardening: CMK, no-auth, policy-engine=ENFORCE, approved IdP, protocol, private-endpoint targets, credential-provider, target-type. Toggle with `enable_gateway_scps`. |
 
 ## Prerequisites
 

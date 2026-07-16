@@ -96,6 +96,24 @@ cd ../..
 Expect the printed policy to contain `"bedrock-agentcore:CreateMemory"` and the resolved
 `arn:aws:kms:*:*:key/*` pattern (or your override), and **no** `<<kms_key_arn_pattern>>`.
 
+### A4b. Gateway configuration SCPs render (control-plane, item "1b")
+
+```bash
+cd terraform/org-guardrails
+terraform init -backend=false
+terraform validate
+
+# All 8 Gateway SCPs are built and their sentinels resolved:
+printf 'keys(local.gateway_scps)\n' | terraform console
+printf 'local.gateway_scps["enforce-approved-idp"]\n' | terraform console | grep -c 'https://'   # → 1 (DiscoveryUrl pattern injected)
+printf 'local.gateway_scps["require-cmk"]\n' | terraform console | grep -c 'kms_key_arn_pattern'  # → 0 (sentinel resolved; note console wraps output in <<EOT)
+cd ../..
+```
+
+These SCPs use the launched **control-plane** condition keys only. Data-plane ingress
+controls (`aws:SourceVpc`, `InboundJwtClaim/*`) and RCP support are on the roadmap in
+`SECURITY_CONTROLS.md` and are not shipped yet.
+
 ### A5. Memory resource policy synthesizes only when enabled (item 4)
 
 ```bash

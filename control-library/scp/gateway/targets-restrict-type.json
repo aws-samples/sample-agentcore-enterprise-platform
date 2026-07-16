@@ -1,0 +1,22 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyNonApprovedMcpTargetTypes",
+      "Effect": "Deny",
+      "Action": [
+        "bedrock-agentcore:CreateGatewayTarget",
+        "bedrock-agentcore:UpdateGatewayTarget"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotEqualsIfExists": {
+          "bedrock-agentcore:McpTargetConfigurationType": [
+            "lambda",
+            "mcpServer"
+          ]
+        }
+      }
+    }
+  ]
+}

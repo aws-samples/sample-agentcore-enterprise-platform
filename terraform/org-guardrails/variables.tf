@@ -38,3 +38,32 @@ variable "kms_key_arn_pattern" {
   type        = string
   default     = "arn:aws:kms:*:*:key/*"
 }
+
+# ── Controls: Gateway configuration SCPs (control plane) ──
+variable "enable_gateway_scps" {
+  description = "Create and attach the AgentCore Gateway configuration hardening SCPs."
+  type        = bool
+  default     = true
+}
+
+variable "gateway_kms_key_arn_pattern" {
+  description = "KMS key ARN pattern a Gateway must use (bedrock-agentcore:KmsKeyArn)."
+  type        = string
+  default     = "arn:aws:kms:*:*:key/*"
+}
+
+variable "approved_discovery_url_pattern" {
+  description = <<-EOT
+    Allowed OIDC discovery URL pattern for JWT gateways (bedrock-agentcore:DiscoveryUrl).
+    Default only requires HTTPS; narrow to your IdP, e.g.
+    "https://login.microsoftonline.com/<tenant>/*".
+  EOT
+  type        = string
+  default     = "https://*"
+}
+
+variable "allowed_gateway_protocol" {
+  description = "Allowed Gateway protocolType (bedrock-agentcore:ProtocolType)."
+  type        = string
+  default     = "MCP"
+}

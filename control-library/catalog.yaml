@@ -138,3 +138,113 @@ controls:
         default: "bedrock-agentcore-"
         description: ECR repository name prefix the runtime pulls its image from.
     validate: [checkov, access-analyzer]
+
+  # ── Gateway configuration guardrails (org scope, Terraform) ──
+  # Control-plane SCPs using the launched AgentCore Gateway configuration condition keys.
+  # They constrain what admins can Create/Update, not who can invoke (data-plane keys + RCP
+  # ingress controls launch later — see docs/SECURITY_CONTROLS.md roadmap).
+  - id: scp.gateway.require-cmk
+    file: scp/gateway/require-cmk.json
+    type: SCP
+    scope: org
+    attach_to: [OU, ACCOUNT]
+    engine: [terraform]
+    default_mode: enforce
+    params:
+      kms_key_arn_pattern:
+        required: false
+        default: "arn:aws:kms:*:*:key/*"
+        description: KMS key ARN pattern the Gateway must use. Narrow to restrict further.
+    validate: [checkov, access-analyzer]
+
+  - id: scp.gateway.deny-no-auth
+    file: scp/gateway/deny-no-auth.json
+    type: SCP
+    scope: org
+    attach_to: [OU, ACCOUNT]
+    engine: [terraform]
+    default_mode: enforce
+    params: {}
+    # NOTE: bedrock-agentcore:GatewayAuthorizerType is an existing key but its registration
+    # under Create/UpdateGateway is not clearly reflected in the public service authorization
+    # reference. Validate with IAM Access Analyzer before enforcing org-wide.
+    validate: [checkov, access-analyzer]
+
+  - id: scp.gateway.require-policy-engine
+    file: scp/gateway/require-policy-engine.json
+    type: SCP
+    scope: org
+    attach_to: [OU, ACCOUNT]
+    engine: [terraform]
+    default_mode: enforce
+    params: {}
+    # Requires a Cedar policy engine attached AND mode=ENFORCE. Drop the second statement to
+    # allow LOG_ONLY during rollout.
+    validate: [checkov, access-analyzer]
+
+  - id: scp.gateway.enforce-approved-idp
+    file: scp/gateway/enforce-approved-idp.json
+    type: SCP
+    scope: org
+    attach_to: [OU, ACCOUNT]
+    engine: [terraform]
+    default_mode: enforce
+    params:
+      approved_discovery_url_pattern:
+        required: false
+        default: "https://*"
+        description: >-
+          Allowed OIDC discovery URL pattern (bedrock-agentcore:DiscoveryUrl). Default only
+          requires HTTPS; narrow to your IdP, e.g. https://login.microsoftonline.com/<tenant>/*.
+          Uses IfExists so IAM-auth gateways (no discovery URL) are unaffected.
+    validate: [checkov, access-analyzer]
+
+  - id: scp.gateway.restrict-protocol
+    file: scp/gateway/restrict-protocol.json
+    type: SCP
+    scope: org
+    attach_to: [OU, ACCOUNT]
+    engine: [terraform]
+    default_mode: enforce
+    params:
+      allowed_protocol:
+        required: false
+        default: "MCP"
+        description: Allowed Gateway protocolType (bedrock-agentcore:ProtocolType).
+    validate: [checkov, access-analyzer]
+
+  - id: scp.gateway.targets-require-private-endpoint
+    file: scp/gateway/targets-require-private-endpoint.json
+    type: SCP
+    scope: org
+    attach_to: [OU, ACCOUNT]
+    engine: [terraform]
+    default_mode: enforce
+    params: {}
+    # Requires every target to declare a private endpoint (managedVpcResource /
+    # selfManagedLatticeResource) -> private egress to targets.
+    validate: [checkov, access-analyzer]
+
+  - id: scp.gateway.targets-restrict-credential-provider
+    file: scp/gateway/targets-restrict-credential-provider.json
+    type: SCP
+    scope: org
+    attach_to: [OU, ACCOUNT]
+    engine: [terraform]
+    default_mode: enforce
+    params: {}
+    # Denies API_KEY and JWT_PASSTHROUGH credential providers. Edit the array to change the
+    # denied set.
+    validate: [checkov, access-analyzer]
+
+  - id: scp.gateway.targets-restrict-type
+    file: scp/gateway/targets-restrict-type.json
+    type: SCP
+    scope: org
+    attach_to: [OU, ACCOUNT]
+    engine: [terraform]
+    default_mode: enforce
+    params: {}
+    # Allow-list of MCP target types (lambda, mcpServer). Uses IfExists so non-MCP targets
+    # are unaffected. Edit the array to change the allow-list.
+    validate: [checkov, access-analyzer]

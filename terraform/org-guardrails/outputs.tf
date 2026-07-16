@@ -12,3 +12,8 @@ output "attached_target_ids" {
   description = "Target IDs the SCPs were attached to."
   value       = var.enable_scp_memory_enforce_cmk ? var.target_ids : []
 }
+
+output "gateway_scp_policy_ids" {
+  description = "Map of Gateway hardening SCP name -> policy ID (empty if disabled)."
+  value       = { for k, p in aws_organizations_policy.gateway : k => p.id }
+}
