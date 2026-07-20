@@ -1,0 +1,33 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyGatewayWithoutCMK",
+      "Effect": "Deny",
+      "Action": [
+        "bedrock-agentcore:CreateGateway",
+        "bedrock-agentcore:UpdateGateway"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "Null": {
+          "bedrock-agentcore:KmsKeyArn": "true"
+        }
+      }
+    },
+    {
+      "Sid": "DenyGatewayWithNonApprovedCMK",
+      "Effect": "Deny",
+      "Action": [
+        "bedrock-agentcore:CreateGateway",
+        "bedrock-agentcore:UpdateGateway"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotLike": {
+          "bedrock-agentcore:KmsKeyArn": "<<kms_key_arn_pattern>>"
+        }
+      }
+    }
+  ]
+}

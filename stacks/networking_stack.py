@@ -3,10 +3,13 @@ import aws_cdk as cdk
 from aws_cdk import aws_ec2 as ec2, aws_ssm as ssm
 from constructs import Construct
 
+from infra_utils.policy_loader import load_control
+
 
 class NetworkingStack(cdk.Stack):
     def __init__(self, scope: Construct, id: str, *, project_name: str, environment: str,
-                 vpc_cidr: str = "10.0.0.0/16", enable_vpc_endpoints: bool = False, **kwargs):
+                 vpc_cidr: str = "10.0.0.0/16", enable_vpc_endpoints: bool = False,
+                 org_id: str = "", **kwargs):
         super().__init__(scope, id, **kwargs)
 
         prefix = f"{project_name}-{environment}"
@@ -29,6 +32,18 @@ class NetworkingStack(cdk.Stack):
             self.vpc.add_gateway_endpoint("S3Endpoint",
                 service=ec2.GatewayVpcEndpointAwsService.S3,
             )
+
+            # AgentCore Gateway interface endpoint with a fine-grained, org-scoped endpoint
+            # policy (item 2). Only principals in the org can invoke AgentCore through it.
+            agentcore_endpoint = self.vpc.add_interface_endpoint("AgentCoreGatewayEndpoint",
+                service=ec2.InterfaceVpcEndpointService(
+                    f"com.amazonaws.{self.region}.bedrock-agentcore.gateway", 443),
+                private_dns_enabled=True,
+            )
+            if org_id:
+                endpoint_policy = load_control("vpce.agentcore-in-org", {"org_id": org_id})
+                agentcore_endpoint.node.default_child.add_property_override(
+                    "PolicyDocument", endpoint_policy)
 
         ssm.StringParameter(self, "SSMVpcId",
             parameter_name=f"/{project_name}/{environment}/networking/vpc-id",

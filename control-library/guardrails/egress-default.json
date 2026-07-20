@@ -1,0 +1,23 @@
+{
+  "BlockedInputMessaging": "This request was blocked by the AgentCore egress guardrail.",
+  "BlockedOutputsMessaging": "This response was blocked by the AgentCore egress guardrail.",
+  "ContentPolicyConfig": {
+    "FiltersConfig": [
+      {
+        "Type": "PROMPT_ATTACK",
+        "InputStrength": "HIGH",
+        "OutputStrength": "NONE"
+      }
+    ]
+  },
+  "SensitiveInformationPolicyConfig": {
+    "PiiEntitiesConfig": [
+      { "Type": "EMAIL", "Action": "ANONYMIZE" },
+      { "Type": "PHONE", "Action": "ANONYMIZE" },
+      { "Type": "NAME", "Action": "ANONYMIZE" },
+      { "Type": "ADDRESS", "Action": "ANONYMIZE" },
+      { "Type": "US_SOCIAL_SECURITY_NUMBER", "Action": "BLOCK" },
+      { "Type": "CREDIT_DEBIT_CARD_NUMBER", "Action": "BLOCK" }
+    ]
+  }
+}

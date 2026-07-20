@@ -1,0 +1,31 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyMemoryCreationWithoutCMK",
+      "Effect": "Deny",
+      "Action": [
+        "bedrock-agentcore:CreateMemory"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotLike": {
+          "bedrock-agentcore:KmsKeyArn": "<<kms_key_arn_pattern>>"
+        }
+      }
+    },
+    {
+      "Sid": "DenyMemoryCreationWithoutKmsKeySpecified",
+      "Effect": "Deny",
+      "Action": [
+        "bedrock-agentcore:CreateMemory"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "Null": {
+          "bedrock-agentcore:KmsKeyArn": "true"
+        }
+      }
+    }
+  ]
+}

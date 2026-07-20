@@ -1,0 +1,19 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyGatewayWithUnapprovedDiscoveryUrl",
+      "Effect": "Deny",
+      "Action": [
+        "bedrock-agentcore:CreateGateway",
+        "bedrock-agentcore:UpdateGateway"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotLikeIfExists": {
+          "bedrock-agentcore:DiscoveryUrl": "<<approved_discovery_url_pattern>>"
+        }
+      }
+    }
+  ]
+}

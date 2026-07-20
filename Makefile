@@ -52,4 +52,12 @@ test-gateway:
 test-memory:
 	python scripts/test_memory.py
 
-.PHONY: all lint ruff-lint format lint-cicd deploy synth test-agent test-gateway test-memory
+# Validate the control-library against its catalog (+ checkov if installed)
+validate-controls:
+	python scripts/validate_control_library.py
+
+# Run control-library / policy_loader unit tests
+test-controls:
+	python -m pytest tests/ -q
+
+.PHONY: all lint ruff-lint format lint-cicd deploy synth test-agent test-gateway test-memory validate-controls test-controls

@@ -1,0 +1,19 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyNoAuthGateway",
+      "Effect": "Deny",
+      "Action": [
+        "bedrock-agentcore:CreateGateway",
+        "bedrock-agentcore:UpdateGateway"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "bedrock-agentcore:GatewayAuthorizerType": "NONE"
+        }
+      }
+    }
+  ]
+}

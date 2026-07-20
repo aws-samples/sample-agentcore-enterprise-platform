@@ -1,5 +1,4 @@
 """Reusable AgentCore IAM Role construct."""
-import aws_cdk as cdk
 from aws_cdk import aws_iam as iam
 from constructs import Construct
 
@@ -25,7 +24,7 @@ class AgentCoreRole(iam.Role):
             actions=[
                 "logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents",
             ],
-            resources=[f"arn:aws:logs:*:*:log-group:/aws/bedrock-agentcore/runtimes/*"],
+            resources=["arn:aws:logs:*:*:log-group:/aws/bedrock-agentcore/runtimes/*"],
         ))
         self.add_to_policy(iam.PolicyStatement(
             actions=["xray:PutTraceSegments", "xray:PutTelemetryRecords"],
@@ -44,9 +43,12 @@ class AgentCoreRole(iam.Role):
             ],
             resources=["arn:aws:bedrock:*::foundation-model/*"],
         ))
+        # Least-privilege (item 2): scope SSM reads to this project's parameter path rather
+        # than "*". See control-library/iam/runtime-execution-least-privilege.json for the
+        # full reference policy (ECR/logs/bedrock scoping) teams can adopt.
         self.add_to_policy(iam.PolicyStatement(
             actions=["ssm:GetParameter", "ssm:GetParameters"],
-            resources=["*"],
+            resources=[f"arn:aws:ssm:*:*:parameter/{project_name}/*"],
         ))
 
         for stmt in (extra_policy_statements or []):

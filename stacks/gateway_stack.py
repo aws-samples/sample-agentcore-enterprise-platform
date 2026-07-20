@@ -1,6 +1,7 @@
 """Gateway Stack — AgentCore Gateway with Lambda tool targets."""
 import aws_cdk as cdk
 from aws_cdk import (
+    aws_bedrock as bedrock,
     aws_bedrockagentcore as agentcore,
     aws_iam as iam,
     aws_lambda as _lambda,
@@ -8,11 +9,15 @@ from aws_cdk import (
 )
 from constructs import Construct
 
+from infra_utils.policy_loader import load_control, load_control_text
+
 
 class GatewayStack(cdk.Stack):
     def __init__(self, scope: Construct, id: str, *, project_name: str, environment: str,
                  cognito_issuer_url: str, cognito_allowed_clients: list[str],
-                 tool_configs: dict | None = None, **kwargs):
+                 tool_configs: dict | None = None, enable_egress_filter: bool = False,
+                 enable_cedar: bool = False, cedar_mode: str = "LOG_ONLY",
+                 **kwargs):
         super().__init__(scope, id, **kwargs)
 
         prefix = f"{project_name}-{environment}"
@@ -27,6 +32,94 @@ class GatewayStack(cdk.Stack):
             actions=["lambda:InvokeFunction"],
             resources=[f"arn:aws:lambda:{self.region}:{self.account}:function:{prefix}-tool-*"],
         ))
+
+        # ── Optional: egress Lambda interceptor + Bedrock Guardrail (control-library) ──
+        # Applies a Bedrock Guardrail to Gateway REQUEST/RESPONSE for PII masking and
+        # prompt-injection blocking. Built before the Gateway so it can reference the ARN.
+        self._interceptor_fn = None
+        interceptor_configurations = None
+        if enable_egress_filter:
+            guardrail_cfg = load_control("guardrail.egress-default")
+            guardrail = bedrock.CfnGuardrail(self, "EgressGuardrail",
+                name=f"{prefix}-egress-guardrail",
+                description="Egress guardrail for AgentCore Gateway (PII + prompt injection).",
+                blocked_input_messaging=guardrail_cfg["BlockedInputMessaging"],
+                blocked_outputs_messaging=guardrail_cfg["BlockedOutputsMessaging"],
+            )
+            # Policy blocks come straight from the control-library artifact (CFN shape).
+            for cfn_key in ("ContentPolicyConfig", "SensitiveInformationPolicyConfig",
+                            "TopicPolicyConfig", "WordPolicyConfig",
+                            "ContextualGroundingPolicyConfig"):
+                if cfn_key in guardrail_cfg:
+                    guardrail.add_property_override(cfn_key, guardrail_cfg[cfn_key])
+
+            interceptor_role = iam.Role(self, "InterceptorRole",
+                assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+                managed_policies=[
+                    iam.ManagedPolicy.from_aws_managed_policy_name("service-role/AWSLambdaBasicExecutionRole"),
+                ],
+            )
+            interceptor_role.add_to_policy(iam.PolicyStatement(
+                actions=["bedrock:ApplyGuardrail"],
+                resources=[guardrail.attr_guardrail_arn],
+            ))
+
+            self._interceptor_fn = _lambda.Function(self, "EgressInterceptor",
+                function_name=f"{prefix}-egress-interceptor",
+                runtime=_lambda.Runtime.PYTHON_3_13,
+                handler="handler.handler",
+                code=_lambda.Code.from_asset("tools/egress_interceptor"),
+                architecture=_lambda.Architecture.ARM_64,
+                timeout=cdk.Duration.seconds(30),
+                role=interceptor_role,
+                environment={
+                    "GUARDRAIL_ID": guardrail.attr_guardrail_id,
+                    "GUARDRAIL_VERSION": guardrail.attr_version,
+                },
+            )
+
+            interceptor_configurations = [
+                agentcore.CfnGateway.GatewayInterceptorConfigurationProperty(
+                    interception_points=["REQUEST", "RESPONSE"],
+                    interceptor=agentcore.CfnGateway.InterceptorConfigurationProperty(
+                        lambda_=agentcore.CfnGateway.LambdaInterceptorConfigurationProperty(
+                            arn=self._interceptor_fn.function_arn,
+                        ),
+                    ),
+                    input_configuration=agentcore.CfnGateway.InterceptorInputConfigurationProperty(
+                        pass_request_headers=False,
+                    ),
+                ),
+            ]
+
+        # ── Optional: AgentCore Cedar policy engine (control-library) ──
+        # Deterministic, identity-aware authorization of tool calls. Ships default-forbid +
+        # an explicit read permit. Runs in LOG_ONLY by default (evaluate + log, no block);
+        # set cedar_mode=ENFORCE once decision logs are validated.
+        policy_engine_configuration = None
+        if enable_cedar:
+            policy_engine = agentcore.CfnPolicyEngine(self, "PolicyEngine",
+                name=f"{project_name}_{environment}_policy_engine".replace("-", "_"),
+                description=f"Cedar policy engine for {project_name}/{environment} gateway.",
+            )
+            # One CfnPolicy per Cedar artifact in the control-library.
+            cedar_controls = {
+                "DefaultForbid": "cedar.gateway-default.forbid",
+                "PermitReadTools": "cedar.gateway-default.permit-read",
+            }
+            for construct_id, control_id in cedar_controls.items():
+                statement = load_control_text(control_id)
+                agentcore.CfnPolicy(self, construct_id,
+                    name=construct_id,
+                    policy_engine_id=policy_engine.attr_policy_engine_id,
+                    definition=agentcore.CfnPolicy.PolicyDefinitionProperty(
+                        cedar=agentcore.CfnPolicy.CedarPolicyProperty(statement=statement),
+                    ),
+                )
+            policy_engine_configuration = agentcore.CfnGateway.GatewayPolicyEngineConfigurationProperty(
+                arn=policy_engine.attr_policy_engine_arn,
+                mode=cedar_mode,
+            )
 
         # Gateway
         self._gateway = agentcore.CfnGateway(self, "Gateway",
@@ -44,7 +137,16 @@ class GatewayStack(cdk.Stack):
             protocol_configuration={
                 "mcp": {"supportedVersions": ["2025-03-26", "2025-06-18"]},
             },
+            interceptor_configurations=interceptor_configurations,
+            policy_engine_configuration=policy_engine_configuration,
         )
+
+        # Allow the Gateway to invoke the interceptor Lambda (after gateway ARN is known).
+        if self._interceptor_fn is not None:
+            self._interceptor_fn.add_permission("AgentCoreInvokeInterceptor",
+                principal=iam.ServicePrincipal("bedrock-agentcore.amazonaws.com"),
+                source_arn=self._gateway.attr_gateway_arn,
+            )
 
         # Lambda tool role
         lambda_role = iam.Role(self, "LambdaToolRole",

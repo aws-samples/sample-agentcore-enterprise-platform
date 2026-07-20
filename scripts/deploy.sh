@@ -64,7 +64,7 @@ PROFILE_FLAGS[greenfield]="enable_networking=false enable_security=false enable_
 PROFILE_FLAGS[migration]="enable_networking=false enable_security=false enable_a2a=false"
 PROFILE_FLAGS[multi-agent]="enable_networking=false enable_security=false enable_a2a=true"
 PROFILE_FLAGS[platform-team]="enable_networking=true enable_security=true enable_a2a=true"
-PROFILE_FLAGS[security-focused]="enable_networking=true enable_security=true enable_a2a=false"
+PROFILE_FLAGS[security-focused]="enable_networking=true enable_security=true enable_a2a=false enable_resource_policies=true enable_egress_filter=true enable_cedar=true enable_traceability=true"
 
 # ═══════════════════════════════════════════════════════════════
 # Prerequisite Checks (Requirement 18)
@@ -258,6 +258,14 @@ build_context_args() {
     [ -n "${ENABLE_NETWORKING:-}" ] && args+=" -c enable_networking=${ENABLE_NETWORKING}"
     [ -n "${ENABLE_SECURITY:-}" ]   && args+=" -c enable_security=${ENABLE_SECURITY}"
     [ -n "${ENABLE_A2A:-}" ]        && args+=" -c enable_a2a=${ENABLE_A2A}"
+
+    # Security control feature flags (control-library / scope-split model)
+    [ -n "${ENABLE_RESOURCE_POLICIES:-}" ] && args+=" -c enable_resource_policies=${ENABLE_RESOURCE_POLICIES}"
+    [ -n "${ENABLE_EGRESS_FILTER:-}" ]     && args+=" -c enable_egress_filter=${ENABLE_EGRESS_FILTER}"
+    [ -n "${ENABLE_CEDAR:-}" ]             && args+=" -c enable_cedar=${ENABLE_CEDAR}"
+    [ -n "${CEDAR_MODE:-}" ]               && args+=" -c cedar_mode=${CEDAR_MODE}"
+    [ -n "${ENABLE_TRACEABILITY:-}" ]      && args+=" -c enable_traceability=${ENABLE_TRACEABILITY}"
+    [ -n "${ORG_ID:-}" ]                   && args+=" -c org_id=${ORG_ID}"
 
     echo "$args"
 }

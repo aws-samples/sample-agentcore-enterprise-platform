@@ -49,6 +49,21 @@ enable_a2a = (app.node.try_get_context("enable_a2a") or os.environ.get("ENABLE_A
 idp_type = app.node.try_get_context("idp_type") or os.environ.get("IDP_TYPE", "cognito")
 obs_backend = app.node.try_get_context("observability_backend") or os.environ.get("OBSERVABILITY_BACKEND", "cloudwatch")
 
+# Security control feature flags (control-library / scope-split model).
+# Additional flags (enable_guardrails, enable_cedar) will be added here as their stacks land.
+enable_resource_policies = (app.node.try_get_context("enable_resource_policies") or os.environ.get("ENABLE_RESOURCE_POLICIES", "false")) == "true"
+# Egress Lambda interceptor + Bedrock Guardrail on the Gateway (PII masking, prompt injection).
+enable_egress_filter = (app.node.try_get_context("enable_egress_filter") or os.environ.get("ENABLE_EGRESS_FILTER", "false")) == "true"
+# AgentCore Cedar policy engine on the Gateway (default-forbid on writes). cedar_mode is
+# LOG_ONLY (evaluate + log) or ENFORCE (block); ships LOG_ONLY for safe rollout.
+enable_cedar = (app.node.try_get_context("enable_cedar") or os.environ.get("ENABLE_CEDAR", "false")) == "true"
+cedar_mode = app.node.try_get_context("cedar_mode") or os.environ.get("CEDAR_MODE", "LOG_ONLY")
+# Detective controls: SNS + EventBridge alerting on sensitive AgentCore API calls (item 7).
+enable_traceability = (app.node.try_get_context("enable_traceability") or os.environ.get("ENABLE_TRACEABILITY", "false")) == "true"
+# AWS Organizations ID (o-xxxx). Required when enable_resource_policies is on, so the
+# in-account-only resource policies can render their aws:PrincipalOrgID deny guard.
+org_id = app.node.try_get_context("org_id") or os.environ.get("ORG_ID", "")
+
 # Agent pattern selection (from FAST reference patterns)
 # Options: strands-agent, langgraph-agent, claude-sdk-agent, claude-sdk-multi-agent,
 #          agui-strands-agent, agui-langgraph-agent
@@ -90,6 +105,7 @@ if enable_networking:
     networking_stack = NetworkingStack(app, f"{prefix}-networking",
         project_name=project, environment=env_name,
         enable_vpc_endpoints=True,
+        org_id=org_id,
         env=cdk_env)
 
 # ── Optional: Security (KMS CMK, CloudTrail) ──
@@ -131,6 +147,8 @@ memory_stack = MemoryStack(app, f"{prefix}-memory",
     use_long_term_memory=use_long_term_memory,
     ltm_top_k=ltm_top_k,
     ltm_relevance_score=ltm_relevance_score,
+    enable_resource_policies=enable_resource_policies,
+    org_id=org_id,
     env=cdk_env)
 memory_stack.add_dependency(auth_stack)
 if security_stack:
@@ -161,6 +179,9 @@ gateway_stack = GatewayStack(app, f"{prefix}-gateway",
             ],
         },
     },
+    enable_egress_filter=enable_egress_filter,
+    enable_cedar=enable_cedar,
+    cedar_mode=cedar_mode,
     env=cdk_env)
 gateway_stack.add_dependency(auth_stack)
 
@@ -235,6 +256,7 @@ obs_stack = ObservabilityStack(app, f"{prefix}-observability",
     project_name=project, environment=env_name,
     backend=obs_backend,
     monitored_resources=monitored_resources,
+    enable_traceability=enable_traceability,
     env=cdk_env)
 obs_stack.add_dependency(runtime_orchestrator)
 obs_stack.add_dependency(gateway_stack)
