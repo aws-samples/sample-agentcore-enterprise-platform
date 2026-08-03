@@ -92,6 +92,19 @@ fi
 export CDK_DEFAULT_ACCOUNT="$ACCOUNT_ID"
 export CDK_DEFAULT_REGION="${AWS_REGION:-us-east-1}"
 
+# Store the IdP client secret in Secrets Manager. CDK only ever receives the
+# secret NAME — the auth stack resolves the value at deploy time via a
+# {{resolve:secretsmanager:...}} dynamic reference, so the plaintext never
+# appears in process listings or the synthesized template.
+IDP_SECRET_NAME="${PREFIX}-idp-client-secret"
+if ! aws secretsmanager create-secret --name "$IDP_SECRET_NAME" \
+    --secret-string "$IDP_CLIENT_SECRET" --region "$CDK_DEFAULT_REGION" &>/dev/null; then
+    # Secret already exists — update the value (IdP secrets rotate).
+    aws secretsmanager put-secret-value --secret-id "$IDP_SECRET_NAME" \
+        --secret-string "$IDP_CLIENT_SECRET" --region "$CDK_DEFAULT_REGION" >/dev/null
+fi
+log_info "IdP client secret stored in Secrets Manager: $IDP_SECRET_NAME"
+
 log_info "AWS Account: $ACCOUNT_ID"
 log_info "Region: $CDK_DEFAULT_REGION"
 log_info "EntraID Tenant: $IDP_TENANT_ID"
@@ -140,7 +153,7 @@ if [[ "$START_MODULE" -le 1 ]]; then
         -c idp_type="$IDP_TYPE" \
         -c idp_tenant_id="$IDP_TENANT_ID" \
         -c idp_client_id="$IDP_CLIENT_ID" \
-        -c idp_client_secret="$IDP_CLIENT_SECRET" \
+        -c idp_client_secret_name="$IDP_SECRET_NAME" \
         --require-approval never 2>&1 | tail -30
 
     log_info "Auth stack deployed with EntraID federation."
@@ -171,7 +184,7 @@ if [[ "$START_MODULE" -le 2 ]]; then
         -c idp_type="$IDP_TYPE" \
         -c idp_tenant_id="$IDP_TENANT_ID" \
         -c idp_client_id="$IDP_CLIENT_ID" \
-        -c idp_client_secret="$IDP_CLIENT_SECRET" \
+        -c idp_client_secret_name="$IDP_SECRET_NAME" \
         --require-approval never 2>&1 | tail -20
 
     log_info "Identity stack deployed."
@@ -203,7 +216,7 @@ if [[ "$START_MODULE" -le 3 ]]; then
         -c idp_type="$IDP_TYPE" \
         -c idp_tenant_id="$IDP_TENANT_ID" \
         -c idp_client_id="$IDP_CLIENT_ID" \
-        -c idp_client_secret="$IDP_CLIENT_SECRET" \
+        -c idp_client_secret_name="$IDP_SECRET_NAME" \
         --require-approval never 2>&1 | tail -30
 
     log_info "Gateway deployed with sample tool target."
@@ -235,7 +248,7 @@ if [[ "$START_MODULE" -le 4 ]]; then
         -c idp_type="$IDP_TYPE" \
         -c idp_tenant_id="$IDP_TENANT_ID" \
         -c idp_client_id="$IDP_CLIENT_ID" \
-        -c idp_client_secret="$IDP_CLIENT_SECRET" \
+        -c idp_client_secret_name="$IDP_SECRET_NAME" \
         --require-approval never 2>&1 | tail -20
 
     log_info "Memory stack deployed."
@@ -278,7 +291,7 @@ if [[ "$START_MODULE" -le 5 ]]; then
         -c idp_type="$IDP_TYPE" \
         -c idp_tenant_id="$IDP_TENANT_ID" \
         -c idp_client_id="$IDP_CLIENT_ID" \
-        -c idp_client_secret="$IDP_CLIENT_SECRET" \
+        -c idp_client_secret_name="$IDP_SECRET_NAME" \
         -c agent_pattern="strands-agent" \
         --require-approval never 2>&1 | tail -30
 
@@ -320,7 +333,7 @@ if [[ "$START_MODULE" -le 6 ]]; then
         -c idp_type="$IDP_TYPE" \
         -c idp_tenant_id="$IDP_TENANT_ID" \
         -c idp_client_id="$IDP_CLIENT_ID" \
-        -c idp_client_secret="$IDP_CLIENT_SECRET" \
+        -c idp_client_secret_name="$IDP_SECRET_NAME" \
         -c enable_a2a=true \
         --require-approval never 2>&1 | tail -30
 
@@ -352,7 +365,7 @@ if [[ "$START_MODULE" -le 7 ]]; then
         -c idp_type="$IDP_TYPE" \
         -c idp_tenant_id="$IDP_TENANT_ID" \
         -c idp_client_id="$IDP_CLIENT_ID" \
-        -c idp_client_secret="$IDP_CLIENT_SECRET" \
+        -c idp_client_secret_name="$IDP_SECRET_NAME" \
         -c enable_security=true \
         --require-approval never 2>&1 | tail -20
 
@@ -379,7 +392,7 @@ if [[ "$START_MODULE" -le 8 ]]; then
         -c idp_type="$IDP_TYPE" \
         -c idp_tenant_id="$IDP_TENANT_ID" \
         -c idp_client_id="$IDP_CLIENT_ID" \
-        -c idp_client_secret="$IDP_CLIENT_SECRET" \
+        -c idp_client_secret_name="$IDP_SECRET_NAME" \
         -c enable_a2a=true \
         --require-approval never 2>&1 | tail -20
 

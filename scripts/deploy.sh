@@ -272,6 +272,40 @@ prompt_api_keys() {
 }
 
 # ═══════════════════════════════════════════════════════════════
+# IdP Client Secret → Secrets Manager
+# ═══════════════════════════════════════════════════════════════
+# The enterprise IdP client secret must never travel as a plaintext CDK
+# context arg (visible in `ps` output and rendered into the synthesized
+# template). Instead we upsert it into Secrets Manager and pass only the
+# secret NAME; the auth stack resolves the value at deploy time via a
+# {{resolve:secretsmanager:...}} CloudFormation dynamic reference.
+upsert_idp_secret() {
+    if [ -z "${IDP_CLIENT_SECRET:-}" ]; then return 0; fi
+    IDP_CLIENT_SECRET_NAME="${PREFIX}-idp-client-secret"
+    if aws secretsmanager describe-secret --secret-id "$IDP_CLIENT_SECRET_NAME" \
+        --region "$AWS_REGION" &>/dev/null; then
+        # Secret already exists — update the value (IdP secrets rotate).
+        if ! aws secretsmanager put-secret-value --secret-id "$IDP_CLIENT_SECRET_NAME" \
+            --secret-string "$IDP_CLIENT_SECRET" --region "$AWS_REGION" &>/dev/null; then
+            log_error "Failed to update Secrets Manager secret '$IDP_CLIENT_SECRET_NAME'."
+            log_error "Check IAM permissions for secretsmanager:PutSecretValue and retry."
+            exit 1
+        fi
+        log_info "✓ IdP client secret: updated in Secrets Manager ($IDP_CLIENT_SECRET_NAME)"
+    else
+        if ! aws secretsmanager create-secret --name "$IDP_CLIENT_SECRET_NAME" \
+            --secret-string "$IDP_CLIENT_SECRET" --region "$AWS_REGION" &>/dev/null; then
+            log_error "Failed to create Secrets Manager secret '$IDP_CLIENT_SECRET_NAME'."
+            log_error "Check IAM permissions for secretsmanager:CreateSecret and retry."
+            exit 1
+        fi
+        log_info "✓ IdP client secret: stored in Secrets Manager ($IDP_CLIENT_SECRET_NAME)"
+    fi
+    # Plaintext is no longer needed — only the secret name is passed to CDK.
+    unset IDP_CLIENT_SECRET
+}
+
+# ═══════════════════════════════════════════════════════════════
 # Python Virtual Environment
 # ═══════════════════════════════════════════════════════════════
 setup_venv() {
@@ -298,11 +332,12 @@ build_context_args() {
     CONTEXT_ARGS+=(-c "idp_type=${IDP_TYPE:-cognito}")
     CONTEXT_ARGS+=(-c "observability_backend=${OBSERVABILITY_BACKEND:-cloudwatch}")
 
-    # IdP config
-    [ -n "${IDP_TENANT_ID:-}" ]     && CONTEXT_ARGS+=(-c "idp_tenant_id=${IDP_TENANT_ID}")
-    [ -n "${IDP_CLIENT_ID:-}" ]     && CONTEXT_ARGS+=(-c "idp_client_id=${IDP_CLIENT_ID}")
-    [ -n "${IDP_CLIENT_SECRET:-}" ] && CONTEXT_ARGS+=(-c "idp_client_secret=${IDP_CLIENT_SECRET}")
-    [ -n "${IDP_ISSUER_URL:-}" ]    && CONTEXT_ARGS+=(-c "idp_issuer_url=${IDP_ISSUER_URL}")
+    # IdP config — the client secret itself is never passed; only the name of
+    # the Secrets Manager secret set by upsert_idp_secret (see above).
+    [ -n "${IDP_TENANT_ID:-}" ]          && CONTEXT_ARGS+=(-c "idp_tenant_id=${IDP_TENANT_ID}")
+    [ -n "${IDP_CLIENT_ID:-}" ]          && CONTEXT_ARGS+=(-c "idp_client_id=${IDP_CLIENT_ID}")
+    [ -n "${IDP_CLIENT_SECRET_NAME:-}" ] && CONTEXT_ARGS+=(-c "idp_client_secret_name=${IDP_CLIENT_SECRET_NAME}")
+    [ -n "${IDP_ISSUER_URL:-}" ]         && CONTEXT_ARGS+=(-c "idp_issuer_url=${IDP_ISSUER_URL}")
 
     # Feature flags from profile
     [ -n "${ENABLE_NETWORKING:-}" ] && CONTEXT_ARGS+=(-c "enable_networking=${ENABLE_NETWORKING}")
@@ -452,6 +487,10 @@ setup_venv
 
 cd "$PROJECT_DIR"
 
+# If IDP_CLIENT_SECRET came from the environment, move it into Secrets Manager
+# before any context args are built (plaintext never reaches the CDK CLI).
+upsert_idp_secret
+
 # Build CDK context args (populates the CONTEXT_ARGS array)
 build_context_args
 
@@ -462,6 +501,7 @@ case "$ACTION" in
             prompt_idp
             prompt_observability
             prompt_api_keys
+            upsert_idp_secret   # Store any newly prompted IdP secret; sets IDP_CLIENT_SECRET_NAME
             build_context_args  # Rebuild with new values
         fi
 
