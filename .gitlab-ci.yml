@@ -80,10 +80,6 @@ control-library:
 
 dockerfile-parse:
   stage: validate
-  # TEMPORARY soft gate: 5 agent Dockerfiles have known parse errors
-  # (missing ENV keyword). The MR fixing them flips this to a hard gate.
-  # Asana: "Fix broken Dockerfiles (missing ENV keyword, 5 agents)"
-  allow_failure: true
   variables:
     HADOLINT_VERSION: "2.14.0"
     HADOLINT_SHA256: "6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc5a47"

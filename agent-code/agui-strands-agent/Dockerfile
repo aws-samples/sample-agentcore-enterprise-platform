@@ -6,8 +6,8 @@ FROM public.ecr.aws/docker/library/python:3.13-slim
 
 WORKDIR /app
 
-# Configure UV for container environment
-    DOCKER_CONTAINER=1 \
+# Container environment configuration
+ENV DOCKER_CONTAINER=1 \
     OTEL_PYTHON_LOG_CORRELATION=true \
     PYTHONUNBUFFERED=1
 
