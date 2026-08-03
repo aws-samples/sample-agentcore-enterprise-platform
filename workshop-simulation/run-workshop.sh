@@ -37,11 +37,11 @@ export PROJECT_NAME="agentcore-workshop"
 export ENVIRONMENT="dev"
 PREFIX="${PROJECT_NAME}-${ENVIRONMENT}"
 
-# EntraID config (from NativeOBO project)
-export IDP_TYPE="entra_id"
-export IDP_TENANT_ID="697a5720-ec4f-42dc-9713-d01182b20533"
-export IDP_CLIENT_ID="67111523-c2d9-47ae-a044-6fe6ef2c876a"
-# IDP_CLIENT_SECRET must be set externally
+# EntraID config — set these to YOUR Entra ID app registration before running:
+#   export IDP_TENANT_ID='<your-entra-tenant-id>'
+#   export IDP_CLIENT_ID='<your-entra-app-client-id>'
+#   export IDP_CLIENT_SECRET='<your-entra-client-secret>'
+export IDP_TYPE="${IDP_TYPE:-entra_id}"
 
 # Feature flags — start minimal, enable progressively
 export ENABLE_NETWORKING="false"
@@ -68,9 +68,16 @@ fi
 
 log_step "PRE-FLIGHT CHECKS"
 
-if [[ -z "${IDP_CLIENT_SECRET:-}" ]]; then
-    log_error "IDP_CLIENT_SECRET not set. Export it before running:"
-    echo "  export IDP_CLIENT_SECRET='your-entra-client-secret'"
+MISSING_IDP_VARS=()
+[[ -z "${IDP_TENANT_ID:-}" ]] && MISSING_IDP_VARS+=("IDP_TENANT_ID")
+[[ -z "${IDP_CLIENT_ID:-}" ]] && MISSING_IDP_VARS+=("IDP_CLIENT_ID")
+[[ -z "${IDP_CLIENT_SECRET:-}" ]] && MISSING_IDP_VARS+=("IDP_CLIENT_SECRET")
+if [[ ${#MISSING_IDP_VARS[@]} -gt 0 ]]; then
+    log_error "Missing IdP configuration: ${MISSING_IDP_VARS[*]}"
+    echo "  Export your Entra ID app registration values before running:"
+    echo "    export IDP_TENANT_ID='<your-entra-tenant-id>'"
+    echo "    export IDP_CLIENT_ID='<your-entra-app-client-id>'"
+    echo "    export IDP_CLIENT_SECRET='<your-entra-client-secret>'"
     exit 1
 fi
 
