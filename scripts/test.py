@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
 """End-to-end test: get JWT token from Cognito, invoke orchestrator agent."""
+
 import base64
 import json
+import os
 import sys
-import urllib.request
 import urllib.parse
+import urllib.request
 
 import boto3
 
-REGION = "us-east-1"
-PROJECT = "agentcore-workshop"
-ENV = "dev"
-ACCOUNT = "045129524125"
+REGION = os.environ.get("AWS_REGION", "us-east-1")
+PROJECT = os.environ.get("PROJECT_NAME", "agentcore-workshop")
+ENV = os.environ.get("ENVIRONMENT", "dev")
+# Resolved at runtime — the Cognito domain prefix includes the account ID
+ACCOUNT = boto3.client("sts", region_name=REGION).get_caller_identity()["Account"]
 
 
 def get_ssm(name):
     return boto3.client("ssm", region_name=REGION).get_parameter(
-        Name=f"/{PROJECT}/{ENV}/{name}")["Parameter"]["Value"]
+        Name=f"/{PROJECT}/{ENV}/{name}"
+    )["Parameter"]["Value"]
 
 
 def get_jwt_token():
@@ -24,13 +28,16 @@ def get_jwt_token():
     pool_id = get_ssm("auth/user-pool-id")
     m2m_id = get_ssm("auth/m2m-client-id")
     secret = boto3.client("cognito-idp", region_name=REGION).describe_user_pool_client(
-        UserPoolId=pool_id, ClientId=m2m_id)["UserPoolClient"]["ClientSecret"]
+        UserPoolId=pool_id, ClientId=m2m_id
+    )["UserPoolClient"]["ClientSecret"]
 
     auth = base64.b64encode(f"{m2m_id}:{secret}".encode()).decode()
-    data = urllib.parse.urlencode({
-        "grant_type": "client_credentials",
-        "scope": "agentcore/invoke",
-    }).encode()
+    data = urllib.parse.urlencode(
+        {
+            "grant_type": "client_credentials",
+            "scope": "agentcore/invoke",
+        }
+    ).encode()
     req = urllib.request.Request(
         f"https://{PROJECT}-{ENV}-{ACCOUNT}.auth.{REGION}.amazoncognito.com/oauth2/token",
         data=data,
@@ -55,7 +62,8 @@ def invoke_runtime(token, prompt):
         request.headers["X-Authorization"] = f"Bearer {token}"
 
     client.meta.events.register(
-        "before-send.bedrock-agentcore.InvokeAgentRuntime", inject_token)
+        "before-send.bedrock-agentcore.InvokeAgentRuntime", inject_token
+    )
 
     response = client.invoke_agent_runtime(
         agentRuntimeArn=runtime_arn,
@@ -71,17 +79,17 @@ def main():
     token = get_jwt_token()
     print(f"   ✓ Token: {token[:20]}...{token[-10:]}")
 
-    print(f"\n2. Invoking orchestrator: \"{prompt}\"")
+    print(f'\n2. Invoking orchestrator: "{prompt}"')
     try:
         result = invoke_runtime(token, prompt)
         print(f"   ✓ Response: {result[:500]}")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — demo script: report any invoke failure and show the CLI fallback
         print(f"   ✗ {type(e).__name__}: {e}")
         print("\n   This is expected for CUSTOM_JWT runtimes via boto3.")
         print("   Use the agentcore CLI instead:")
-        print(f"   npx @aws/agentcore invoke \"{prompt}\" \\")
-        print(f"     --runtime agentcore_workshop_dev_orchestrator \\")
-        print(f"     --bearer-token \"{token[:20]}...\"")
+        print(f'   npx @aws/agentcore invoke "{prompt}" \\')
+        print("     --runtime agentcore_workshop_dev_orchestrator \\")
+        print(f'     --bearer-token "{token[:20]}..."')
 
     print("\n3. Verifying all resources are healthy...")
     ctrl = boto3.client("bedrock-agentcore-control", region_name=REGION)

@@ -1,6 +1,6 @@
-# Testing the AgentCore security-controls updates
+# Testing the AgentCore security controls
 
-How to test everything added on the `feat/security-controls` branch:
+How to test the security controls in this repo:
 
 - `control-library/` — IaC-agnostic control definitions + `catalog.yaml`
 - `infra_utils/policy_loader.py` — loads/parameterizes controls
@@ -26,14 +26,14 @@ There are two layers of testing:
 ## Prerequisites
 
 ```bash
-cd "$HOME/Downloads/AC Security Slides/agentcore-accelerator"
+cd /path/to/agentcore-accelerator
 
 # Python venv (repo targets 3.13; 3.12 also works locally)
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# Node + CDK + Terraform (already present in this environment)
-node --version        # v18+ 
+# Node + CDK + Terraform
+node --version        # v18+
 cdk --version         # 2.2xx
 terraform version     # 1.3+
 ```
@@ -238,10 +238,8 @@ ruff format --check infra_utils/policy_loader.py scripts/validate_control_librar
   tests/ tools/egress_interceptor/handler.py
 ```
 
-> Note: repo-wide `ruff check .` reports **pre-existing** findings in files this branch
-> doesn't touch (`stacks/runtime_stack.py`, `stacks/auth_stack.py`, `scripts/test_*.py`).
-> CI only lints changed files, so those don't affect this MR. `app.py` and `memory_stack.py`
-> predate ruff-format on `main` and are left in their existing style to avoid noisy diffs.
+> Note: repo-wide `ruff check .` reports pre-existing findings in older files; the lint
+> backlog is tracked separately. CI lints the files changed in each merge request.
 
 ---
 

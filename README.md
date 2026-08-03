@@ -63,6 +63,27 @@ NON_INTERACTIVE=1 AWS_REGION=us-east-1 ./scripts/deploy.sh deploy
 | 9 | Observability | `observability` |
 | A | Memory | `memory` |
 
+## Agent Pattern Selection
+
+The `agent_pattern` CDK context variable selects which `agent-code/<pattern>/` directory
+the runtime stack builds and deploys — participants pick their framework without touching
+infrastructure code:
+
+```bash
+# Default Strands agent
+cdk deploy agentcore-workshop-dev-runtime-orchestrator
+
+# LangGraph instead
+cdk deploy agentcore-workshop-dev-runtime-orchestrator -c agent_pattern=langgraph-agent
+
+# Claude Agent SDK
+cdk deploy agentcore-workshop-dev-runtime-orchestrator -c agent_pattern=claude-sdk-agent
+```
+
+Agent application code and shared utilities are adapted from the
+[fullstack-solution-template-for-agentcore](https://github.com/aws-samples/fullstack-solution-template-for-agentcore)
+(FAST) patterns; the CDK stacks are original to this workshop.
+
 ## Customer Profiles
 
 | Profile | Networking | Security | A2A |
