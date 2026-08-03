@@ -2,8 +2,14 @@
 
 Reusable, opt-in security building blocks for the AgentCore accelerator. Every control is
 defined once in an IaC-agnostic **control-library** and consumed by CDK (account/workload
-scope) or Terraform (org scope). Full design rationale: [`security-controls-proposal.md`](security-controls-proposal.md).
-How to test everything: [`TESTING.md`](TESTING.md).
+scope) or Terraform (org scope). How to test everything: [`TESTING.md`](TESTING.md).
+
+**Why one library, and why valid JSON/Cedar:** authoring each control once means a policy
+fix lands in both engines at the same time — no duplicated policy bodies drifting across
+languages. Keeping artifacts as valid JSON (rather than templated `.tftpl`) means policy
+linters (checkov, IAM Access Analyzer, cfn-guard) can scan every file in CI — a real trust
+signal for a security accelerator. Parameters use `<<sentinel>>` tokens injected at deploy
+time, never template syntax that would break linting.
 
 ## The model (scope-split)
 
@@ -55,6 +61,17 @@ NON_INTERACTIVE=1 cdk deploy agentcore-workshop-dev-gateway -c enable_cedar=true
 # Org guardrails (from the Organizations management account):
 cd terraform/org-guardrails && terraform init && terraform apply -var 'target_ids=["ou-..."]'
 ```
+
+## Egress interceptor design (items 5+6)
+
+- **Where it hooks:** on the Gateway target path as an interceptor Lambda
+  (`tools/egress_interceptor/`), inspecting requests and responses before egress to
+  tools/targets.
+- **What it does:** PII masking/filtering and prompt-injection checks via Bedrock
+  Guardrails (`ApplyGuardrail`), config sourced from `control-library/guardrails/`;
+  authorization via the gateway's Cedar policy engine (default-forbid posture) from
+  `control-library/cedar/`.
+- **Toggle:** `enable_egress_filter`, deployed by `gateway_stack.py` like every other flag.
 
 ## Adding a control
 
