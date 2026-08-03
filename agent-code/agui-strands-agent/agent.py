@@ -15,12 +15,11 @@ from bedrock_agentcore.memory.integrations.strands.session_manager import (
     AgentCoreMemorySessionManager,
 )
 from bedrock_agentcore.runtime import BedrockAgentCoreApp, RequestContext
+from shared.auth import extract_user_id_from_context
 from strands import Agent
 from strands.models import BedrockModel
-from tools.gateway import create_gateway_mcp_client
-from shared.auth import extract_user_id_from_context
-
 from tools.code_interpreter import StrandsCodeInterpreterTools
+from tools.gateway import create_gateway_mcp_client
 
 logger = logging.getLogger(__name__)
 
@@ -55,15 +54,24 @@ def _create_session_manager(
 
 def _create_agent(user_id: str, session_id: str) -> Agent:
     """Create a Strands Agent with Gateway MCP tools, Memory, and Code Interpreter."""
-    gateway_client = create_gateway_mcp_client()
+    tools = []
+    try:
+        gateway_client = create_gateway_mcp_client()
+        if gateway_client is not None:
+            tools.append(gateway_client)
+    except Exception as e:  # noqa: BLE001 — degrade gracefully on any gateway failure
+        logger.warning(
+            "[AGENT] Gateway not available, continuing without gateway tools: %s", e
+        )
 
     region = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
     code_tools = StrandsCodeInterpreterTools(region)
+    tools.append(code_tools.execute_python_securely)
 
     return Agent(
         name="strands_agent",
         system_prompt=SYSTEM_PROMPT,
-        tools=[gateway_client, code_tools.execute_python_securely],
+        tools=tools,
         model=_build_model(),
         session_manager=_create_session_manager(user_id, session_id),
     )

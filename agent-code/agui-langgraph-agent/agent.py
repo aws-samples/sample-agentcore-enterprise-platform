@@ -14,10 +14,9 @@ from copilotkit import CopilotKitMiddleware, LangGraphAGUIAgent
 from langchain.agents import create_agent
 from langchain_aws import ChatBedrock
 from langgraph_checkpoint_aws import AgentCoreMemorySaver
-from tools.gateway import create_gateway_mcp_client
 from shared.auth import extract_user_id_from_context
-
 from tools.code_interpreter import LangGraphCodeInterpreterTools
+from tools.gateway import create_gateway_mcp_client
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +49,15 @@ def _create_checkpointer() -> AgentCoreMemorySaver:
 
 async def create_langgraph_agent():
     """Create a LangGraph agent with Gateway tools, Memory, and Code Interpreter."""
-    mcp_client = await create_gateway_mcp_client()
-    tools = await mcp_client.get_tools()
+    tools = []
+    try:
+        mcp_client = await create_gateway_mcp_client()
+        if mcp_client is not None:
+            tools = await mcp_client.get_tools()
+    except Exception as e:  # noqa: BLE001 — degrade gracefully on any gateway failure
+        logger.warning(
+            "[AGENT] Gateway not available, continuing without gateway tools: %s", e
+        )
 
     region = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
     code_tools = LangGraphCodeInterpreterTools(region)

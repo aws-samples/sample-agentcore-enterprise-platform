@@ -6,32 +6,49 @@ import os
 
 from bedrock_agentcore.identity.auth import requires_access_token
 from mcp.client.streamable_http import streamablehttp_client
-from strands.tools.mcp import MCPClient
 from shared.ssm import get_ssm_parameter
+from strands.tools.mcp import MCPClient
 
 logger = logging.getLogger(__name__)
 
+_PROVIDER_NAME = os.environ.get("GATEWAY_CREDENTIAL_PROVIDER_NAME", "")
 
-@requires_access_token(
-    provider_name=os.environ["GATEWAY_CREDENTIAL_PROVIDER_NAME"],
-    auth_flow="M2M",
-    scopes=[],
-)
-def _fetch_gateway_token(access_token: str) -> str:
+
+def _fetch_gateway_token() -> str:
     """Fetch OAuth2 token for Gateway authentication.
 
     The @requires_access_token decorator handles token retrieval and refresh.
+    It's applied lazily at call time (not import time) so a missing
+    GATEWAY_CREDENTIAL_PROVIDER_NAME doesn't crash container startup.
     Must be synchronous — called inside the MCPClient lambda factory.
     """
-    return access_token
+
+    @requires_access_token(
+        provider_name=_PROVIDER_NAME,
+        auth_flow="M2M",
+        scopes=[],
+    )
+    def _get_token(access_token: str) -> str:
+        return access_token
+
+    return _get_token()
 
 
-def create_gateway_mcp_client() -> MCPClient:
+def create_gateway_mcp_client() -> MCPClient | None:
     """Create MCP client for AgentCore Gateway with OAuth2 authentication.
 
     Calls _fetch_gateway_token() inside the lambda factory so a fresh token
     is fetched on every MCP reconnection (avoids stale token errors).
+
+    Returns None (gateway tools disabled) when the credential provider
+    name is not configured.
     """
+    if not _PROVIDER_NAME:
+        logger.warning(
+            "[GATEWAY] GATEWAY_CREDENTIAL_PROVIDER_NAME not set — gateway tools disabled"
+        )
+        return None
+
     stack_name = os.environ.get("STACK_NAME")
     if not stack_name:
         raise ValueError("STACK_NAME environment variable is required")
