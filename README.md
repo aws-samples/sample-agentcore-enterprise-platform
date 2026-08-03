@@ -35,7 +35,8 @@ python3.13 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 # 2. Deploy (interactive)
-# 2.The script requires at bash 4 or higher to run.
+# Note: the deploy script requires bash 4 or newer. macOS ships bash 3.2 —
+# install a current bash with `brew install bash`, then run `bash scripts/deploy.sh deploy`.
 ./scripts/deploy.sh deploy
 
 # 3. Deploy specific workshop module

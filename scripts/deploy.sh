@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ── Bash version check (must run before any bash-4 syntax like `declare -A`) ──
+if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
+    echo "ERROR: This script requires bash 4 or newer (you are running bash ${BASH_VERSION})." >&2
+    echo "" >&2
+    echo "macOS ships bash 3.2 as /bin/bash. To fix:" >&2
+    echo "  1. brew install bash" >&2
+    echo "  2. Run the script with the new bash explicitly:" >&2
+    echo "       bash scripts/deploy.sh deploy" >&2
+    echo "     (or open a new terminal / run 'hash -r' so your PATH picks up" >&2
+    echo "      the Homebrew bash at /opt/homebrew/bin/bash or /usr/local/bin/bash)" >&2
+    exit 1
+fi
+
 # ═══════════════════════════════════════════════════════════════
 # AgentCore Workshop CDK Deploy Script
 # ═══════════════════════════════════════════════════════════════
@@ -48,9 +61,11 @@ MODULE_MAP[8]="${PREFIX}-runtime-code-agent ${PREFIX}-runtime-research-agent"   
 MODULE_MAP[9]="${PREFIX}-observability"                                           # Observability
 MODULE_MAP[A]="${PREFIX}-memory"                                                  # Memory
 MODULE_MAP[B]="${PREFIX}-runtime-orchestrator"                                    # Code Interpreter
-MODULE_MAP[C]="${PREFIX}-networking"                                              # Multi-Account Mesh
-MODULE_MAP[D]="${PREFIX}-security"                                                # CI/CD Pipeline
+MODULE_MAP[C]="${PREFIX}-networking"                                              # Multi-Account Mesh (deploys the networking foundation)
+# Module D (CI/CD Pipeline) is a guided module with no CDK stacks — see the
+# --module D handling below and .gitlab-ci.yml for the reference implementation.
 MODULE_MAP[E]="${PREFIX}-security"                                                # Security Automation
+VALID_MODULES="3 4 5 6 7 8 9 A B C D E"
 
 # ── Team Workstream Assignments (Requirement 20) ──
 declare -A TEAM_MAP
@@ -130,6 +145,37 @@ check_credentials() {
     log_info "Identity: $identity"
     export CDK_DEFAULT_ACCOUNT="$ACCOUNT_ID"
     export CDK_DEFAULT_REGION="$AWS_REGION"
+}
+
+# ═══════════════════════════════════════════════════════════════
+# ORG_ID Validation (fail fast before any CDK command)
+# ═══════════════════════════════════════════════════════════════
+check_org_id() {
+    # enable_resource_policies=true makes the memory stack raise a ValueError
+    # mid-deploy when org_id is empty — catch that here instead.
+    if [ "${ENABLE_RESOURCE_POLICIES:-}" = "true" ] && [ -z "${ORG_ID:-}" ]; then
+        if [ "${NON_INTERACTIVE:-0}" != "1" ]; then
+            echo ""
+            log_warn "Resource policies are enabled and require your AWS Organizations ID."
+            read -rp "  AWS Organizations ID (o-xxxx): " ORG_ID
+        fi
+        if [ -z "${ORG_ID:-}" ]; then
+            log_error "enable_resource_policies=true requires an AWS Organizations ID."
+            log_error "The memory stack resource policy uses aws:PrincipalOrgID and cannot render without it."
+            log_error "Fix: export ORG_ID=o-xxxx and re-run."
+            log_error "(Find it with: aws organizations describe-organization --query Organization.Id --output text)"
+            exit 1
+        fi
+        export ORG_ID
+    fi
+
+    # The networking stack silently skips the AgentCore VPC endpoint policy
+    # without org_id — warn so the user knows the endpoint is unrestricted.
+    if [ "${ENABLE_NETWORKING:-}" = "true" ] && [ -z "${ORG_ID:-}" ]; then
+        log_warn "enable_networking=true without ORG_ID: the AgentCore VPC endpoint"
+        log_warn "policy will be skipped (endpoint deploys without an org-restricted policy)."
+        log_warn "To apply it: export ORG_ID=o-xxxx and re-deploy."
+    fi
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -240,34 +286,38 @@ setup_venv() {
 # ═══════════════════════════════════════════════════════════════
 # CDK Context Builder
 # ═══════════════════════════════════════════════════════════════
+# Populates the global CONTEXT_ARGS array. Using an array (expanded as
+# "${CONTEXT_ARGS[@]}") keeps values containing spaces intact — a single
+# string expanded unquoted would word-split them.
+CONTEXT_ARGS=()
 build_context_args() {
-    local args=""
-    args+=" -c project=${PROJECT_NAME}"
-    args+=" -c environment=${ENVIRONMENT}"
-    args+=" -c region=${AWS_REGION:-us-east-1}"
-    args+=" -c idp_type=${IDP_TYPE:-cognito}"
-    args+=" -c observability_backend=${OBSERVABILITY_BACKEND:-cloudwatch}"
+    CONTEXT_ARGS=()
+    CONTEXT_ARGS+=(-c "project=${PROJECT_NAME}")
+    CONTEXT_ARGS+=(-c "environment=${ENVIRONMENT}")
+    CONTEXT_ARGS+=(-c "region=${AWS_REGION:-us-east-1}")
+    CONTEXT_ARGS+=(-c "idp_type=${IDP_TYPE:-cognito}")
+    CONTEXT_ARGS+=(-c "observability_backend=${OBSERVABILITY_BACKEND:-cloudwatch}")
 
     # IdP config
-    [ -n "${IDP_TENANT_ID:-}" ]    && args+=" -c idp_tenant_id=${IDP_TENANT_ID}"
-    [ -n "${IDP_CLIENT_ID:-}" ]    && args+=" -c idp_client_id=${IDP_CLIENT_ID}"
-    [ -n "${IDP_CLIENT_SECRET:-}" ] && args+=" -c idp_client_secret=${IDP_CLIENT_SECRET}"
-    [ -n "${IDP_ISSUER_URL:-}" ]   && args+=" -c idp_issuer_url=${IDP_ISSUER_URL}"
+    [ -n "${IDP_TENANT_ID:-}" ]     && CONTEXT_ARGS+=(-c "idp_tenant_id=${IDP_TENANT_ID}")
+    [ -n "${IDP_CLIENT_ID:-}" ]     && CONTEXT_ARGS+=(-c "idp_client_id=${IDP_CLIENT_ID}")
+    [ -n "${IDP_CLIENT_SECRET:-}" ] && CONTEXT_ARGS+=(-c "idp_client_secret=${IDP_CLIENT_SECRET}")
+    [ -n "${IDP_ISSUER_URL:-}" ]    && CONTEXT_ARGS+=(-c "idp_issuer_url=${IDP_ISSUER_URL}")
 
     # Feature flags from profile
-    [ -n "${ENABLE_NETWORKING:-}" ] && args+=" -c enable_networking=${ENABLE_NETWORKING}"
-    [ -n "${ENABLE_SECURITY:-}" ]   && args+=" -c enable_security=${ENABLE_SECURITY}"
-    [ -n "${ENABLE_A2A:-}" ]        && args+=" -c enable_a2a=${ENABLE_A2A}"
+    [ -n "${ENABLE_NETWORKING:-}" ] && CONTEXT_ARGS+=(-c "enable_networking=${ENABLE_NETWORKING}")
+    [ -n "${ENABLE_SECURITY:-}" ]   && CONTEXT_ARGS+=(-c "enable_security=${ENABLE_SECURITY}")
+    [ -n "${ENABLE_A2A:-}" ]        && CONTEXT_ARGS+=(-c "enable_a2a=${ENABLE_A2A}")
 
     # Security control feature flags (control-library / scope-split model)
-    [ -n "${ENABLE_RESOURCE_POLICIES:-}" ] && args+=" -c enable_resource_policies=${ENABLE_RESOURCE_POLICIES}"
-    [ -n "${ENABLE_EGRESS_FILTER:-}" ]     && args+=" -c enable_egress_filter=${ENABLE_EGRESS_FILTER}"
-    [ -n "${ENABLE_CEDAR:-}" ]             && args+=" -c enable_cedar=${ENABLE_CEDAR}"
-    [ -n "${CEDAR_MODE:-}" ]               && args+=" -c cedar_mode=${CEDAR_MODE}"
-    [ -n "${ENABLE_TRACEABILITY:-}" ]      && args+=" -c enable_traceability=${ENABLE_TRACEABILITY}"
-    [ -n "${ORG_ID:-}" ]                   && args+=" -c org_id=${ORG_ID}"
+    [ -n "${ENABLE_RESOURCE_POLICIES:-}" ] && CONTEXT_ARGS+=(-c "enable_resource_policies=${ENABLE_RESOURCE_POLICIES}")
+    [ -n "${ENABLE_EGRESS_FILTER:-}" ]     && CONTEXT_ARGS+=(-c "enable_egress_filter=${ENABLE_EGRESS_FILTER}")
+    [ -n "${ENABLE_CEDAR:-}" ]             && CONTEXT_ARGS+=(-c "enable_cedar=${ENABLE_CEDAR}")
+    [ -n "${CEDAR_MODE:-}" ]               && CONTEXT_ARGS+=(-c "cedar_mode=${CEDAR_MODE}")
+    [ -n "${ENABLE_TRACEABILITY:-}" ]      && CONTEXT_ARGS+=(-c "enable_traceability=${ENABLE_TRACEABILITY}")
+    [ -n "${ORG_ID:-}" ]                   && CONTEXT_ARGS+=(-c "org_id=${ORG_ID}")
 
-    echo "$args"
+    return 0
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -348,12 +398,19 @@ STACK_FILTER=""
 PROFILE=""
 TEAM=""
 MODULE=""
+require_flag_value() {
+    # $1 = flag name, $2 = number of remaining args after the flag
+    if [ "$2" -lt 2 ]; then
+        log_error "$1 requires a value (e.g. $1 <value>)."
+        exit 1
+    fi
+}
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --stack)   STACK_FILTER="$2"; shift 2 ;;
-        --profile) PROFILE="$2"; shift 2 ;;
-        --team)    TEAM="$2"; shift 2 ;;
-        --module)  MODULE="$2"; shift 2 ;;
+        --stack)   require_flag_value "--stack" "$#";   STACK_FILTER="$2"; shift 2 ;;
+        --profile) require_flag_value "--profile" "$#"; PROFILE="$2"; shift 2 ;;
+        --team)    require_flag_value "--team" "$#";    TEAM="$2"; shift 2 ;;
+        --module)  require_flag_value "--module" "$#";  MODULE="$2"; shift 2 ;;
         *)         shift ;;
     esac
 done
@@ -368,13 +425,22 @@ if [ -n "$PROFILE" ] && [ -n "${PROFILE_FLAGS[$PROFILE]:-}" ]; then
     done
 fi
 
+# Fail fast on missing ORG_ID before any CDK command runs
+check_org_id
+
 # Resolve stack targets
 CDK_STACKS=""
 if [ -n "$STACK_FILTER" ]; then
     CDK_STACKS="$STACK_FILTER"
+elif [ "$MODULE" = "D" ]; then
+    log_info "Module D (CI/CD Pipeline) is a guided module — see .gitlab-ci.yml as the reference implementation; no stacks to deploy."
+    exit 0
 elif [ -n "$MODULE" ] && [ -n "${MODULE_MAP[$MODULE]:-}" ]; then
     CDK_STACKS="${MODULE_MAP[$MODULE]}"
     log_info "Workshop Module $MODULE → Stacks: $CDK_STACKS"
+elif [ -n "$MODULE" ]; then
+    log_error "Unknown module: '$MODULE'. Valid modules: $VALID_MODULES"
+    exit 1
 elif [ -n "$TEAM" ] && [ -n "${TEAM_MAP[$TEAM]:-}" ]; then
     CDK_STACKS="${TEAM_MAP[$TEAM]}"
     log_info "Team $TEAM → Stacks: $CDK_STACKS"
@@ -386,8 +452,8 @@ setup_venv
 
 cd "$PROJECT_DIR"
 
-# Build CDK context args
-CONTEXT_ARGS=$(build_context_args)
+# Build CDK context args (populates the CONTEXT_ARGS array)
+build_context_args
 
 case "$ACTION" in
     deploy)
@@ -396,19 +462,31 @@ case "$ACTION" in
             prompt_idp
             prompt_observability
             prompt_api_keys
-            CONTEXT_ARGS=$(build_context_args)  # Rebuild with new values
+            build_context_args  # Rebuild with new values
         fi
 
         log_header "CDK Bootstrap"
-        JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
-            npx cdk bootstrap "aws://$ACCOUNT_ID/$AWS_REGION" 2>/dev/null || true
+        BOOTSTRAP_LOG=$(mktemp)
+        if JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+            npx cdk bootstrap "aws://$ACCOUNT_ID/$AWS_REGION" >"$BOOTSTRAP_LOG" 2>&1; then
+            # "Already bootstrapped" also exits 0 — both are success.
+            log_info "Bootstrap OK for aws://$ACCOUNT_ID/$AWS_REGION"
+            rm -f "$BOOTSTRAP_LOG"
+        else
+            log_error "CDK bootstrap failed for aws://$ACCOUNT_ID/$AWS_REGION. Output:"
+            cat "$BOOTSTRAP_LOG"
+            rm -f "$BOOTSTRAP_LOG"
+            log_error "Common causes: wrong AWS account/profile, or missing IAM permissions"
+            log_error "to create the CDK bootstrap stack (CDKToolkit). Fix and retry."
+            exit 1
+        fi
 
         log_header "Deploying"
         if [ -n "$CDK_STACKS" ]; then
             for stack in $CDK_STACKS; do
                 log_step "Deploying: $stack"
                 JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
-                    npx cdk deploy "$stack" --require-approval never $CONTEXT_ARGS 2>&1 || {
+                    npx cdk deploy "$stack" --require-approval never "${CONTEXT_ARGS[@]}" 2>&1 || {
                     log_error "Failed to deploy $stack"
                     log_error "Check CloudFormation console for details."
                     exit 1
@@ -417,7 +495,7 @@ case "$ACTION" in
         else
             log_step "Deploying all stacks..."
             JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
-                npx cdk deploy --all --require-approval never $CONTEXT_ARGS 2>&1 || {
+                npx cdk deploy --all --require-approval never "${CONTEXT_ARGS[@]}" 2>&1 || {
                 log_error "Deployment failed. Check CloudFormation console for details."
                 exit 1
             }
@@ -432,22 +510,22 @@ case "$ACTION" in
             for stack in $CDK_STACKS; do
                 log_step "Destroying: $stack"
                 JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
-                    npx cdk destroy "$stack" --force $CONTEXT_ARGS 2>&1 || true
+                    npx cdk destroy "$stack" --force "${CONTEXT_ARGS[@]}" 2>&1 || true
             done
         else
             JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
-                npx cdk destroy --all --force $CONTEXT_ARGS 2>&1 || true
+                npx cdk destroy --all --force "${CONTEXT_ARGS[@]}" 2>&1 || true
         fi
         ;;
 
     synth)
         JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
-            npx cdk synth $CONTEXT_ARGS ${CDK_STACKS:+$CDK_STACKS} 2>&1
+            npx cdk synth "${CONTEXT_ARGS[@]}" ${CDK_STACKS:+$CDK_STACKS} 2>&1
         ;;
 
     diff)
         JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
-            npx cdk diff $CONTEXT_ARGS ${CDK_STACKS:+$CDK_STACKS} 2>&1
+            npx cdk diff "${CONTEXT_ARGS[@]}" ${CDK_STACKS:+$CDK_STACKS} 2>&1
         ;;
 
     export)
@@ -456,7 +534,7 @@ case "$ACTION" in
 
     ls|list)
         JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
-            npx cdk ls $CONTEXT_ARGS 2>&1
+            npx cdk ls "${CONTEXT_ARGS[@]}" 2>&1
         ;;
 
     *)
