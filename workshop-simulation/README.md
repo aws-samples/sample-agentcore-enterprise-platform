@@ -11,11 +11,11 @@ This simulates a real 2-day workshop for a customer migrating an existing EC2-ba
 
 ## Prerequisites
 
-- AWS CLI configured (account 506556589049, us-east-1)
+- AWS CLI configured with credentials for your workshop account
 - CDK CLI installed (`npm install -g aws-cdk`)
 - Python 3.13+ with venv
 - Docker running
-- Entra ID app registration (tenant: 697a5720-ec4f-42dc-9713-d01182b20533)
+- An Entra ID app registration in your tenant (tenant ID, client ID, client secret)
 
 ## Workshop Modules
 
@@ -41,10 +41,17 @@ This simulates a real 2-day workshop for a customer migrating an existing EC2-ba
 
 ## EntraID Configuration
 
+Set your Entra ID app registration values as environment variables before running
+(`run-workshop.sh` fails fast if any are missing):
+
+```bash
+export IDP_TENANT_ID='<your-entra-tenant-id>'
+export IDP_CLIENT_ID='<your-entra-app-client-id>'
+export IDP_CLIENT_SECRET='<your-entra-client-secret>'
+```
+
 | Setting | Value |
 |---------|-------|
-| Tenant ID | 697a5720-ec4f-42dc-9713-d01182b20533 |
-| Client ID (Actor App) | 67111523-c2d9-47ae-a044-6fe6ef2c876a |
-| Issuer URL | https://login.microsoftonline.com/697a5720-ec4f-42dc-9713-d01182b20533/v2.0 |
-
-> **Note**: Client secret must be set via environment variable `IDP_CLIENT_SECRET` before running.
+| Tenant ID | `$IDP_TENANT_ID` — from Entra ID → App registrations → Overview |
+| Client ID (Actor App) | `$IDP_CLIENT_ID` — the app registration's Application (client) ID |
+| Issuer URL | `https://login.microsoftonline.com/<your-entra-tenant-id>/v2.0` (derived automatically) |
