@@ -2,12 +2,13 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-FROM public.ecr.aws/docker/library/python:3.13-slim
+# python 3.12: copilotkit==0.1.83 requires Python >=3.10,<3.13
+FROM public.ecr.aws/docker/library/python:3.12-slim
 
 WORKDIR /app
 
-# Configure UV for container environment
-    DOCKER_CONTAINER=1 \
+# Container environment configuration
+ENV DOCKER_CONTAINER=1 \
     OTEL_PYTHON_LOG_CORRELATION=true \
     PYTHONUNBUFFERED=1
 

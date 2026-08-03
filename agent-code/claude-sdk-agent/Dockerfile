@@ -6,7 +6,9 @@ FROM public.ecr.aws/docker/library/python:3.13-slim
 
 WORKDIR /app
 
-    DOCKER_CONTAINER=1 \
+# Container environment configuration.
+# CLAUDE_CODE_USE_BEDROCK=1 is required for the Claude CLI to use Bedrock.
+ENV DOCKER_CONTAINER=1 \
     OTEL_PYTHON_LOG_CORRELATION=true \
     PYTHONUNBUFFERED=1 \
     CLAUDE_CODE_USE_BEDROCK=1
