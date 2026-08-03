@@ -1,0 +1,143 @@
+# ═══════════════════════════════════════════════════════════════
+# GitLab CI — quality gates for every merge request
+#
+# Ports the intent of .github/workflows/ (which never ran: the remote
+# is GitLab, not GitHub). Stages:
+#   lint      — ruff check + format on files changed in the MR
+#   validate  — control-library catalog validation, Dockerfile parse check
+#   test      — policy_loader unit tests
+#   synth     — cdk synth with placeholder account (no AWS credentials)
+#   terraform — fmt + validate for org-guardrails
+#
+# Note: ruff lints CHANGED files only — a pre-existing backlog of ~113
+# findings across the repo is tracked separately (Asana: "Clean FAST
+# tracker false claims + lint backlog"). New/modified code must be clean.
+# ═══════════════════════════════════════════════════════════════
+
+stages: [lint, validate, test, synth, terraform]
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+default:
+  image: public.ecr.aws/docker/library/python:3.13-slim
+  interruptible: true
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+.pip-cache: &pip-cache
+  cache:
+    key: pip-$CI_JOB_NAME
+    paths: [.cache/pip]
+
+ruff:
+  stage: lint
+  <<: *pip-cache
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq git > /dev/null
+    - pip install -q ruff
+  script:
+    # Diff against the MR target branch (or previous commit on main)
+    - |
+      if [ -n "${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}" ]; then
+        BASE="$CI_MERGE_REQUEST_DIFF_BASE_SHA"
+      else
+        BASE="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+      fi
+      CHANGED=$(git diff --name-only --diff-filter=ACMR "$BASE"...HEAD -- '*.py' || true)
+      if [ -z "$CHANGED" ]; then
+        echo "No Python files changed — skipping lint."
+        exit 0
+      fi
+      echo "Linting changed files:"; echo "$CHANGED"
+      # shellcheck disable=SC2086
+      ruff check $CHANGED
+      ruff format --check $CHANGED
+  variables:
+    GIT_DEPTH: "0"
+
+control-library:
+  stage: validate
+  <<: *pip-cache
+  before_script:
+    - pip install -q pyyaml checkov
+  script:
+    - python scripts/validate_control_library.py
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - control-library/**/*
+        - infra_utils/policy_loader.py
+        - scripts/validate_control_library.py
+        - tests/**/*
+        - terraform/**/*
+    - if: $CI_COMMIT_BRANCH == "main"
+
+dockerfile-parse:
+  stage: validate
+  image: public.ecr.aws/hadolint/hadolint:latest-debian
+  script:
+    # Syntax + best-practice check on every agent Dockerfile.
+    # DL3008/DL3013/DL3016 (unpinned apt/pip/npm) are warnings for now —
+    # pinning is tracked as a separate task.
+    - hadolint --failure-threshold error
+        --ignore DL3008 --ignore DL3013 --ignore DL3016
+        agent-code/*/Dockerfile
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - agent-code/**/*
+    - if: $CI_COMMIT_BRANCH == "main"
+
+pytest:
+  stage: test
+  <<: *pip-cache
+  before_script:
+    - pip install -q pyyaml pytest
+  script:
+    - python -m pytest tests/ -q
+
+cdk-synth:
+  stage: synth
+  image: public.ecr.aws/docker/library/node:22-slim
+  <<: *pip-cache
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq python3 python3-pip python3-venv > /dev/null
+    - python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt
+  script:
+    # Synth with a placeholder account — validates all stacks assemble
+    # without AWS credentials. Docker asset bundling is not exercised.
+    - CDK_DEFAULT_ACCOUNT=111111111111 CDK_DEFAULT_REGION=us-east-1
+      npx --yes cdk synth --app ".venv/bin/python3 app.py" --quiet
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - app.py
+        - cdk.json
+        - requirements.txt
+        - stacks/**/*
+        - infra_utils/**/*
+        - control-library/**/*
+        - agent-code/**/*
+        - tools/**/*
+    - if: $CI_COMMIT_BRANCH == "main"
+
+terraform:
+  stage: terraform
+  image:
+    name: public.ecr.aws/hashicorp/terraform:1.9
+    entrypoint: [""]
+  script:
+    - terraform fmt -check -recursive terraform/
+    - terraform -chdir=terraform/org-guardrails init -backend=false -input=false
+    - terraform -chdir=terraform/org-guardrails validate
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - terraform/**/*
+        - control-library/**/*
+    - if: $CI_COMMIT_BRANCH == "main"
