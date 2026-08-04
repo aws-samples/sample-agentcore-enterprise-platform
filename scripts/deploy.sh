@@ -48,13 +48,13 @@ log_header(){ echo -e "\n${BOLD}${CYAN}═══ $* ═══${NC}\n"; }
 # Saved Workshop Config (workshop.env)
 # ═══════════════════════════════════════════════════════════════
 # Precedence: env var > saved workshop.env > default.
-# Secrets (IDP_CLIENT_SECRET, DATADOG_API_KEY) are NEVER persisted —
+# Secrets (IDP_CLIENT_SECRET, API keys) are NEVER persisted —
 # the IdP secret lives in Secrets Manager (see upsert_idp_secret).
 # ponytail: flat sourceable KEY=value file; upgrade path is the
 # declarative Pydantic/YAML config task on the board.
 CONFIG_FILE="$PROJECT_DIR/workshop.env"
 CONFIG_KEYS=(AWS_REGION IDP_TYPE IDP_TENANT_ID IDP_CLIENT_ID IDP_ISSUER_URL
-             OBSERVABILITY_BACKEND MODEL_ID ORG_ID PROJECT_NAME ENVIRONMENT)
+             MODEL_ID ORG_ID PROJECT_NAME ENVIRONMENT)
 
 save_config() {
     # CI runs (NON_INTERACTIVE=1) never write the file.
@@ -298,31 +298,6 @@ prompt_idp() {
     log_info "IdP set to: ${IDP_TYPE:-cognito}"
 }
 
-prompt_observability() {
-    if [ "${NON_INTERACTIVE:-0}" = "1" ]; then return; fi
-    echo ""
-    echo "Observability Backend:"
-    echo "  1) Amazon CloudWatch (default)"
-    echo "  2) DataDog"
-    read -rp "Select backend [${OBSERVABILITY_BACKEND:+saved: }${OBSERVABILITY_BACKEND:-1}]: " choice
-    case "${choice:-keep}" in
-        2) OBSERVABILITY_BACKEND="datadog"
-           read -rp "  DataDog API Key: " DATADOG_API_KEY
-           read -rp "  DataDog Site [datadoghq.com]: " DATADOG_SITE
-           DATADOG_SITE="${DATADOG_SITE:-datadoghq.com}"
-           ;;
-        keep)
-           OBSERVABILITY_BACKEND="${OBSERVABILITY_BACKEND:-cloudwatch}"
-           # API key is never persisted — re-prompt if datadog was kept without one.
-           if [ "$OBSERVABILITY_BACKEND" = "datadog" ] && [ -z "${DATADOG_API_KEY:-}" ]; then
-               read -rp "  DataDog API Key: " DATADOG_API_KEY
-           fi
-           ;;
-        *) OBSERVABILITY_BACKEND="cloudwatch" ;;
-    esac
-    log_info "Observability backend: ${OBSERVABILITY_BACKEND}"
-}
-
 prompt_api_keys() {
     if [ "${NON_INTERACTIVE:-0}" = "1" ]; then return; fi
     log_header "API Keys (Optional)"
@@ -403,7 +378,6 @@ build_context_args() {
     CONTEXT_ARGS+=(-c "environment=${ENVIRONMENT}")
     CONTEXT_ARGS+=(-c "region=${AWS_REGION:-us-east-1}")
     CONTEXT_ARGS+=(-c "idp_type=${IDP_TYPE:-cognito}")
-    CONTEXT_ARGS+=(-c "observability_backend=${OBSERVABILITY_BACKEND:-cloudwatch}")
 
     # IdP config — the client secret itself is never passed; only the name of
     # the Secrets Manager secret set by upsert_idp_secret (see above).
@@ -588,7 +562,6 @@ case "$ACTION" in
         if [ "${NON_INTERACTIVE:-0}" != "1" ]; then
             prompt_region
             prompt_idp
-            prompt_observability
             prompt_api_keys
             upsert_idp_secret   # Store any newly prompted IdP secret; sets IDP_CLIENT_SECRET_NAME
             build_context_args  # Rebuild with new values
