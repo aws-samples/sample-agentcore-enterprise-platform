@@ -20,6 +20,14 @@ variable "target_ids" {
     Example: ["ou-abcd-1234wxyz"] or ["r-abcd"].
   EOT
   type        = list(string)
+
+  validation {
+    condition = alltrue([
+      for id in var.target_ids :
+      can(regex("^(r-[a-z0-9]{4,32}|ou-[a-z0-9]+-[a-z0-9]+|[0-9]{12})$", id))
+    ])
+    error_message = "Each target_ids entry must be an Organizations root ID (r-xxxx), an OU ID (ou-xxxx-xxxxxxxx), or a 12-digit account ID. Check for typos — an invalid ID would otherwise surface as a confusing Organizations API error at apply time."
+  }
 }
 
 # ── Control: scp.memory.enforce-cmk ──
