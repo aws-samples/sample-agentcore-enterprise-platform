@@ -52,6 +52,23 @@ pip install -r requirements.txt
 NON_INTERACTIVE=1 AWS_REGION=us-east-1 ./scripts/deploy.sh deploy
 ```
 
+## Testing the Deployment
+
+Set `AWS_PROFILE`/`AWS_REGION` first if not using default credentials. Full architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+```bash
+# Health check: token → invoke → resource status
+python scripts/test.py
+
+# Invoke the deployed agent (add --session <id> to continue a conversation)
+python scripts/invoke.py "What tools do you have?"
+
+# Gateway direct: MCP tools/list + one tools/call
+python scripts/test_gateway.py
+```
+
+For live status of every deployed resource, run the [Dashboard](#dashboard).
+
 ## Workshop Module Mapping
 
 | Module | Description | CDK Stacks |
@@ -108,10 +125,14 @@ Agent application code and shared utilities are adapted from the
 Live workshop monitoring dashboard with approach explainer and deployment status:
 
 ```bash
-cd dashboard
-python3 monitor.py &          # Polls AWS every 15s, writes status.json
-python3 -m http.server 8888 -d public   # Serves dashboard at localhost:8888
+# Terminal 1 — poller (writes dashboard/public/status.json every 15s)
+AWS_REGION=<region> .venv/bin/python dashboard/monitor.py
+
+# Terminal 2 — server (dashboard at localhost:8888)
+python3 -m http.server 8888 -d dashboard/public
 ```
+
+> Set `AWS_PROFILE` first if not using default credentials.
 
 ## Configuration
 
