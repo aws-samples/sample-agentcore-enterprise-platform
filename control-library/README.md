@@ -19,7 +19,7 @@ authored once here, as **valid JSON / Cedar**, and consumed by both:
 | `resource-policies/` | Resource-based policies (Runtime/Memory/Gateway) | Workload | CDK |
 | `iam/` | Execution / caller role least-privilege policies | Account | CDK |
 | `vpce/` | VPC endpoint policies | Account | CDK |
-| `cedar/` | AgentCore Cedar policies (default-forbid on writes) | Workload | CDK |
+| `cedar/` | AgentCore Cedar policies (explicit read permits; implicit default-deny) | Workload | CDK |
 | `guardrails/` | Bedrock Guardrails configuration | Workload | CDK |
 
 `catalog.yaml` is the machine-readable index. Each entry declares the control id, file, type,

@@ -2,9 +2,17 @@
 import aws_cdk as cdk
 from aws_cdk import (
     aws_bedrock as bedrock,
+)
+from aws_cdk import (
     aws_bedrockagentcore as agentcore,
+)
+from aws_cdk import (
     aws_iam as iam,
+)
+from aws_cdk import (
     aws_lambda as _lambda,
+)
+from aws_cdk import (
     aws_ssm as ssm,
 )
 from constructs import Construct
@@ -93,9 +101,10 @@ class GatewayStack(cdk.Stack):
             ]
 
         # ── Optional: AgentCore Cedar policy engine (control-library) ──
-        # Deterministic, identity-aware authorization of tool calls. Ships default-forbid +
-        # an explicit read permit. Runs in LOG_ONLY by default (evaluate + log, no block);
-        # set cedar_mode=ENFORCE once decision logs are validated.
+        # Deterministic, identity-aware authorization of tool calls. Cedar is implicit
+        # default-deny (no permit means deny), so only explicit read permits are shipped —
+        # a blanket forbid would override every permit. Runs in LOG_ONLY by default
+        # (evaluate + log, no block); set cedar_mode=ENFORCE once decision logs are validated.
         policy_engine_configuration = None
         if enable_cedar:
             policy_engine = agentcore.CfnPolicyEngine(self, "PolicyEngine",
@@ -104,7 +113,6 @@ class GatewayStack(cdk.Stack):
             )
             # One CfnPolicy per Cedar artifact in the control-library.
             cedar_controls = {
-                "DefaultForbid": "cedar.gateway-default.forbid",
                 "PermitReadTools": "cedar.gateway-default.permit-read",
             }
             for construct_id, control_id in cedar_controls.items():

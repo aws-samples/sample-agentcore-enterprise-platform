@@ -69,7 +69,8 @@ cd terraform/org-guardrails && terraform init && terraform apply -var 'target_id
   tools/targets.
 - **What it does:** PII masking/filtering and prompt-injection checks via Bedrock
   Guardrails (`ApplyGuardrail`), config sourced from `control-library/guardrails/`;
-  authorization via the gateway's Cedar policy engine (default-forbid posture) from
+  authorization via the gateway's Cedar policy engine (default-deny posture: Cedar denies
+  anything not explicitly permitted) from
   `control-library/cedar/`.
 - **Toggle:** `enable_egress_filter`, deployed by `gateway_stack.py` like every other flag.
 

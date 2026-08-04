@@ -1,7 +1,8 @@
-// Permit only the read-only sample tool. Write/mutating tools stay denied by
-// 00-default-forbid.cedar (Cedar has no explicit allow-override of a forbid, so denies win —
-// this permit only takes effect for actions NOT covered by a forbid; keep forbids narrow to
-// specific write actions in production, or rely on default-forbid + explicit read permits).
+// Permit only the read-only sample tool. Cedar is default-deny: anything not explicitly
+// permitted is denied, so no blanket forbid policy is needed (or wanted — a matching forbid
+// always overrides every permit, which would make this permit dead code). This permit allows
+// only the listed read tools; add more permit policies for additional tools. If a forbid is
+// ever added, remember it overrides permits unconditionally — keep forbids narrow.
 //
 // AgentCore action name format:  AgentCore::Action::"<TargetName>___<tool_name>"
 // (three underscores between the gateway target name and the tool name).
