@@ -2,23 +2,19 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "AllowAgentCoreFromOrgOnly",
+      "Sid": "AllowDataPlaneIncludingOAuth",
       "Effect": "Allow",
       "Principal": "*",
       "Action": [
         "bedrock-agentcore:InvokeAgentRuntime",
         "bedrock-agentcore:InvokeAgentRuntimeForUser",
-        "bedrock-agentcore:InvokeGateway"
+        "bedrock-agentcore:InvokeGateway",
+        "bedrock-agentcore:GetRuntimeProtectedResourceMetadata"
       ],
-      "Resource": "*",
-      "Condition": {
-        "StringEquals": {
-          "aws:PrincipalOrgID": "<<org_id>>"
-        }
-      }
+      "Resource": "*"
     },
     {
-      "Sid": "DenyEverythingOutsideOrg",
+      "Sid": "DenySigV4CallersOutsideOrg",
       "Effect": "Deny",
       "Principal": "*",
       "Action": "*",
@@ -26,6 +22,9 @@
       "Condition": {
         "StringNotEquals": {
           "aws:PrincipalOrgID": "<<org_id>>"
+        },
+        "Null": {
+          "aws:PrincipalOrgID": "false"
         }
       }
     }
