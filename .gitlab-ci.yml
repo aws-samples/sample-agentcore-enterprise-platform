@@ -109,7 +109,8 @@ pytest:
   stage: test
   <<: *pip-cache
   before_script:
-    - pip install -q pyyaml pytest
+    # boto3 + colorama: imported by scripts/utils.py, which the scripts tests import
+    - pip install -q pyyaml pytest boto3 colorama
   script:
     - python -m pytest tests/ -q
 
