@@ -170,7 +170,11 @@ declare -A PROFILE_MODULES
 PROFILE_MODULES[greenfield]="3 4 5 6 9"
 PROFILE_MODULES[migration]="3 4 6 7 9"
 PROFILE_MODULES[multi-agent]="3 4 5 6 7 8 9"
-PROFILE_MODULES[platform-team]="3 4 5 6 7 8 9 A C E"
+# Memory (A) precedes Agent Deployment (6): the orchestrator runtime depends on
+# the memory stack, so CDK would create it implicitly at module 6 and module A
+# would then report "no changes" — deploying it in its own module keeps the
+# narrative honest.
+PROFILE_MODULES[platform-team]="3 4 5 A 6 7 8 9 C E"
 PROFILE_MODULES[security-focused]="3 4 5 6 9 E"
 
 # ═══════════════════════════════════════════════════════════════
