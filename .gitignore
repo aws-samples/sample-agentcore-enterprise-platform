@@ -29,3 +29,5 @@ override.tf.json
 
 # Dashboard monitor output (account-specific, auto-generated)
 dashboard/public/status.json
+
+.vscode/
