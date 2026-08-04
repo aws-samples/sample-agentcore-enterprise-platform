@@ -10,14 +10,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from stacks.runtime_stack import _component_image_tag, _compute_source_hash
+from infra_utils.source_hash import component_image_tag, compute_source_hash
 
 AGENT_CODE = Path(__file__).resolve().parents[1] / "agent-code"
 
 
 def test_pattern_changes_the_tag():
-    langgraph = _component_image_tag(str(AGENT_CODE), "langgraph-agent")
-    strands = _component_image_tag(str(AGENT_CODE), "strands-agent")
+    langgraph = component_image_tag(str(AGENT_CODE), "langgraph-agent")
+    strands = component_image_tag(str(AGENT_CODE), "strands-agent")
     assert langgraph != strands, (
         "each pattern needs its own tag, or no rebuild is triggered"
     )
@@ -25,12 +25,10 @@ def test_pattern_changes_the_tag():
 
 def test_same_inputs_are_stable():
     """Unchanged source + pattern must not churn the tag (no spurious rebuilds)."""
-    first = _component_image_tag(str(AGENT_CODE), "langgraph-agent")
-    assert first == _component_image_tag(str(AGENT_CODE), "langgraph-agent")
+    first = component_image_tag(str(AGENT_CODE), "langgraph-agent")
+    assert first == component_image_tag(str(AGENT_CODE), "langgraph-agent")
 
 
 def test_no_pattern_falls_back_to_content_hash():
     """Runtimes without a pattern (code-agent, research-agent) keep the old tag."""
-    assert _component_image_tag(str(AGENT_CODE)) == _compute_source_hash(
-        str(AGENT_CODE)
-    )
+    assert component_image_tag(str(AGENT_CODE)) == compute_source_hash(str(AGENT_CODE))

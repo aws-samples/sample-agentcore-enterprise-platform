@@ -9,7 +9,6 @@ Source hash tracking ensures:
   - ECR images tagged with both `latest` and source hash
 """
 
-import hashlib
 import os
 
 import aws_cdk as cdk
@@ -39,64 +38,7 @@ from aws_cdk import (
 )
 from constructs import Construct
 
-# Directories/extensions excluded from source hash computation
-HASH_EXCLUDES = {
-    "node_modules",
-    "__pycache__",
-    ".git",
-    ".venv",
-    ".next",
-    ".terraform",
-    ".DS_Store",
-    ".pyc",
-    ".log",
-    ".egg-info",
-    "dist",
-    "build",
-    "cdk.out",
-}
-
-
-def _compute_source_hash(source_path: str) -> str:
-    """Compute a stable SHA-256 hash over all source files, excluding non-source artifacts."""
-    if not os.path.isdir(source_path):
-        return "placeholder"
-    file_hashes = []
-    for root, dirs, files in os.walk(source_path):
-        # Prune excluded directories in-place
-        dirs[:] = [d for d in sorted(dirs) if d not in HASH_EXCLUDES]
-        for fname in sorted(files):
-            if any(fname.endswith(ext) for ext in (".pyc", ".log", ".DS_Store")):
-                continue
-            fpath = os.path.join(root, fname)
-            rel = os.path.relpath(fpath, source_path)
-            h = hashlib.sha256()
-            h.update(rel.encode())
-            with open(fpath, "rb") as f:
-                for chunk in iter(lambda: f.read(8192), b""):
-                    h.update(chunk)
-            file_hashes.append(h.hexdigest())
-    if not file_hashes:
-        return "empty"
-    combined = hashlib.sha256("".join(file_hashes).encode())
-    return combined.hexdigest()[:16]
-
-
-def _component_image_tag(source_path: str, dockerfile_pattern: str = "") -> str:
-    """Image tag / rebuild trigger: source content hash + the selected pattern.
-
-    dockerfile_pattern selects WHICH Dockerfile is built out of the shared
-    agent-code/ tree, so it has to be part of the tag. Hashing only file
-    contents makes every pattern collide on one tag: switching
-    agent_pattern leaves the trigger property unchanged (no CodeBuild run)
-    and the runtime keeps serving the previously built pattern's image.
-    """
-    digest = _compute_source_hash(source_path)
-    if dockerfile_pattern:
-        digest = hashlib.sha256(f"{digest}:{dockerfile_pattern}".encode()).hexdigest()[
-            :16
-        ]
-    return digest
+from infra_utils.source_hash import component_image_tag
 
 
 class RuntimeStack(cdk.Stack):
@@ -137,7 +79,7 @@ class RuntimeStack(cdk.Stack):
         abs_source_dir = os.path.join(repo_root, source_dir)
 
         # ── Source Hash ──
-        source_hash = _component_image_tag(abs_source_dir, dockerfile_pattern)
+        source_hash = component_image_tag(abs_source_dir, dockerfile_pattern)
         image_tag = source_hash
 
         # ── ECR Repository ──
