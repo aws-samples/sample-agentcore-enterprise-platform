@@ -10,8 +10,11 @@
       ],
       "Resource": "*",
       "Condition": {
-        "StringNotLikeIfExists": {
+        "StringNotLike": {
           "bedrock-agentcore:DiscoveryUrl": "<<approved_discovery_url_pattern>>"
+        },
+        "Null": {
+          "bedrock-agentcore:DiscoveryUrl": "false"
         }
       }
     }

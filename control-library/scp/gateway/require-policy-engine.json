@@ -24,7 +24,7 @@
       ],
       "Resource": "*",
       "Condition": {
-        "StringNotEqualsIfExists": {
+        "StringNotEquals": {
           "bedrock-agentcore:PolicyEngineMode": "ENFORCE"
         }
       }

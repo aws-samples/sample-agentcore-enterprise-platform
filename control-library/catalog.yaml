@@ -178,8 +178,11 @@ controls:
     engine: [terraform]
     default_mode: enforce
     params: {}
-    # Requires a Cedar policy engine attached AND mode=ENFORCE. Drop the second statement to
-    # allow LOG_ONLY during rollout.
+    # Requires a Cedar policy engine attached AND mode=ENFORCE. Both statements INTENTIONALLY
+    # deny when their key is absent: Null:true requires PolicyEngineArn to be present, and
+    # plain StringNotEquals (no IfExists) denies when PolicyEngineMode is absent OR not
+    # ENFORCE — an omitted mode would fall back to a service default that may not be ENFORCE.
+    # Drop the second statement to allow LOG_ONLY during rollout.
     validate: [checkov, access-analyzer]
 
   - id: scp.gateway.enforce-approved-idp
@@ -196,7 +199,9 @@ controls:
         description: >-
           Allowed OIDC discovery URL pattern (bedrock-agentcore:DiscoveryUrl). Default only
           requires HTTPS; narrow to your IdP, e.g. https://login.microsoftonline.com/<tenant>/*.
-          Uses IfExists so IAM-auth gateways (no discovery URL) are unaffected.
+          A Null guard scopes the deny to requests that include a DiscoveryUrl, so IAM-auth
+          gateways (key absent) are unaffected. (Negated operators in a Deny match absent
+          keys — even with IfExists — so the guard is required for this exemption.)
     validate: [checkov, access-analyzer]
 
   - id: scp.gateway.restrict-protocol
@@ -211,6 +216,10 @@ controls:
         required: false
         default: "MCP"
         description: Allowed Gateway protocolType (bedrock-agentcore:ProtocolType).
+    # A Null guard scopes the deny to requests that include ProtocolType, so UpdateGateway
+    # calls that don't touch the protocol are not blocked. Known gap: CreateGateway with
+    # protocolType explicitly omitted falls back to the service default, which this SCP
+    # does not constrain.
     validate: [checkov, access-analyzer]
 
   - id: scp.gateway.targets-require-private-endpoint
@@ -245,6 +254,8 @@ controls:
     engine: [terraform]
     default_mode: enforce
     params: {}
-    # Allow-list of MCP target types (lambda, mcpServer). Uses IfExists so non-MCP targets
-    # are unaffected. Edit the array to change the allow-list.
+    # Allow-list of MCP target types (lambda, mcpServer). A Null guard scopes the deny to
+    # requests that include McpTargetConfigurationType, so non-MCP targets (key absent) are
+    # unaffected (negated operators in a Deny match absent keys, even with IfExists).
+    # Edit the array to change the allow-list.
     validate: [checkov, access-analyzer]

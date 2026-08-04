@@ -10,11 +10,14 @@
       ],
       "Resource": "*",
       "Condition": {
-        "StringNotEqualsIfExists": {
+        "StringNotEquals": {
           "bedrock-agentcore:McpTargetConfigurationType": [
             "lambda",
             "mcpServer"
           ]
+        },
+        "Null": {
+          "bedrock-agentcore:McpTargetConfigurationType": "false"
         }
       }
     }
