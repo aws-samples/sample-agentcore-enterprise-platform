@@ -136,6 +136,7 @@ All stacks publish key outputs to SSM Parameter Store:
 /{project}/{environment}/auth/issuer-url
 /{project}/{environment}/auth/user-pool-id
 /{project}/{environment}/auth/app-client-id
+/{project}/{environment}/identity/gateway-credential-provider-name
 /{project}/{environment}/gateway/url
 /{project}/{environment}/memory/memory-id
 /{project}/{environment}/runtimes/{component}/arn

@@ -285,3 +285,13 @@ class AuthStack(cdk.Stack):
     @property
     def m2m_client_id(self) -> str:
         return self._m2m_client.user_pool_client_id
+
+    @property
+    def m2m_client_secret(self) -> cdk.SecretValue:
+        """M2M client secret as a SecretValue.
+
+        CDK backs this with a DescribeUserPoolClient custom resource in this
+        stack. The value renders as a CloudFormation token (Fn::GetAtt on the
+        custom resource) in the synthesized template — never literal text.
+        """
+        return self._m2m_client.user_pool_client_secret

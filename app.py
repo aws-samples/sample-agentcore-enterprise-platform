@@ -207,6 +207,9 @@ identity_stack = IdentityStack(
     f"{prefix}-identity",
     project_name=project,
     environment=env_name,
+    gateway_m2m_client_id=auth_stack.m2m_client_id,
+    gateway_m2m_client_secret=auth_stack.m2m_client_secret,
+    cognito_discovery_url=auth_stack.discovery_url,
     google_client_id=google_client_id,
     google_client_secret=google_client_secret,
     github_client_id=github_client_id,
@@ -302,6 +305,7 @@ runtime_orchestrator = RuntimeStack(
     cognito_allowed_clients=[auth_stack.app_client_id, auth_stack.m2m_client_id],
     extra_env_vars={
         "GATEWAY_URL": gateway_stack.gateway_url,
+        "GATEWAY_CREDENTIAL_PROVIDER_NAME": identity_stack.gateway_credential_provider_name,
         "MEMORY_ID": memory_stack.memory_id,
         "STACK_NAME": prefix,
         "USE_LONG_TERM_MEMORY": str(use_long_term_memory).lower(),
@@ -312,6 +316,12 @@ runtime_orchestrator = RuntimeStack(
 )
 runtime_orchestrator.add_dependency(gateway_stack)
 runtime_orchestrator.add_dependency(memory_stack)
+# The orchestrator fetches Gateway tokens through the identity stack's M2M
+# credential provider, so the provider must exist before the runtime starts.
+# code-agent / research-agent runtimes don't get GATEWAY_CREDENTIAL_PROVIDER_NAME:
+# their agent code has no gateway tools (only the orchestrator patterns under
+# agent-code/ use tools/gateway.py).
+runtime_orchestrator.add_dependency(identity_stack)
 
 # ── A2A Agent Runtimes (optional) ──
 runtime_code_agent = None
