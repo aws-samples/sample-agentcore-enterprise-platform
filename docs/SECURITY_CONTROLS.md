@@ -28,7 +28,7 @@ Nothing is on by default. Turn controls on with feature flags, or use the
 |---|---|---|---|---|
 | 1 | **SCP: CMK-for-Memory** | (Terraform vars) | `terraform/org-guardrails/` ← `control-library/scp/` | enforce |
 | 1b | **SCP: Gateway configuration hardening** (CMK, no-auth, policy-engine=ENFORCE, approved IdP, protocol, private-endpoint targets, credential-provider, target-type) | `enable_gateway_scps` + vars | `terraform/org-guardrails/gateway.tf` ← `control-library/scp/gateway/` | enforce |
-| 2 | **VPC endpoint policy + least-privilege IAM** | `enable_networking`, `org_id` | `networking_stack.py`, `agentcore_role.py` ← `control-library/vpce/`, `iam/` | org-scoped |
+| 2 | **VPC endpoint policy + least-privilege IAM** — action-scoped; org restriction covers **SigV4 callers only** (OAuth/JWT callers carry no IAM principal and pass via `Principal: "*"` per AWS docs) | `enable_networking`, `org_id` | `networking_stack.py`, `agentcore_role.py` ← `control-library/vpce/`, `iam/` | org-scoped (SigV4) |
 | 3 | **AgentCore Cedar policies** | `enable_cedar`, `cedar_mode` | `gateway_stack.py` ← `control-library/cedar/` | LOG_ONLY |
 | 4 | **Resource-based policy: Memory in-account-only** | `enable_resource_policies`, `org_id` | `memory_stack.py` ← `control-library/resource-policies/` | enforce |
 | 5+6 | **Bedrock Guardrails + egress Lambda interceptor** | `enable_egress_filter` | `gateway_stack.py`, `tools/egress_interceptor/` ← `control-library/guardrails/` | enforce (guardrail) |
@@ -108,10 +108,13 @@ Data-plane condition keys and RCP support are launching later. When available, t
 add (as `control-library/rcp/` + Terraform `RESOURCE_CONTROL_POLICY`):
 
 - **Private ingress:** `aws:SourceVpc` / `aws:SourceVpce` / `aws:VpceOrgID` on `InvokeGateway`
-  — the universal ingress lockdown that also covers OAuth callers (SCPs only reach SigV4
-  callers). Requires enabling the RCP policy type + org onboarding.
+  — the universal ingress lockdown that also covers OAuth callers (SCPs and VPC endpoint
+  policies only reach SigV4 callers: OAuth/JWT requests carry no IAM principal, so the
+  item-2 endpoint policy must allow them via `Principal: "*"` and cannot restrict who they
+  are). Requires enabling the RCP policy type + org onboarding.
 - **Inbound JWT claims:** `InboundJwtClaim/{aud,client_id,iss,scope,sub}` to restrict OAuth
-  callers by claim, via RCP or per-gateway resource-based policy.
+  callers by claim, via RCP or per-gateway resource-based policy. This is the mechanism
+  that will close the OAuth-caller gap left open by the item-2 endpoint policy.
 
 Until then, per-gateway resource-based policies (attached with the native
 `AWS::BedrockAgentCore::ResourcePolicy`, as used for Memory) are the available data-plane

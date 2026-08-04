@@ -90,8 +90,13 @@ controls:
     validate: [cedar]
 
   # ── Item 2: fine-grained VPC endpoint policy (account scope, CDK) ──
-  # Attached to AgentCore interface VPC endpoints so only org principals can invoke through
-  # them. Allows the AgentCore invoke actions from the org and denies everything else.
+  # Attached to AgentCore interface VPC endpoints. Restricts the endpoint to the AgentCore
+  # data-plane action set (invoke + OAuth PRM discovery); every other action is implicitly
+  # denied. The org restriction applies to SigV4 callers ONLY: a Deny with a Null guard
+  # blocks IAM principals from outside the org. OAuth/JWT (Bearer) callers carry NO IAM
+  # principal, so per AWS docs the Allow uses Principal "*" with no IAM-principal
+  # conditions — VPC endpoint policies CANNOT constrain OAuth callers (that lockdown is
+  # the RCP / InboundJwtClaim roadmap item in docs/SECURITY_CONTROLS.md).
   - id: vpce.agentcore-in-org
     file: vpce/agentcore-in-org.json
     type: VPCE
@@ -102,7 +107,9 @@ controls:
     params:
       org_id:
         required: true
-        description: AWS Organizations ID (o-xxxx) allowed to use the endpoint.
+        description: >-
+          AWS Organizations ID (o-xxxx). SigV4 callers outside this org are denied;
+          OAuth callers are not constrained by this policy.
     validate: [checkov, access-analyzer]
 
   # ── Item 2: least-privilege AgentCore Runtime execution role policy (account scope, CDK) ──

@@ -201,7 +201,13 @@ rm -rf cdk.out
 cdk synth agentcore-workshop-dev-gateway 2>/dev/null | grep -c 'PolicyEngineConfiguration'  # → 0
 ```
 
-### A7b. VPC endpoint policy synthesizes with the org-scoped policy (item 2)
+### A7b. VPC endpoint policy synthesizes with the SigV4-org-scoped policy (item 2)
+
+The endpoint policy allows the AgentCore data-plane actions (invoke + OAuth PRM discovery)
+with `Principal: "*"` and **no** IAM-principal conditions — OAuth/JWT callers carry no IAM
+principal, so any principal-keyed condition would block them (per AWS docs). The org
+restriction is a Deny scoped by a `Null` guard so it only fires for SigV4 callers outside
+the org, never for principal-less OAuth traffic.
 
 The networking VPC needs Availability Zone context to synth offline. Provide it once with a
 temporary `cdk.context.json` (git-ignored), then synth:
@@ -215,10 +221,14 @@ JSON
 rm -rf cdk.out
 CDK_DEFAULT_ACCOUNT=111122223333 CDK_DEFAULT_REGION=us-east-1 \
   cdk synth agentcore-workshop-dev-networking -c enable_networking=true -c org_id=o-example123 2>/dev/null \
-  | grep -cE 'bedrock-agentcore.gateway|PrincipalOrgID'
-# → 3  (the AgentCore gateway endpoint service + org condition in allow & deny)
+  > /tmp/vpce-synth.yaml
 
-rm -f cdk.context.json cdk.out -r
+grep -c 'bedrock-agentcore.gateway' /tmp/vpce-synth.yaml            # → 1 (the AgentCore gateway endpoint service)
+grep -c 'PrincipalOrgID' /tmp/vpce-synth.yaml                       # → 2 (org condition + Null guard, both inside the SigV4-only Deny)
+grep -c 'GetRuntimeProtectedResourceMetadata' /tmp/vpce-synth.yaml  # → 1 (OAuth PRM discovery allowed with Principal "*")
+grep -c '"Null":' /tmp/vpce-synth.yaml                              # → 1 (Null guard keeps the Deny off principal-less OAuth traffic)
+
+rm -f cdk.context.json /tmp/vpce-synth.yaml && rm -rf cdk.out
 ```
 
 Also confirm the tightened execution role scopes SSM to the project path (no `"*"`):
