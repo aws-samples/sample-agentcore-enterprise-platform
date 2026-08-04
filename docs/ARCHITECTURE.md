@@ -1,11 +1,12 @@
 # Architecture
 
-This is the AI landing zone as actually implemented by this repo: the CDK stacks
-(`stacks/`), the control library (`control-library/`), the deploy golden path
-(`scripts/deploy.sh` + CodeBuild), and the agent workloads (`agent-code/`).
-Solid arrows are the live request flow verified end to end by `scripts/test.py`
-and `scripts/invoke.py`; dotted arrows are opt-in features or control-plane
-relationships.
+This is the AI landing zone as actually implemented by this repo, layer by
+layer: governance (org SCPs from the control library), identity (Cognito +
+AgentCore Identity Token Vault), platform services (gateway, memory, SSM
+registry), agent workloads (runtimes + Bedrock), the deploy golden path,
+observability, and the opt-in network layer. Solid arrows are the live request
+flow verified end to end by `scripts/test.py` and `scripts/invoke.py`; dotted
+arrows are opt-in features or control-plane relationships.
 
 ```mermaid
 flowchart TB
@@ -24,14 +25,14 @@ flowchart TB
     end
     subgraph PLATFORM["Platform services layer"]
         GW["AgentCore Gateway (MCP, CUSTOM_JWT)<br/>opt-in: Cedar policy engine (LOG_ONLY)<br/>opt-in: Guardrail + egress interceptor λ"]
-        TOOL["Lambda tool target(s)"]
+        TOOL["Lambda tool target(s)<br/>sample-tool"]
         MEM["AgentCore Memory<br/>semantic + user-preference<br/>opt-in: KMS CMK · resource policy"]
-        SSM["SSM Parameter Store<br/>/{project}/{env}/* registry"]
+        SSM["SSM Parameter Store<br/>/{project}/{env}/* — cross-stack registry"]
     end
     subgraph WORKLOAD["Agent workload layer (runtime stacks)"]
         RT["Runtime: orchestrator (HTTP)<br/>env: MODEL_ID · GATEWAY_URL ·<br/>GATEWAY_CREDENTIAL_PROVIDER_NAME · MEMORY_ID"]
         A2A["A2A runtimes (opt-in)<br/>code-agent · research-agent"]
-        BR["Bedrock<br/>us.anthropic.claude-sonnet-4-6<br/>(env-overridable)"]
+        BR["Bedrock<br/>us.anthropic.claude-sonnet-4-6<br/>(env-overridable via MODEL_ID)"]
     end
     subgraph FACTORY["Golden path (deploy)"]
         DEP["deploy.sh wizard<br/>profiles · modules · teams"]
@@ -45,19 +46,20 @@ flowchart TB
     subgraph NET["Network layer (opt-in)"]
         VPC["VPC + endpoints<br/>gateway VPCE policy:<br/>OAuth pass-through + SigV4 org-lock"]
     end
-    USER -->|"OIDC login"| COG
+    USER -->|"OIDC login (opt. federated)"| COG
     FED -.-> COG
     M2MC -->|client_credentials| COG
     COG -->|"JWT bearer"| RT
     RT --> BR
-    RT -->|"M2M token"| M2MP
-    M2MP -->|client_credentials| COG
+    RT -->|"M2M token request"| M2MP
+    M2MP -->|"client_credentials"| COG
+    M2MP -->|"gateway JWT"| RT
     RT -->|"MCP + JWT"| GW
     GW --> TOOL
-    RT <-->|"session memory"| MEM
-    RT -.->|A2A| A2A
+    RT <-->|"session + semantic recall"| MEM
+    RT -.->|A2A protocol| A2A
     DEP --> CB --> ECR --> RT
-    SCP -.->|constrains| GW
+    SCP -.->|constrains Create/Update| GW
     SCP -.->|CMK required| MEM
     CTLIB -.-> SCP
     VPC -.->|private path| GW
@@ -65,6 +67,25 @@ flowchart TB
     GW --> LOGS
     SSM -.-> RT
 ```
+
+## Request flows
+
+The three solid-arrow flows below are verified end to end against a live
+deployment:
+
+1. **User JWT invoke** — a caller gets a JWT from Cognito (OIDC login or M2M
+   `client_credentials` with the `agentcore/invoke` scope) and POSTs the prompt
+   to the orchestrator runtime's data-plane endpoint as a Bearer token
+   (`scripts/test.py`, `scripts/invoke.py`).
+2. **Agent M2M token via Token Vault → gateway MCP** — the runtime requests an
+   M2M token from the AgentCore Identity `gateway-m2m` credential provider
+   (Token Vault), which runs `client_credentials` against Cognito and hands the
+   gateway JWT back; the runtime then calls the gateway over MCP with that JWT,
+   and the gateway invokes its Lambda tool targets
+   (`scripts/invoke.py --tools`, `scripts/test_gateway.py`).
+3. **Deploy golden path** — `scripts/deploy.sh` drives CDK; each runtime stack
+   owns an ECR repo and a source-hash-triggered ARM64 CodeBuild that produces
+   the container the runtime runs.
 
 ## Reading the diagram, layer by layer
 
@@ -84,9 +105,9 @@ flowchart TB
   publishes its outputs to the SSM `/{project}/{env}/*` registry.
 - **Agent workload:** the orchestrator runtime (HTTP protocol) reads its wiring
   from environment variables set by the runtime stack, calls Bedrock
-  (`us.anthropic.claude-sonnet-4-6` by default, env-overridable), and talks to the
-  gateway with an M2M JWT it obtains through the credential provider. A2A
-  sub-agent runtimes (code-agent, research-agent) are opt-in.
+  (`us.anthropic.claude-sonnet-4-6` by default, env-overridable via `MODEL_ID`),
+  and talks to the gateway with an M2M JWT it obtains through the credential
+  provider. A2A sub-agent runtimes (code-agent, research-agent) are opt-in.
 - **Golden path:** `scripts/deploy.sh` (profiles, modules, teams) drives CDK;
   each runtime stack owns an ECR repo and a source-hash-triggered ARM64 CodeBuild
   that produces the container the runtime runs.

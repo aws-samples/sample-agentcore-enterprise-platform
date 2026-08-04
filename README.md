@@ -10,6 +10,8 @@ Modular AWS CDK (Python) infrastructure for the **AgentCore Platform and Securit
 
 ## Architecture
 
+Maintained source: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (Mermaid diagram + verified request flows).
+
 ![AgentCore Workshop Architecture](docs/architecture.png)
 
 ## Stacks
@@ -54,14 +56,20 @@ NON_INTERACTIVE=1 AWS_REGION=us-east-1 ./scripts/deploy.sh deploy
 
 ## Testing the Deployment
 
-Set `AWS_PROFILE`/`AWS_REGION` first if not using default credentials. Full architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Full architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ```bash
+export AWS_PROFILE=<your-profile>   # skip if using default credentials
+export AWS_REGION=us-east-1
+
 # Health check: token → invoke → resource status
 python scripts/test.py
 
 # Invoke the deployed agent (add --session <id> to continue a conversation)
 python scripts/invoke.py "What tools do you have?"
+
+# List the gateway's MCP tools
+python scripts/invoke.py --tools
 
 # Gateway direct: MCP tools/list + one tools/call
 python scripts/test_gateway.py
@@ -124,15 +132,15 @@ Agent application code and shared utilities are adapted from the
 
 Live workshop monitoring dashboard with approach explainer and deployment status:
 
+Run both from the repo root; the dashboard is served on localhost only.
+
 ```bash
 # Terminal 1 — poller (writes dashboard/public/status.json every 15s)
-AWS_REGION=<region> .venv/bin/python dashboard/monitor.py
+AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 .venv/bin/python dashboard/monitor.py
 
-# Terminal 2 — server (dashboard at localhost:8888)
+# Terminal 2 — server (dashboard at http://localhost:8888)
 python3 -m http.server 8888 -d dashboard/public
 ```
-
-> Set `AWS_PROFILE` first if not using default credentials.
 
 ## Configuration
 

@@ -51,3 +51,12 @@ def test_get_m2m_token_builds_url_and_basic_auth(monkeypatch):
     assert req.get_header("Authorization") == expected_auth
     assert b"grant_type=client_credentials" in req.data
     assert b"agentcore%2Finvoke" in req.data
+
+
+def test_invoke_imports_without_aws_and_session_id_is_40_chars():
+    """invoke.py must be importable with no AWS credentials (no module-level calls)."""
+    import invoke
+
+    sid = invoke.new_session_id()
+    assert len(sid) == 40
+    assert sid != invoke.new_session_id()
