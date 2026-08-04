@@ -507,9 +507,12 @@ function truncate(str, len) {
 function statusClass(s) {
   if (!s) return 'not-deployed';
   const l = s.toLowerCase().replace(/[_ ]/g, '-');
-  if (l.includes('complete') || l.includes('deployed') || l === 'create_complete' || l === 'update_complete') return 'deployed';
-  if (l.includes('progress') || l.includes('pending')) return 'in-progress';
+  // Order matters: NOT_DEPLOYED contains "deployed" and ROLLBACK_COMPLETE
+  // contains "complete", so check the negative/failed states first.
+  if (l === 'not-deployed' || l.includes('delete-complete')) return 'not-deployed';
   if (l.includes('fail') || l.includes('rollback') || l.includes('error')) return 'failed';
+  if (l.includes('progress') || l.includes('pending')) return 'in-progress';
+  if (l.includes('complete')) return 'deployed';
   return 'not-deployed';
 }
 
@@ -533,9 +536,11 @@ function render(data) {
   document.getElementById('infoAccount').textContent = meta.accountId || meta.account || '—';
   document.getElementById('infoUpdated').textContent = relativeTime(data.timestamp || data.lastUpdated);
 
-  // Stacks
+  // Stacks — monitor.py keys by full stack name ({project}-{env}-{short});
+  // LAYERS/STACK_META use short names, so resolve each short name by suffix.
   const stacks = data.stacks || {};
   const allNames = Object.keys(stacks);
+  const bySuffix = short => stacks[allNames.find(n => n.endsWith('-' + short)) || short];
   let counts = { deployed: 0, 'in-progress': 0, failed: 0, 'not-deployed': 0 };
   const total = Math.max(allNames.length, 10);
 
@@ -561,7 +566,7 @@ function render(data) {
     grid.className = 'stacks-grid';
 
     layer.stacks.forEach(stackKey => {
-      const s = stacks[stackKey] || {};
+      const s = bySuffix(stackKey) || {};
       const cls = statusClass(s.status);
       const meta = STACK_META[stackKey] || { module: '—', team: '—' };
       const outputs = s.outputs || {};
