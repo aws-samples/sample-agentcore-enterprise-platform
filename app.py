@@ -102,6 +102,13 @@ agent_pattern = app.node.try_get_context("agent_pattern") or os.environ.get(
     "AGENT_PATTERN", "orchestrator"
 )
 
+# Optional Bedrock model ID override (cross-region inference profile, e.g.
+# us.anthropic.claude-sonnet-5). When unset, MODEL_ID is NOT injected into the
+# runtimes and each agent pattern falls back to its in-code DEFAULT_MODEL_ID —
+# agent code stays the single source of truth for the default.
+model_id = app.node.try_get_context("model_id") or os.environ.get("MODEL_ID", "")
+model_env = {"MODEL_ID": model_id} if model_id else {}
+
 # Long-term memory configuration
 use_long_term_memory = (
     app.node.try_get_context("use_long_term_memory")
@@ -311,6 +318,7 @@ runtime_orchestrator = RuntimeStack(
         "USE_LONG_TERM_MEMORY": str(use_long_term_memory).lower(),
         "LTM_TOP_K": str(ltm_top_k),
         "LTM_RELEVANCE_SCORE": str(ltm_relevance_score),
+        **model_env,
     },
     env=cdk_env,
 )
@@ -339,6 +347,7 @@ if enable_a2a:
         runtime_type="a2a_agent",
         cognito_issuer_url=auth_stack.issuer_url,
         cognito_allowed_clients=[auth_stack.app_client_id, auth_stack.m2m_client_id],
+        extra_env_vars=model_env,
         env=cdk_env,
     )
     runtime_code_agent.add_dependency(auth_stack)
@@ -354,6 +363,7 @@ if enable_a2a:
         runtime_type="a2a_agent",
         cognito_issuer_url=auth_stack.issuer_url,
         cognito_allowed_clients=[auth_stack.app_client_id, auth_stack.m2m_client_id],
+        extra_env_vars=model_env,
         env=cdk_env,
     )
     runtime_research_agent.add_dependency(auth_stack)

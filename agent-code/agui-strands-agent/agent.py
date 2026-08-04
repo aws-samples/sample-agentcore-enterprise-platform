@@ -25,6 +25,11 @@ logger = logging.getLogger(__name__)
 
 app = BedrockAgentCoreApp()
 
+# Cross-region inference profile — current (not Legacy-flagged). Override per
+# deployment via the MODEL_ID environment variable (see app.py / deploy.sh).
+DEFAULT_MODEL_ID = "us.anthropic.claude-sonnet-4-6"
+MODEL_ID = os.environ.get("MODEL_ID", DEFAULT_MODEL_ID)
+
 SYSTEM_PROMPT = (
     "You are a helpful assistant with access to tools via the Gateway and Code Interpreter. "
     "When asked about your tools, list them and explain what they do."
@@ -32,9 +37,7 @@ SYSTEM_PROMPT = (
 
 
 def _build_model() -> BedrockModel:
-    return BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-5-20250929-v1:0", temperature=0.1
-    )
+    return BedrockModel(model_id=MODEL_ID, temperature=0.1)
 
 
 def _create_session_manager(
