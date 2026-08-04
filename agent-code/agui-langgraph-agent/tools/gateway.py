@@ -13,6 +13,48 @@ logger = logging.getLogger(__name__)
 _PROVIDER_NAME = os.environ.get("GATEWAY_CREDENTIAL_PROVIDER_NAME", "")
 
 
+def _gateway_url_ssm_path() -> str | None:
+    """Build the conventional SSM path for the gateway URL.
+
+    Uses the PROJECT_NAME and ENVIRONMENT variables that RuntimeStack always
+    injects, matching the path published by the gateway stack. Returns None
+    when either variable is missing or has an unexpected format.
+    """
+    project_name = os.environ.get("PROJECT_NAME", "")
+    environment = os.environ.get("ENVIRONMENT", "")
+    for name, value in (("PROJECT_NAME", project_name), ("ENVIRONMENT", environment)):
+        if not value:
+            logger.warning("[GATEWAY] %s environment variable is not set", name)
+            return None
+        if not value.replace("-", "").replace("_", "").isalnum():
+            logger.warning("[GATEWAY] Invalid %s format", name)
+            return None
+    return f"/{project_name}/{environment}/gateway/url"
+
+
+def _resolve_gateway_url() -> str | None:
+    """Resolve the gateway URL from the environment or SSM Parameter Store.
+
+    Prefers the GATEWAY_URL environment variable (injected into the
+    orchestrator runtime — no SSM call or ssm:GetParameter permission
+    needed). Falls back to the conventional SSM parameter
+    /{PROJECT_NAME}/{ENVIRONMENT}/gateway/url. Returns None when neither
+    source is available so callers can degrade gracefully.
+    """
+    gateway_url = os.environ.get("GATEWAY_URL", "")
+    if gateway_url:
+        return gateway_url
+
+    ssm_path = _gateway_url_ssm_path()
+    if ssm_path is None:
+        logger.warning(
+            "[GATEWAY] GATEWAY_URL not set and conventional SSM path "
+            "unavailable — gateway URL cannot be resolved"
+        )
+        return None
+    return get_ssm_parameter(ssm_path)
+
+
 async def _fetch_gateway_token() -> str:
     """Fetch OAuth2 token for Gateway authentication.
 
@@ -39,7 +81,7 @@ async def create_gateway_mcp_client() -> MultiServerMCPClient | None:
     Fetches a fresh token per call (called per-request in agent entrypoint).
 
     Returns None (gateway tools disabled) when the credential provider
-    name is not configured.
+    name is not configured or the gateway URL cannot be resolved.
     """
     if not _PROVIDER_NAME:
         logger.warning(
@@ -47,13 +89,9 @@ async def create_gateway_mcp_client() -> MultiServerMCPClient | None:
         )
         return None
 
-    stack_name = os.environ.get("STACK_NAME")
-    if not stack_name:
-        raise ValueError("STACK_NAME environment variable is required")
-    if not stack_name.replace("-", "").replace("_", "").isalnum():
-        raise ValueError("Invalid STACK_NAME format")
-
-    gateway_url = get_ssm_parameter(f"/{stack_name}/gateway_url")
+    gateway_url = _resolve_gateway_url()
+    if gateway_url is None:
+        return None
     logger.info("[GATEWAY] URL: %s", gateway_url)
 
     fresh_token = await _fetch_gateway_token()
