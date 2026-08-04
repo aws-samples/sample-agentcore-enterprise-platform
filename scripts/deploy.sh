@@ -352,6 +352,9 @@ build_context_args() {
     [ -n "${ENABLE_TRACEABILITY:-}" ]      && CONTEXT_ARGS+=(-c "enable_traceability=${ENABLE_TRACEABILITY}")
     [ -n "${ORG_ID:-}" ]                   && CONTEXT_ARGS+=(-c "org_id=${ORG_ID}")
 
+    # Optional Bedrock model ID override (agents fall back to their in-code default)
+    [ -n "${MODEL_ID:-}" ]                 && CONTEXT_ARGS+=(-c "model_id=${MODEL_ID}")
+
     return 0
 }
 
@@ -592,6 +595,7 @@ case "$ACTION" in
         echo "  ENVIRONMENT        Environment (default: dev)"
         echo "  AWS_REGION         AWS region"
         echo "  IDP_TYPE           Identity provider (cognito|entra_id|okta|ping)"
+        echo "  MODEL_ID           Bedrock model ID override for all agents (default: in-code per pattern)"
         exit 1
         ;;
 esac

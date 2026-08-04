@@ -127,6 +127,7 @@ All configuration via CDK context (`-c key=value`) or environment variables:
 | `enable_security` | `ENABLE_SECURITY` | `false` | Enable security stack |
 | `enable_a2a` | `ENABLE_A2A` | `true` | Enable A2A agent stacks |
 | `observability_backend` | `OBSERVABILITY_BACKEND` | `cloudwatch` | cloudwatch/datadog |
+| `model_id` | `MODEL_ID` | *(in-code per pattern)* | Bedrock model ID override for all agents (e.g. `us.anthropic.claude-sonnet-5`) |
 
 ## Cross-Stack Communication
 

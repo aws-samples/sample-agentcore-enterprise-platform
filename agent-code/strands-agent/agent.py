@@ -12,6 +12,11 @@ logger = logging.getLogger(__name__)
 
 app = BedrockAgentCoreApp()
 
+# Cross-region inference profile — current (not Legacy-flagged). Override per
+# deployment via the MODEL_ID environment variable (see app.py / deploy.sh).
+DEFAULT_MODEL_ID = "us.anthropic.claude-sonnet-4-6"
+MODEL_ID = os.environ.get("MODEL_ID", DEFAULT_MODEL_ID)
+
 SYSTEM_PROMPT = (
     "You are a helpful assistant for the AgentCore Workshop. "
     "You can help with research, analysis, and general questions. "
@@ -22,7 +27,7 @@ SYSTEM_PROMPT = (
 def _create_agent(user_id: str, session_id: str) -> Agent:
     """Create a Strands agent with memory support."""
     model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id=MODEL_ID,
         temperature=0.1,
     )
 
@@ -48,7 +53,7 @@ def _create_agent(user_id: str, session_id: str) -> Agent:
                 region_name=os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
             )
             logger.info("Memory enabled: %s", memory_id)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — degrade gracefully on any memory failure
             logger.warning("Memory init failed (continuing without): %s", e)
 
     return Agent(
@@ -66,7 +71,10 @@ async def invocations(payload, context: RequestContext):
     session_id = payload.get("runtimeSessionId")
 
     if not all([user_query, session_id]):
-        yield {"status": "error", "error": "Missing required fields: prompt or runtimeSessionId"}
+        yield {
+            "status": "error",
+            "error": "Missing required fields: prompt or runtimeSessionId",
+        }
         return
 
     try:

@@ -28,6 +28,13 @@ logger = logging.getLogger(__name__)
 
 app = BedrockAgentCoreApp()
 
+# Current Opus cross-region inference profile (this pattern intentionally uses
+# Opus for Claude Code-style agentic work). Override per deployment via the
+# MODEL_ID environment variable (see app.py / deploy.sh); the value flows into
+# ClaudeAgentOptions.model, which takes precedence over ANTHROPIC_MODEL.
+DEFAULT_MODEL_ID = "us.anthropic.claude-opus-4-6-v1"
+MODEL_ID = os.environ.get("MODEL_ID", DEFAULT_MODEL_ID)
+
 # Maps runtimeSessionId -> claude_session_id for conversation resumption.
 _session_map: dict[str, str] = {}
 
@@ -130,7 +137,7 @@ async def main(payload, context: RequestContext):
     def _build_options(resume_id: str | None) -> ClaudeAgentOptions:
         return ClaudeAgentOptions(
             mcp_servers=mcp_servers,
-            model="us.anthropic.claude-opus-4-6-v1",
+            model=MODEL_ID,
             allowed_tools=allowed_tools,
             disallowed_tools=[
                 "Bash",
