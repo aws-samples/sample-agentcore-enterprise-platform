@@ -155,13 +155,12 @@ All configuration via CDK context (`-c key=value`) or environment variables:
 | `enable_networking` | `ENABLE_NETWORKING` | `false` | Enable VPC stack |
 | `enable_security` | `ENABLE_SECURITY` | `false` | Enable security stack |
 | `enable_a2a` | `ENABLE_A2A` | `true` | Enable A2A agent stacks |
-| `observability_backend` | `OBSERVABILITY_BACKEND` | `cloudwatch` | cloudwatch/datadog |
 | `model_id` | `MODEL_ID` | *(in-code per pattern)* | Bedrock model ID override for all agents (e.g. `us.anthropic.claude-sonnet-5`) |
 
 Interactive answers from `./scripts/deploy.sh deploy` are saved to `workshop.env` (gitignored)
 and reused on later runs. Precedence: environment variable > saved `workshop.env` > default.
 Inspect with `./scripts/deploy.sh config`; start fresh with `./scripts/deploy.sh config --reset`.
-Secrets (IdP client secret, DataDog API key) are never persisted — they go to AWS Secrets Manager.
+Secrets (IdP client secret, API keys) are never persisted — they go to AWS Secrets Manager.
 
 ## Cross-Stack Communication
 

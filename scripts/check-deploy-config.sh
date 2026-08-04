@@ -26,10 +26,9 @@ load_config
 echo "PASS: env var wins over workshop.env; unset keys are loaded"
 
 # (b) secrets in the environment never reach the file.
-IDP_CLIENT_SECRET="supersecret" DATADOG_API_KEY="dd-key-123" \
-    OBSERVABILITY_BACKEND="datadog" save_config
+IDP_CLIENT_SECRET="supersecret" TAVILY_API_KEY="tv-key-123" save_config
 [ -f "$CFG" ] || fail "save_config wrote nothing"
-! grep -v '^#' "$CFG" | grep -qiE 'secret|api_key|dd-key' || fail "secret leaked: $(cat "$CFG")"
+! grep -v '^#' "$CFG" | grep -qiE 'secret|api_key|tv-key' || fail "secret leaked: $(cat "$CFG")"
 grep -q '^AWS_REGION=us-west-2$' "$CFG" || fail "answer not persisted"
 echo "PASS: secrets never written to workshop.env"
 

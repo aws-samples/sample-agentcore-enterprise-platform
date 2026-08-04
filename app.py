@@ -62,9 +62,7 @@ enable_a2a = (
     app.node.try_get_context("enable_a2a") or os.environ.get("ENABLE_A2A", "true")
 ) == "true"
 idp_type = app.node.try_get_context("idp_type") or os.environ.get("IDP_TYPE", "cognito")
-obs_backend = app.node.try_get_context("observability_backend") or os.environ.get(
-    "OBSERVABILITY_BACKEND", "cloudwatch"
-)
+
 
 # Security control feature flags (control-library / scope-split model).
 # Additional flags (enable_guardrails, enable_cedar) will be added here as their stacks land.
@@ -387,7 +385,6 @@ obs_stack = ObservabilityStack(
     f"{prefix}-observability",
     project_name=project,
     environment=env_name,
-    backend=obs_backend,
     monitored_resources=monitored_resources,
     enable_traceability=enable_traceability,
     env=cdk_env,
