@@ -8,53 +8,37 @@ Source hash tracking ensures:
   - Unchanged source produces no changes on `cdk diff`
   - ECR images tagged with both `latest` and source hash
 """
-import hashlib
+
 import os
 
 import aws_cdk as cdk
 from aws_cdk import (
-    aws_bedrockagentcore as agentcore,
-    aws_codebuild as codebuild,
-    aws_ecr as ecr,
-    aws_iam as iam,
-    aws_lambda as _lambda,
-    aws_s3_assets as s3_assets,
-    aws_ssm as ssm,
     CustomResource,
+)
+from aws_cdk import (
+    aws_bedrockagentcore as agentcore,
+)
+from aws_cdk import (
+    aws_codebuild as codebuild,
+)
+from aws_cdk import (
+    aws_ecr as ecr,
+)
+from aws_cdk import (
+    aws_iam as iam,
+)
+from aws_cdk import (
+    aws_lambda as _lambda,
+)
+from aws_cdk import (
+    aws_s3_assets as s3_assets,
+)
+from aws_cdk import (
+    aws_ssm as ssm,
 )
 from constructs import Construct
 
-# Directories/extensions excluded from source hash computation
-HASH_EXCLUDES = {
-    "node_modules", "__pycache__", ".git", ".venv", ".next",
-    ".terraform", ".DS_Store", ".pyc", ".log", ".egg-info",
-    "dist", "build", "cdk.out",
-}
-
-
-def _compute_source_hash(source_path: str) -> str:
-    """Compute a stable SHA-256 hash over all source files, excluding non-source artifacts."""
-    if not os.path.isdir(source_path):
-        return "placeholder"
-    file_hashes = []
-    for root, dirs, files in os.walk(source_path):
-        # Prune excluded directories in-place
-        dirs[:] = [d for d in sorted(dirs) if d not in HASH_EXCLUDES]
-        for fname in sorted(files):
-            if any(fname.endswith(ext) for ext in (".pyc", ".log", ".DS_Store")):
-                continue
-            fpath = os.path.join(root, fname)
-            rel = os.path.relpath(fpath, source_path)
-            h = hashlib.sha256()
-            h.update(rel.encode())
-            with open(fpath, "rb") as f:
-                for chunk in iter(lambda: f.read(8192), b""):
-                    h.update(chunk)
-            file_hashes.append(h.hexdigest())
-    if not file_hashes:
-        return "empty"
-    combined = hashlib.sha256("".join(file_hashes).encode())
-    return combined.hexdigest()[:16]
+from infra_utils.source_hash import component_image_tag
 
 
 class RuntimeStack(cdk.Stack):
@@ -95,15 +79,19 @@ class RuntimeStack(cdk.Stack):
         abs_source_dir = os.path.join(repo_root, source_dir)
 
         # ── Source Hash ──
-        source_hash = _compute_source_hash(abs_source_dir)
+        source_hash = component_image_tag(abs_source_dir, dockerfile_pattern)
         image_tag = source_hash
 
         # ── ECR Repository ──
-        repo = ecr.Repository(self, "ECR",
+        repo = ecr.Repository(
+            self,
+            "ECR",
             repository_name=f"{prefix}-{component_name}",
             removal_policy=cdk.RemovalPolicy.DESTROY,
             empty_on_delete=True,
-            lifecycle_rules=[ecr.LifecycleRule(max_image_count=10, description="Keep last 10 images")],
+            lifecycle_rules=[
+                ecr.LifecycleRule(max_image_count=10, description="Keep last 10 images")
+            ],
         )
 
         # ── S3 Source Asset ──
@@ -116,15 +104,21 @@ class RuntimeStack(cdk.Stack):
             placeholder_dockerfile = os.path.join(placeholder_dir, "Dockerfile")
             if not os.path.exists(placeholder_dockerfile):
                 with open(placeholder_dockerfile, "w") as f:
-                    f.write("FROM public.ecr.aws/docker/library/python:3.11-slim\nCMD [\"echo\",\"placeholder\"]\n")
+                    f.write(
+                        'FROM public.ecr.aws/docker/library/python:3.11-slim\nCMD ["echo","placeholder"]\n'
+                    )
             source_asset = s3_assets.Asset(self, "SourceAsset", path=placeholder_dir)
 
         # ── CodeBuild Project (ARM64, privileged for Docker) ──
-        docker_build_cmd = "docker build --platform linux/arm64 -t $REPO_URI:$IMAGE_TAG ."
+        docker_build_cmd = (
+            "docker build --platform linux/arm64 -t $REPO_URI:$IMAGE_TAG ."
+        )
         if dockerfile_pattern:
             docker_build_cmd = f"docker build --platform linux/arm64 -f {dockerfile_pattern}/Dockerfile -t $REPO_URI:$IMAGE_TAG ."
 
-        build_project = codebuild.Project(self, "Build",
+        build_project = codebuild.Project(
+            self,
+            "Build",
             project_name=f"{prefix}-build-{component_name}",
             description=f"Build container for {component_name}",
             environment=codebuild.BuildEnvironment(
@@ -133,43 +127,49 @@ class RuntimeStack(cdk.Stack):
                 compute_type=codebuild.ComputeType.SMALL,
             ),
             timeout=cdk.Duration.minutes(30),
-            build_spec=codebuild.BuildSpec.from_object({
-                "version": "0.2",
-                "phases": {
-                    "pre_build": {
-                        "commands": [
-                            "echo Logging in to Amazon ECR...",
-                            f"aws ecr get-login-password --region $AWS_DEFAULT_REGION | "
-                            f"docker login --username AWS --password-stdin "
-                            f"$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com",
-                            "echo Downloading source from S3...",
-                            "aws s3 cp $SOURCE_S3_URI source.zip",
-                            "mkdir -p source && unzip -o source.zip -d source/",
-                        ],
+            build_spec=codebuild.BuildSpec.from_object(
+                {
+                    "version": "0.2",
+                    "phases": {
+                        "pre_build": {
+                            "commands": [
+                                "echo Logging in to Amazon ECR...",
+                                (
+                                    "aws ecr get-login-password --region $AWS_DEFAULT_REGION | "
+                                    "docker login --username AWS --password-stdin "
+                                    "$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com"
+                                ),
+                                "echo Downloading source from S3...",
+                                "aws s3 cp $SOURCE_S3_URI source.zip",
+                                "mkdir -p source && unzip -o source.zip -d source/",
+                            ],
+                        },
+                        "build": {
+                            "commands": [
+                                "cd source/",
+                                docker_build_cmd,
+                                "docker tag $REPO_URI:$IMAGE_TAG $REPO_URI:latest",
+                            ],
+                        },
+                        "post_build": {
+                            "commands": [
+                                "echo Pushing image to ECR...",
+                                "docker push $REPO_URI:$IMAGE_TAG",
+                                "docker push $REPO_URI:latest",
+                                "echo Build completed on `date`",
+                            ],
+                        },
                     },
-                    "build": {
-                        "commands": [
-                            "cd source/",
-                            docker_build_cmd,
-                            "docker tag $REPO_URI:$IMAGE_TAG $REPO_URI:latest",
-                        ],
-                    },
-                    "post_build": {
-                        "commands": [
-                            "echo Pushing image to ECR...",
-                            "docker push $REPO_URI:$IMAGE_TAG",
-                            "docker push $REPO_URI:latest",
-                            "echo Build completed on `date`",
-                        ],
-                    },
-                },
-            }),
+                }
+            ),
         )
         repo.grant_push(build_project)
         source_asset.grant_read(build_project)
 
         # ── Build Trigger Lambda (Custom Resource) ──
-        trigger_fn = _lambda.Function(self, "BuildTrigger",
+        trigger_fn = _lambda.Function(
+            self,
+            "BuildTrigger",
             function_name=f"{prefix}-build-trigger-{component_name}",
             runtime=_lambda.Runtime.PYTHON_3_13,
             handler="build_trigger_lambda.handler",
@@ -177,20 +177,32 @@ class RuntimeStack(cdk.Stack):
             timeout=cdk.Duration.minutes(15),
             memory_size=256,
         )
-        trigger_fn.add_to_role_policy(iam.PolicyStatement(
-            actions=["codebuild:StartBuild", "codebuild:BatchGetBuilds"],
-            resources=[build_project.project_arn],
-        ))
+        trigger_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["codebuild:StartBuild", "codebuild:BatchGetBuilds"],
+                resources=[build_project.project_arn],
+            )
+        )
 
         # Custom resource triggers build only when source hash changes
-        build_trigger = CustomResource(self, "BuildTriggerCR",
+        build_trigger = CustomResource(
+            self,
+            "BuildTriggerCR",
             service_token=trigger_fn.function_arn,
             properties={
                 "ProjectName": build_project.project_name,
                 "EnvironmentOverrides": [
-                    {"name": "SOURCE_S3_URI", "value": source_asset.s3_object_url, "type": "PLAINTEXT"},
+                    {
+                        "name": "SOURCE_S3_URI",
+                        "value": source_asset.s3_object_url,
+                        "type": "PLAINTEXT",
+                    },
                     {"name": "IMAGE_TAG", "value": image_tag, "type": "PLAINTEXT"},
-                    {"name": "REPO_URI", "value": repo.repository_uri, "type": "PLAINTEXT"},
+                    {
+                        "name": "REPO_URI",
+                        "value": repo.repository_uri,
+                        "type": "PLAINTEXT",
+                    },
                     {"name": "ACCOUNT_ID", "value": self.account, "type": "PLAINTEXT"},
                 ],
                 # Source hash change triggers rebuild
@@ -199,7 +211,9 @@ class RuntimeStack(cdk.Stack):
         )
 
         # ── AgentCore Runtime IAM Role ──
-        runtime_role = iam.Role(self, "RuntimeRole",
+        runtime_role = iam.Role(
+            self,
+            "RuntimeRole",
             assumed_by=iam.ServicePrincipal("bedrock-agentcore.amazonaws.com"),
             role_name=f"{prefix}-{component_name}-runtime-role",
         )
@@ -254,18 +268,26 @@ class RuntimeStack(cdk.Stack):
         self._runtime.node.add_dependency(build_trigger)
 
         # ── SSM Parameters ──
-        ssm.StringParameter(self, "SSMRuntimeArn",
+        ssm.StringParameter(
+            self,
+            "SSMRuntimeArn",
             parameter_name=f"/{project_name}/{environment}/runtimes/{component_name}/arn",
             string_value=self._runtime.attr_agent_runtime_arn,
         )
-        ssm.StringParameter(self, "SSMRuntimeId",
+        ssm.StringParameter(
+            self,
+            "SSMRuntimeId",
             parameter_name=f"/{project_name}/{environment}/runtimes/{component_name}/id",
             string_value=self._runtime.attr_agent_runtime_id,
         )
 
         # ── Outputs ──
-        cdk.CfnOutput(self, "RuntimeArn", value=self._runtime.attr_agent_runtime_arn,
-                       export_name=f"{prefix}-{component_name}-runtime-arn")
+        cdk.CfnOutput(
+            self,
+            "RuntimeArn",
+            value=self._runtime.attr_agent_runtime_arn,
+            export_name=f"{prefix}-{component_name}-runtime-arn",
+        )
         cdk.CfnOutput(self, "RuntimeId", value=self._runtime.attr_agent_runtime_id)
         cdk.CfnOutput(self, "SourceHash", value=source_hash)
         cdk.CfnOutput(self, "ImageUri", value=f"{repo.repository_uri}:{image_tag}")
@@ -285,14 +307,24 @@ class RuntimeStack(cdk.Stack):
             # ECR image pull
             iam.PolicyStatement(
                 sid="ECRAccess",
-                actions=["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer", "ecr:GetAuthorizationToken"],
+                actions=[
+                    "ecr:BatchGetImage",
+                    "ecr:GetDownloadUrlForLayer",
+                    "ecr:GetAuthorizationToken",
+                ],
                 resources=["*"],
             ),
             # CloudWatch Logs
             iam.PolicyStatement(
                 sid="CloudWatchLogs",
-                actions=["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
-                resources=["arn:aws:logs:*:*:log-group:/aws/bedrock-agentcore/runtimes/*"],
+                actions=[
+                    "logs:CreateLogGroup",
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents",
+                ],
+                resources=[
+                    "arn:aws:logs:*:*:log-group:/aws/bedrock-agentcore/runtimes/*"
+                ],
             ),
             # X-Ray tracing
             iam.PolicyStatement(
@@ -305,13 +337,19 @@ class RuntimeStack(cdk.Stack):
                 sid="CloudWatchMetrics",
                 actions=["cloudwatch:PutMetricData"],
                 resources=["*"],
-                conditions={"StringEquals": {"cloudwatch:namespace": "bedrock-agentcore"}},
+                conditions={
+                    "StringEquals": {"cloudwatch:namespace": "bedrock-agentcore"}
+                },
             ),
             # Bedrock model invocation
             iam.PolicyStatement(
                 sid="BedrockModels",
-                actions=["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream",
-                         "bedrock:Converse", "bedrock:ConverseStream"],
+                actions=[
+                    "bedrock:InvokeModel",
+                    "bedrock:InvokeModelWithResponseStream",
+                    "bedrock:Converse",
+                    "bedrock:ConverseStream",
+                ],
                 resources=[
                     "arn:aws:bedrock:*::foundation-model/*",
                     "arn:aws:bedrock:*:*:inference-profile/*",
