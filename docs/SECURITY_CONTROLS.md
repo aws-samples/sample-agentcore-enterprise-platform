@@ -93,7 +93,7 @@ They constrain what admins can create/update (control plane), enforced via
 | `deny-no-auth` | `GatewayAuthorizerType` | Block `NONE` (no unauthenticated gateways) |
 | `require-policy-engine` | `PolicyEngineArn` / `PolicyEngineMode` | Require a Cedar policy engine in `ENFORCE` |
 | `enforce-approved-idp` | `DiscoveryUrl` | JWT gateways must use an approved IdP |
-| `restrict-protocol` | `ProtocolType` | Restrict to `MCP` |
+| `restrict-protocol` | `ProtocolType` | Restrict explicitly-set protocols to `MCP` (an omitted protocol falls back to the service default, unconstrained) |
 | `targets-require-private-endpoint` | `PrivateEndpointType` | Targets must use a private endpoint (private egress) |
 | `targets-restrict-credential-provider` | `CredentialProviderType` | Deny `API_KEY` / `JWT_PASSTHROUGH` |
 | `targets-restrict-type` | `McpTargetConfigurationType` | Allow-list target types (lambda, mcpServer) |
