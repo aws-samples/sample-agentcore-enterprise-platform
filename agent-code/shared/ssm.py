@@ -25,7 +25,7 @@ def get_ssm_parameter(parameter_name: str) -> str:
 
     Args:
         parameter_name (str): The full SSM parameter name/path
-            (e.g. '/my-stack/gateway_url').
+            (e.g. '/{project}/{environment}/gateway/url').
 
     Returns:
         str: The parameter value.
@@ -42,5 +42,5 @@ def get_ssm_parameter(parameter_name: str) -> str:
         return response["Parameter"]["Value"]
     except ssm.exceptions.ParameterNotFound:
         raise ValueError(f"SSM parameter not found: {parameter_name}")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — wrap any retrieval failure in ValueError
         raise ValueError(f"Failed to retrieve SSM parameter {parameter_name}: {e}")

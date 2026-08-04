@@ -32,6 +32,48 @@ app = BedrockAgentCoreApp()
 _session_map: dict[str, str] = {}
 
 
+def _gateway_url_ssm_path() -> str | None:
+    """Build the conventional SSM path for the gateway URL.
+
+    Uses the PROJECT_NAME and ENVIRONMENT variables that RuntimeStack always
+    injects, matching the path published by the gateway stack. Returns None
+    when either variable is missing or has an unexpected format.
+    """
+    project_name = os.environ.get("PROJECT_NAME", "")
+    environment = os.environ.get("ENVIRONMENT", "")
+    for name, value in (("PROJECT_NAME", project_name), ("ENVIRONMENT", environment)):
+        if not value:
+            logger.warning("[GATEWAY] %s environment variable is not set", name)
+            return None
+        if not value.replace("-", "").replace("_", "").isalnum():
+            logger.warning("[GATEWAY] Invalid %s format", name)
+            return None
+    return f"/{project_name}/{environment}/gateway/url"
+
+
+def _resolve_gateway_url() -> str | None:
+    """Resolve the gateway URL from the environment or SSM Parameter Store.
+
+    Prefers the GATEWAY_URL environment variable (injected into the
+    orchestrator runtime — no SSM call or ssm:GetParameter permission
+    needed). Falls back to the conventional SSM parameter
+    /{PROJECT_NAME}/{ENVIRONMENT}/gateway/url. Returns None when neither
+    source is available so callers can degrade gracefully.
+    """
+    gateway_url = os.environ.get("GATEWAY_URL", "")
+    if gateway_url:
+        return gateway_url
+
+    ssm_path = _gateway_url_ssm_path()
+    if ssm_path is None:
+        logger.warning(
+            "[GATEWAY] GATEWAY_URL not set and conventional SSM path "
+            "unavailable — gateway URL cannot be resolved"
+        )
+        return None
+    return get_ssm_parameter(ssm_path)
+
+
 @app.entrypoint
 async def main(payload, context: RequestContext):
     """Entrypoint for the Claude Agent SDK single-agent pattern."""
@@ -52,21 +94,16 @@ async def main(payload, context: RequestContext):
     logger.info("[AGENT] User: %s, Session: %s", user_id, runtime_session_id)
 
     # Get Gateway URL and access token
-    stack_name = os.environ.get("STACK_NAME")
     gateway_url = None
     access_token = None
-    if stack_name:
-        if not stack_name.replace("-", "").replace("_", "").isalnum():
-            raise ValueError("Invalid STACK_NAME format")
-        try:
-            gateway_url = get_ssm_parameter(f"/{stack_name}/gateway_url")
+    try:
+        gateway_url = _resolve_gateway_url()
+        if gateway_url:
             access_token = get_gateway_access_token()
-        except Exception as e:
-            logger.warning(
-                "[AGENT] Gateway not available, continuing without tools: %s", e
-            )
-            gateway_url = None
-            access_token = None
+    except Exception as e:  # noqa: BLE001 — degrade gracefully on any gateway failure
+        logger.warning("[AGENT] Gateway not available, continuing without tools: %s", e)
+        gateway_url = None
+        access_token = None
 
     agent_responses = []
 
@@ -162,20 +199,23 @@ Your response should:
                             yield {"data": block.text}
                 elif isinstance(msg, UserMessage):
                     for block in msg.content:
-                        if isinstance(block, ToolResultBlock):
-                            if block.content and len(block.content) > 0:
-                                if isinstance(block.content[0], dict):
-                                    text_content = block.content[0].get("text", "")
-                                    try:
-                                        result_data = json.loads(text_content)
-                                        if isinstance(result_data, dict):
-                                            extracted = result_data.get(
-                                                "code_int_session_id", ""
-                                            )
-                                            if extracted:
-                                                _code_int_session_id = extracted
-                                    except json.JSONDecodeError:
-                                        pass
+                        if (
+                            isinstance(block, ToolResultBlock)
+                            and block.content
+                            and len(block.content) > 0
+                            and isinstance(block.content[0], dict)
+                        ):
+                            text_content = block.content[0].get("text", "")
+                            try:
+                                result_data = json.loads(text_content)
+                                if isinstance(result_data, dict):
+                                    extracted = result_data.get(
+                                        "code_int_session_id", ""
+                                    )
+                                    if extracted:
+                                        _code_int_session_id = extracted
+                            except json.JSONDecodeError:
+                                pass
                 elif isinstance(msg, ResultMessage):
                     logger.info("ResultMessage received, session_id=%s", msg.session_id)
                     if msg.session_id:
