@@ -36,9 +36,16 @@ Maintained source: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (Mermaid diagr
 python3.13 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# 2. Deploy (interactive)
+# 2. Guided workshop (recommended for participants): walks your profile's modules
+#    one by one — explains what each builds and why, deploys it, verifies it live, pauses.
 # Note: the deploy script requires bash 4 or newer. macOS ships bash 3.2 —
-# install a current bash with `brew install bash`, then run `bash scripts/deploy.sh deploy`.
+# install a current bash with `brew install bash`, then run `bash scripts/deploy.sh ...`.
+./scripts/deploy.sh workshop                        # default profile: greenfield
+./scripts/deploy.sh workshop --profile multi-agent  # or migration|platform-team|security-focused
+./scripts/deploy.sh workshop --from 6               # resume from module 6
+./scripts/deploy.sh workshop --dry-run              # preview the plan, no AWS calls
+
+# 2b. Plain deploy (everything at once, interactive)
 ./scripts/deploy.sh deploy
 
 # 3. Deploy specific workshop module
