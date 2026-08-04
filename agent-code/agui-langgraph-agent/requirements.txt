@@ -2,6 +2,8 @@
 copilotkit==0.1.83
 langchain==1.2.10
 langgraph==1.0.10
+langgraph-prebuilt==1.0.8
+mcp==1.29.0
 langchain-aws==1.4.1
 langchain-mcp-adapters==0.2.2
 langgraph-checkpoint-aws==1.0.6
