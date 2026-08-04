@@ -77,7 +77,8 @@ enable_egress_filter = (
     app.node.try_get_context("enable_egress_filter")
     or os.environ.get("ENABLE_EGRESS_FILTER", "false")
 ) == "true"
-# AgentCore Cedar policy engine on the Gateway (default-forbid on writes). cedar_mode is
+# AgentCore Cedar policy engine on the Gateway (explicit read permits; Cedar's implicit
+# default-deny covers everything else). cedar_mode is
 # LOG_ONLY (evaluate + log) or ENFORCE (block); ships LOG_ONLY for safe rollout.
 enable_cedar = (
     app.node.try_get_context("enable_cedar") or os.environ.get("ENABLE_CEDAR", "false")

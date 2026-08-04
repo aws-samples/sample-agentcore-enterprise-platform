@@ -11,7 +11,6 @@ from infra_utils.policy_loader import (
     load_control_text,
 )
 
-
 # ── Against the real control-library ──
 
 
@@ -88,9 +87,15 @@ def test_guardrail_artifact_loads_with_expected_policies():
     assert {"EMAIL", "US_SOCIAL_SECURITY_NUMBER"} <= pii_types
 
 
-def test_cedar_default_forbid_loads_as_text():
-    text = load_control_text("cedar.gateway-default.forbid")
-    assert "forbid(principal, action, resource);" in text
+def test_cedar_catalog_has_no_blanket_forbid():
+    # Cedar is implicit default-deny; a blanket forbid would override every permit
+    # (forbids always win in Cedar), turning ENFORCE into a full outage. Guard against
+    # the control ever being reintroduced.
+    catalog = load_catalog()
+    ids = {c["id"] for c in catalog["controls"]}
+    assert "cedar.gateway-default.forbid" not in ids
+    permit = load_control_text("cedar.gateway-default.permit-read")
+    assert "forbid(" not in permit
 
 
 def test_cedar_permit_substitutes_read_action():

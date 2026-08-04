@@ -8,8 +8,9 @@ How to test the security controls in this repo:
 - **Item 4 (resource policy):** Memory in-account-only resource policy (`enable_resource_policies`)
 - **Items 5+6 (Guardrails + interceptor):** egress Lambda interceptor + Bedrock Guardrail
   on the Gateway (`enable_egress_filter`)
-- **Item 3 (Cedar):** AgentCore policy engine with default-forbid + read permit on the
-  Gateway (`enable_cedar`, `cedar_mode` LOG_ONLY/ENFORCE)
+- **Item 3 (Cedar):** AgentCore policy engine with an explicit read permit on the
+  Gateway; Cedar's implicit default-deny covers everything else
+  (`enable_cedar`, `cedar_mode` LOG_ONLY/ENFORCE)
 - **Item 2 (VPCE + IAM):** fine-grained AgentCore VPC endpoint policy + tightened execution
   role (`enable_networking`, `org_id`)
 - **Item 7 (observability):** SNS + EventBridge alerting on sensitive AgentCore API calls
@@ -164,11 +165,20 @@ cdk synth agentcore-workshop-dev-gateway 2>/dev/null \
 source .venv/bin/activate
 export CDK_DEFAULT_ACCOUNT=111122223333 CDK_DEFAULT_REGION=us-east-1
 
-# Flag ON → policy engine + policies + LOG_ONLY policy-engine config on the gateway
+# Flag ON → policy engine + LOG_ONLY policy-engine config on the gateway. Cedar is
+# implicit default-deny, so no blanket forbid ships (a matching forbid would override
+# every permit — ENFORCE would then deny all tool calls, including the permitted reads).
 rm -rf cdk.out
 cdk synth agentcore-workshop-dev-gateway -c enable_cedar=true 2>/dev/null \
-  | grep -cE 'AWS::BedrockAgentCore::PolicyEngine|PolicyEngineConfiguration|forbid\(principal'
-# → 3 (engine, config, and the default-forbid Cedar statement)
+  | grep -cE 'AWS::BedrockAgentCore::PolicyEngine|PolicyEngineConfiguration'
+# → 2 (engine and the gateway's policy-engine config)
+
+# Exactly one Cedar policy resource — the read permit — and no forbid statement:
+rm -rf cdk.out
+cdk synth agentcore-workshop-dev-gateway -c enable_cedar=true 2>/dev/null > /tmp/cedar-synth.yaml
+grep -c 'Type: AWS::BedrockAgentCore::Policy$' /tmp/cedar-synth.yaml   # → 1 (the read permit)
+grep -c 'forbid(principal' /tmp/cedar-synth.yaml                       # → 0 (implicit default-deny)
+rm -f /tmp/cedar-synth.yaml
 
 # Try enforce mode
 rm -rf cdk.out

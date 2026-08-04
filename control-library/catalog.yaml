@@ -71,16 +71,8 @@ controls:
   # Plain-text Cedar (not JSON). Loaded via load_control_text and attached to a CfnPolicyEngine.
   # Shipped in LOG_ONLY mode by default (evaluate + log, do not block); flip to ENFORCE via
   # the cedar_mode context/flag once decision logs are validated.
-  - id: cedar.gateway-default.forbid
-    file: cedar/gateway-default/00-default-forbid.cedar
-    type: CEDAR
-    scope: workload
-    attach_to: [GATEWAY]
-    engine: [cdk]
-    default_mode: log_only
-    params: {}
-    validate: [cedar]
-
+  # Cedar is implicit default-deny: anything not explicitly permitted is denied, so no
+  # blanket forbid policy is shipped (a matching forbid would override every permit).
   - id: cedar.gateway-default.permit-read
     file: cedar/gateway-default/10-permit-read-tools.cedar
     type: CEDAR
