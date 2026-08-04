@@ -34,3 +34,6 @@ override.tf.json
 dashboard/public/status.json
 
 .vscode/
+
+# Kiro session steering (local-only, must never ship)
+.kiro/

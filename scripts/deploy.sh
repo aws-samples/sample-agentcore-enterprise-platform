@@ -20,6 +20,7 @@ fi
 #
 # Usage:
 #   ./deploy.sh deploy [--stack STACK] [--profile PROFILE] [--team TEAM] [--module N]
+#   ./deploy.sh workshop [--profile PROFILE] [--from MODULE] [--dry-run]
 #   ./deploy.sh destroy [--stack STACK]
 #   ./deploy.sh synth
 #   ./deploy.sh diff
@@ -43,6 +44,7 @@ log_warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
 log_step()  { echo -e "${BLUE}[STEP]${NC}  $*"; }
 log_header(){ echo -e "\n${BOLD}${CYAN}═══ $* ═══${NC}\n"; }
+log_explain(){ echo -e "${YELLOW}📖${NC} $*"; }
 
 # ═══════════════════════════════════════════════════════════════
 # Saved Workshop Config (workshop.env)
@@ -110,6 +112,44 @@ MODULE_MAP[C]="${PREFIX}-networking"                                            
 MODULE_MAP[E]="${PREFIX}-security"                                                # Security Automation
 VALID_MODULES="3 4 5 6 7 8 9 A B C D E"
 
+# ── Guided workshop narration (workshop action) ──
+# First line of each entry is the module title; the rest is the what/why
+# explanation shown before deploying. One physical line per entry (with \n
+# escapes) so check-workshop-flow.sh can extract them with sed.
+declare -A MODULE_EXPLAIN
+MODULE_EXPLAIN[3]=$'Infrastructure Blueprint\nWhat: Cognito User Pool with email sign-in, OAuth clients (app/web/m2m), and SSM parameters for cross-stack discovery.\nWhy: every AgentCore call is authenticated — this identity foundation is the trust root everything else builds on.'
+MODULE_EXPLAIN[4]=$'Identity Integration\nWhat: federates your enterprise IdP (Entra ID/Okta/Ping) into Cognito and creates AgentCore OAuth2 credential providers (3LO + M2M).\nWhy: users keep their corporate logins, and agents get scoped credentials to act on their behalf with external services.'
+MODULE_EXPLAIN[5]=$'Gateway & Registry\nWhat: AgentCore MCP Gateway with Lambda tool targets and CUSTOM_JWT auth against the Cognito issuer.\nWhy: centralized, governed tool access — agents discover tools through the gateway instead of hardcoding endpoints, with an audit trail for every call.'
+MODULE_EXPLAIN[6]=$'Agent Deployment\nWhat: the orchestrator agent on AgentCore Runtime — CodeBuild builds the container remotely (no local Docker) and CfnRuntime runs it.\nWhy: managed, auto-scaling agent compute with auth wired in; no servers to patch, the agent code stays the same.'
+MODULE_EXPLAIN[7]=$'Gateway Integration\nWhat: adds/updates tool targets by redeploying the gateway stack.\nWhy: this is how a real platform grows — new tools land in the registry and agents pick them up on the next discovery, with no agent redeploy.'
+MODULE_EXPLAIN[8]=$'Agent-to-Agent (A2A)\nWhat: code + research sub-agents on their own Runtimes; the orchestrator delegates specialized tasks to them over A2A.\nWhy: specialized agents with independent auth, scaling, and lifecycle beat one monolith. (Requires enable_a2a=true — set automatically for this module.)'
+MODULE_EXPLAIN[9]=$'Observability\nWhat: vended log delivery + X-Ray tracing for the gateway, memory, and runtimes.\nWhy: you cannot operate what you cannot see — per-resource logs and end-to-end request traces.'
+MODULE_EXPLAIN[A]=$'Memory\nWhat: AgentCore managed Memory with semantic + user-preference strategies.\nWhy: agents keep context across sessions without building custom vector infrastructure.'
+MODULE_EXPLAIN[C]=$'Multi-Account Networking\nWhat: VPC, private subnets, and AgentCore VPC endpoints (org-restricted policy when ORG_ID is set).\nWhy: enterprise network isolation — agent traffic stays on the AWS backbone.'
+MODULE_EXPLAIN[E]=$'Security Automation\nWhat: KMS customer-managed key encryption + CloudTrail audit logging (plus opt-in guardrail controls).\nWhy: enterprise security baselines — customer-managed keys and a full audit trail of AgentCore API calls.'
+
+# ── Guided workshop verification (workshop action) ──
+# Each entry is a shell snippet run via `bash -c` from the project root after
+# the module deploys (run_verify exports PROJECT_NAME/ENVIRONMENT/PREFIX/AWS_REGION).
+# 5/6/7/A reuse the live-proven test scripts; the rest are cheap SSM/CFN presence checks.
+declare -A MODULE_VERIFY
+# Single quotes are deliberate throughout this block: the snippets are expanded
+# later, inside `bash -c` at verify time (AWS_REGION isn't final until
+# check_credentials runs). The group scopes one directive over all entries.
+# shellcheck disable=SC2016
+{
+MODULE_VERIFY[3]='aws ssm get-parameter --name "/$PROJECT_NAME/$ENVIRONMENT/auth/issuer-url" --region "$AWS_REGION" --query Parameter.Value --output text'
+MODULE_VERIFY[4]='aws ssm get-parameter --name "/$PROJECT_NAME/$ENVIRONMENT/identity/gateway-credential-provider-name" --region "$AWS_REGION" --query Parameter.Value --output text'
+MODULE_VERIFY[5]='.venv/bin/python scripts/test_gateway.py'
+MODULE_VERIFY[6]='.venv/bin/python scripts/invoke.py "Reply with exactly: WORKSHOP OK"'
+MODULE_VERIFY[7]='.venv/bin/python scripts/test_gateway.py'
+MODULE_VERIFY[8]='aws ssm get-parameter --name "/$PROJECT_NAME/$ENVIRONMENT/runtimes/code-agent/arn" --region "$AWS_REGION" --query Parameter.Value --output text'
+MODULE_VERIFY[9]='[ "$(aws ssm get-parameters-by-path --path "/$PROJECT_NAME/$ENVIRONMENT" --recursive --region "$AWS_REGION" --query "length(Parameters)" --output text)" -gt 0 ]'
+MODULE_VERIFY[A]='.venv/bin/python scripts/test_memory.py'
+MODULE_VERIFY[C]='aws cloudformation describe-stacks --stack-name "$PREFIX-networking" --region "$AWS_REGION" --query "Stacks[0].StackStatus" --output text | grep -q COMPLETE'
+MODULE_VERIFY[E]='aws cloudformation describe-stacks --stack-name "$PREFIX-security" --region "$AWS_REGION" --query "Stacks[0].StackStatus" --output text | grep -q COMPLETE'
+}
+
 # ── Team Workstream Assignments (Requirement 20) ──
 declare -A TEAM_MAP
 TEAM_MAP[platform]="${PREFIX}-networking ${PREFIX}-auth ${PREFIX}-identity ${PREFIX}-gateway ${PREFIX}-observability"
@@ -123,6 +163,19 @@ PROFILE_FLAGS[migration]="enable_networking=false enable_security=false enable_a
 PROFILE_FLAGS[multi-agent]="enable_networking=false enable_security=false enable_a2a=true"
 PROFILE_FLAGS[platform-team]="enable_networking=true enable_security=true enable_a2a=true"
 PROFILE_FLAGS[security-focused]="enable_networking=true enable_security=true enable_a2a=false enable_resource_policies=true enable_egress_filter=true enable_cedar=true enable_traceability=true"
+
+# ── Profile → Guided Workshop Module Sequence (workshop action) ──
+# Which modules each customer profile walks through, in order (README facilitator guide).
+declare -A PROFILE_MODULES
+PROFILE_MODULES[greenfield]="3 4 5 6 9"
+PROFILE_MODULES[migration]="3 4 6 7 9"
+PROFILE_MODULES[multi-agent]="3 4 5 6 7 8 9"
+# Memory (A) precedes Agent Deployment (6): the orchestrator runtime depends on
+# the memory stack, so CDK would create it implicitly at module 6 and module A
+# would then report "no changes" — deploying it in its own module keeps the
+# narrative honest.
+PROFILE_MODULES[platform-team]="3 4 5 A 6 7 8 9 C E"
+PROFILE_MODULES[security-focused]="3 4 5 6 9 E"
 
 # ═══════════════════════════════════════════════════════════════
 # Prerequisite Checks (Requirement 18)
@@ -406,6 +459,68 @@ build_context_args() {
 }
 
 # ═══════════════════════════════════════════════════════════════
+# Stack Deploy Loop (shared by the deploy and workshop actions)
+# ═══════════════════════════════════════════════════════════════
+deploy_stacks() {
+    local stack
+    for stack in "$@"; do
+        log_step "Deploying: $stack"
+        JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+            npx cdk deploy "$stack" --require-approval never "${CONTEXT_ARGS[@]}" 2>&1 || {
+            log_error "Failed to deploy $stack"
+            log_error "Check CloudFormation console for details."
+            exit 1
+        }
+    done
+}
+
+cdk_bootstrap() {
+    log_header "CDK Bootstrap"
+    local bootstrap_log
+    bootstrap_log=$(mktemp)
+    if JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+        npx cdk bootstrap "aws://$ACCOUNT_ID/$AWS_REGION" >"$bootstrap_log" 2>&1; then
+        # "Already bootstrapped" also exits 0 — both are success.
+        log_info "Bootstrap OK for aws://$ACCOUNT_ID/$AWS_REGION"
+        rm -f "$bootstrap_log"
+    else
+        log_error "CDK bootstrap failed for aws://$ACCOUNT_ID/$AWS_REGION. Output:"
+        cat "$bootstrap_log"
+        rm -f "$bootstrap_log"
+        log_error "Common causes: wrong AWS account/profile, or missing IAM permissions"
+        log_error "to create the CDK bootstrap stack (CDKToolkit). Fix and retry."
+        exit 1
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════
+# Guided Workshop Helpers (workshop action)
+# ═══════════════════════════════════════════════════════════════
+pause() {
+    [ "${NON_INTERACTIVE:-0}" = "1" ] && return 0
+    echo ""
+    echo -e "${BOLD}Press ENTER to continue...${NC}"
+    read -r
+}
+
+run_verify() {
+    local module="$1" cont
+    log_step "Verifying module $module: ${MODULE_VERIFY[$module]}"
+    if PROJECT_NAME="$PROJECT_NAME" ENVIRONMENT="$ENVIRONMENT" PREFIX="$PREFIX" \
+        AWS_REGION="${AWS_REGION:-us-east-1}" bash -c "${MODULE_VERIFY[$module]}"; then
+        log_info "✓ Module $module verified"
+    else
+        log_error "✗ Module $module verification failed"
+        if [ "${NON_INTERACTIVE:-0}" = "1" ]; then
+            log_error "Aborting (NON_INTERACTIVE=1 cannot prompt)."
+            exit 1
+        fi
+        read -rp "Continue anyway? [y/N]: " cont
+        [[ "$cont" =~ ^[Yy] ]] || { log_error "Aborting workshop."; exit 1; }
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════
 # Deploy Summary (Requirement 2.5)
 # ═══════════════════════════════════════════════════════════════
 print_summary() {
@@ -496,6 +611,8 @@ STACK_FILTER=""
 PROFILE=""
 TEAM=""
 MODULE=""
+FROM_MODULE=""
+DRY_RUN=0
 require_flag_value() {
     # $1 = flag name, $2 = number of remaining args after the flag
     if [ "$2" -lt 2 ]; then
@@ -509,9 +626,20 @@ while [[ $# -gt 0 ]]; do
         --profile) require_flag_value "--profile" "$#"; PROFILE="$2"; shift 2 ;;
         --team)    require_flag_value "--team" "$#";    TEAM="$2"; shift 2 ;;
         --module)  require_flag_value "--module" "$#";  MODULE="$2"; shift 2 ;;
+        --from)    require_flag_value "--from" "$#";    FROM_MODULE="$2"; shift 2 ;;
+        --dry-run) DRY_RUN=1; shift ;;
         *)         shift ;;
     esac
 done
+
+# Workshop action: default and validate the profile against the guided sequences.
+if [ "$ACTION" = "workshop" ]; then
+    PROFILE="${PROFILE:-greenfield}"
+    if [ -z "${PROFILE_MODULES[$PROFILE]:-}" ]; then
+        log_error "Unknown profile: '$PROFILE'. Valid profiles: ${!PROFILE_MODULES[*]}"
+        exit 1
+    fi
+fi
 
 # Apply profile flags
 if [ -n "$PROFILE" ] && [ -n "${PROFILE_FLAGS[$PROFILE]:-}" ]; then
@@ -544,15 +672,20 @@ elif [ -n "$TEAM" ] && [ -n "${TEAM_MAP[$TEAM]:-}" ]; then
     log_info "Team $TEAM → Stacks: $CDK_STACKS"
 fi
 
-check_prereqs
-check_credentials
-setup_venv
+# A workshop dry run makes zero AWS calls — skip everything that needs them.
+if [ "$ACTION" = "workshop" ] && [ "$DRY_RUN" = "1" ]; then
+    log_info "Dry run: skipping prerequisite and credential checks (no AWS calls)"
+else
+    check_prereqs
+    check_credentials
+    setup_venv
+fi
 
 cd "$PROJECT_DIR"
 
 # If IDP_CLIENT_SECRET came from the environment, move it into Secrets Manager
 # before any context args are built (plaintext never reaches the CDK CLI).
-upsert_idp_secret
+[ "$DRY_RUN" = "1" ] || upsert_idp_secret
 
 # Build CDK context args (populates the CONTEXT_ARGS array)
 build_context_args
@@ -568,33 +701,12 @@ case "$ACTION" in
             save_config         # Persist answers for the next run (secrets excluded)
         fi
 
-        log_header "CDK Bootstrap"
-        BOOTSTRAP_LOG=$(mktemp)
-        if JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
-            npx cdk bootstrap "aws://$ACCOUNT_ID/$AWS_REGION" >"$BOOTSTRAP_LOG" 2>&1; then
-            # "Already bootstrapped" also exits 0 — both are success.
-            log_info "Bootstrap OK for aws://$ACCOUNT_ID/$AWS_REGION"
-            rm -f "$BOOTSTRAP_LOG"
-        else
-            log_error "CDK bootstrap failed for aws://$ACCOUNT_ID/$AWS_REGION. Output:"
-            cat "$BOOTSTRAP_LOG"
-            rm -f "$BOOTSTRAP_LOG"
-            log_error "Common causes: wrong AWS account/profile, or missing IAM permissions"
-            log_error "to create the CDK bootstrap stack (CDKToolkit). Fix and retry."
-            exit 1
-        fi
+        cdk_bootstrap
 
         log_header "Deploying"
         if [ -n "$CDK_STACKS" ]; then
-            for stack in $CDK_STACKS; do
-                log_step "Deploying: $stack"
-                JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
-                    npx cdk deploy "$stack" --require-approval never "${CONTEXT_ARGS[@]}" 2>&1 || {
-                    log_error "Failed to deploy $stack"
-                    log_error "Check CloudFormation console for details."
-                    exit 1
-                }
-            done
+            # shellcheck disable=SC2086  # stack list is space-separated by design
+            deploy_stacks $CDK_STACKS
         else
             log_step "Deploying all stacks..."
             JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
@@ -605,6 +717,60 @@ case "$ACTION" in
         fi
 
         print_summary
+        ;;
+
+    workshop)
+        SEQUENCE="${PROFILE_MODULES[$PROFILE]}"
+        if [ -n "$FROM_MODULE" ]; then
+            case " $SEQUENCE " in
+                *" $FROM_MODULE "*) : ;;
+                *) log_error "--from $FROM_MODULE is not in the '$PROFILE' sequence ($SEQUENCE)"; exit 1 ;;
+            esac
+        fi
+
+        log_header "Guided Workshop — profile: $PROFILE"
+        log_info "Module sequence: $SEQUENCE"
+        [ "$DRY_RUN" = "1" ] && log_info "DRY RUN — nothing will be deployed"
+
+        if [ "$DRY_RUN" != "1" ] && [ "${NON_INTERACTIVE:-0}" != "1" ]; then
+            prompt_region
+            prompt_idp
+            prompt_api_keys
+            upsert_idp_secret   # Store any newly prompted IdP secret; sets IDP_CLIENT_SECRET_NAME
+            build_context_args  # Rebuild with new values
+            save_config         # Persist answers for the next run (secrets excluded)
+        fi
+
+        [ "$DRY_RUN" = "1" ] || cdk_bootstrap
+
+        SKIPPING=0
+        [ -n "$FROM_MODULE" ] && SKIPPING=1
+        for m in $SEQUENCE; do
+            if [ "$SKIPPING" = "1" ]; then
+                if [ "$m" = "$FROM_MODULE" ]; then SKIPPING=0
+                else log_info "Skipping module $m (--from $FROM_MODULE)"; continue; fi
+            fi
+            # A2A sub-agent stacks only exist in the CDK app when enable_a2a=true.
+            if [ "$m" = "8" ]; then export ENABLE_A2A=true; build_context_args; fi
+
+            title="${MODULE_EXPLAIN[$m]%%$'\n'*}"
+            log_header "Module $m — $title"
+            log_explain "${MODULE_EXPLAIN[$m]#*$'\n'}"
+            echo ""
+            if [ "$DRY_RUN" = "1" ]; then
+                log_info "[dry-run] Would deploy: ${MODULE_MAP[$m]}"
+                log_info "[dry-run] Would verify: ${MODULE_VERIFY[$m]}"
+                continue
+            fi
+            pause
+            # shellcheck disable=SC2086  # stack list is space-separated by design
+            deploy_stacks ${MODULE_MAP[$m]}
+            run_verify "$m"
+            pause
+        done
+
+        log_header "Workshop complete 🎉"
+        [ "$DRY_RUN" = "1" ] || print_summary
         ;;
 
     destroy)
@@ -641,9 +807,10 @@ case "$ACTION" in
         ;;
 
     *)
-        echo "Usage: $0 [deploy|destroy|synth|diff|export|ls|config] [OPTIONS]"
+        echo "Usage: $0 [deploy|workshop|destroy|synth|diff|export|ls|config] [OPTIONS]"
         echo ""
         echo "Actions:"
+        echo "  workshop           Guided module-by-module deploy: explain → deploy → verify → pause"
         echo "  config             Show saved answers (workshop.env)"
         echo "  config --reset     Delete saved answers and start fresh"
         echo ""
@@ -652,6 +819,8 @@ case "$ACTION" in
         echo "  --profile PROFILE  Customer profile (greenfield|migration|multi-agent|platform-team|security-focused)"
         echo "  --team TEAM        Team workstream (platform|agent|security)"
         echo "  --module N         Workshop module number (3|4|5|6|7|8|9|A|B|C|D|E)"
+        echo "  --from MODULE      (workshop) Start at this module in the profile sequence"
+        echo "  --dry-run          (workshop) Print each module's stacks + verify command; no AWS calls"
         echo ""
         echo "Environment Variables:"
         echo "  NON_INTERACTIVE=1  Skip all prompts"
