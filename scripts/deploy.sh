@@ -24,6 +24,7 @@ fi
 #   ./deploy.sh synth
 #   ./deploy.sh diff
 #   ./deploy.sh export
+#   ./deploy.sh config [--reset]
 #
 # Profiles: greenfield, migration, multi-agent, platform-team, security-focused
 # Teams: platform, agent, security
@@ -42,6 +43,48 @@ log_warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
 log_step()  { echo -e "${BLUE}[STEP]${NC}  $*"; }
 log_header(){ echo -e "\n${BOLD}${CYAN}═══ $* ═══${NC}\n"; }
+
+# ═══════════════════════════════════════════════════════════════
+# Saved Workshop Config (workshop.env)
+# ═══════════════════════════════════════════════════════════════
+# Precedence: env var > saved workshop.env > default.
+# Secrets (IDP_CLIENT_SECRET, DATADOG_API_KEY) are NEVER persisted —
+# the IdP secret lives in Secrets Manager (see upsert_idp_secret).
+# ponytail: flat sourceable KEY=value file; upgrade path is the
+# declarative Pydantic/YAML config task on the board.
+CONFIG_FILE="$PROJECT_DIR/workshop.env"
+CONFIG_KEYS=(AWS_REGION IDP_TYPE IDP_TENANT_ID IDP_CLIENT_ID IDP_ISSUER_URL
+             OBSERVABILITY_BACKEND MODEL_ID ORG_ID PROJECT_NAME ENVIRONMENT)
+
+save_config() {
+    # CI runs (NON_INTERACTIVE=1) never write the file.
+    [ "${NON_INTERACTIVE:-0}" = "1" ] && return 0
+    local key
+    {
+        echo "# AgentCore workshop saved answers — safe to edit or delete. Secrets are never stored here."
+        for key in "${CONFIG_KEYS[@]}"; do
+            [ -z "${!key:-}" ] && continue
+            printf '%s=%q\n' "$key" "${!key}"
+        done
+    } > "$CONFIG_FILE"
+    log_info "Saved answers to $CONFIG_FILE"
+}
+
+load_config() {
+    [ -f "$CONFIG_FILE" ] || return 0
+    local key n
+    declare -A pre_load
+    for key in "${CONFIG_KEYS[@]}"; do pre_load[$key]="${!key:-}"; done
+    # shellcheck source=/dev/null
+    source "$CONFIG_FILE"
+    # Env vars and explicit exports always win over the saved file.
+    for key in "${CONFIG_KEYS[@]}"; do
+        [ -n "${pre_load[$key]}" ] && printf -v "$key" '%s' "${pre_load[$key]}"
+    done
+    n=$(grep -c '=' "$CONFIG_FILE" || true)
+    log_info "Loaded saved config from workshop.env ($n values; env vars override)"
+}
+load_config
 
 # ── Configuration ──
 PROJECT_NAME="${PROJECT_NAME:-agentcore-workshop}"
@@ -167,6 +210,7 @@ check_org_id() {
             exit 1
         fi
         export ORG_ID
+        save_config
     fi
 
     # The networking stack silently skips the AgentCore VPC endpoint policy
@@ -191,11 +235,12 @@ prompt_region() {
     echo "  4) eu-central-1 (Frankfurt)"
     echo "  5) ap-northeast-1 (Tokyo)"
     echo "  6) ap-southeast-1 (Singapore)"
-    read -rp "Select region [1]: " choice
-    case "${choice:-1}" in
+    read -rp "Select region [${AWS_REGION:+saved: }${AWS_REGION:-1}]: " choice
+    case "${choice:-keep}" in
         1) AWS_REGION="us-east-1" ;; 2) AWS_REGION="us-west-2" ;;
         3) AWS_REGION="eu-west-1" ;; 4) AWS_REGION="eu-central-1" ;;
         5) AWS_REGION="ap-northeast-1" ;; 6) AWS_REGION="ap-southeast-1" ;;
+        keep) AWS_REGION="${AWS_REGION:-us-east-1}" ;;
         *) AWS_REGION="us-east-1" ;;
     esac
     export CDK_DEFAULT_REGION="$AWS_REGION"
@@ -204,6 +249,27 @@ prompt_region() {
 
 prompt_idp() {
     if [ "${NON_INTERACTIVE:-0}" = "1" ]; then return; fi
+    if [ -n "${IDP_TYPE:-}" ]; then
+        echo ""
+        read -rp "IdP: ${IDP_TYPE} (saved) — keep? [Y/n]: " keep
+        if [[ ! "$keep" =~ ^[Nn] ]]; then
+            # The client secret is never persisted: reuse the one already in
+            # Secrets Manager if present, otherwise re-prompt for it.
+            if [ "$IDP_TYPE" != "cognito" ] && [ -z "${IDP_CLIENT_SECRET:-}" ]; then
+                if aws secretsmanager describe-secret \
+                    --secret-id "${PREFIX}-idp-client-secret" \
+                    --region "${AWS_REGION:-us-east-1}" &>/dev/null; then
+                    IDP_CLIENT_SECRET_NAME="${PREFIX}-idp-client-secret"
+                    log_info "✓ IdP client secret: reusing existing Secrets Manager secret"
+                else
+                    read -rsp "  ${IDP_TYPE} Client Secret: " IDP_CLIENT_SECRET; echo ""
+                fi
+            fi
+            log_info "IdP set to: ${IDP_TYPE}"
+            return
+        fi
+        unset IDP_TYPE IDP_TENANT_ID IDP_CLIENT_ID IDP_ISSUER_URL
+    fi
     echo ""
     echo "Identity Provider:"
     echo "  1) Amazon Cognito (default)"
@@ -238,12 +304,19 @@ prompt_observability() {
     echo "Observability Backend:"
     echo "  1) Amazon CloudWatch (default)"
     echo "  2) DataDog"
-    read -rp "Select backend [1]: " choice
-    case "${choice:-1}" in
+    read -rp "Select backend [${OBSERVABILITY_BACKEND:+saved: }${OBSERVABILITY_BACKEND:-1}]: " choice
+    case "${choice:-keep}" in
         2) OBSERVABILITY_BACKEND="datadog"
            read -rp "  DataDog API Key: " DATADOG_API_KEY
            read -rp "  DataDog Site [datadoghq.com]: " DATADOG_SITE
            DATADOG_SITE="${DATADOG_SITE:-datadoghq.com}"
+           ;;
+        keep)
+           OBSERVABILITY_BACKEND="${OBSERVABILITY_BACKEND:-cloudwatch}"
+           # API key is never persisted — re-prompt if datadog was kept without one.
+           if [ "$OBSERVABILITY_BACKEND" = "datadog" ] && [ -z "${DATADOG_API_KEY:-}" ]; then
+               read -rp "  DataDog API Key: " DATADOG_API_KEY
+           fi
            ;;
         *) OBSERVABILITY_BACKEND="cloudwatch" ;;
     esac
@@ -431,6 +504,19 @@ with open('${export_file}', 'w') as f:
 ACTION="${1:-deploy}"
 shift || true
 
+# ── 'config' action: show or reset saved answers (no AWS access needed) ──
+if [ "$ACTION" = "config" ]; then
+    if [ "${1:-}" = "--reset" ]; then
+        rm -f "$CONFIG_FILE"
+        log_info "Removed workshop.env"
+    elif [ -f "$CONFIG_FILE" ]; then
+        cat "$CONFIG_FILE"
+    else
+        echo "none"
+    fi
+    exit 0
+fi
+
 # Parse flags
 STACK_FILTER=""
 PROFILE=""
@@ -506,6 +592,7 @@ case "$ACTION" in
             prompt_api_keys
             upsert_idp_secret   # Store any newly prompted IdP secret; sets IDP_CLIENT_SECRET_NAME
             build_context_args  # Rebuild with new values
+            save_config         # Persist answers for the next run (secrets excluded)
         fi
 
         log_header "CDK Bootstrap"
@@ -581,7 +668,11 @@ case "$ACTION" in
         ;;
 
     *)
-        echo "Usage: $0 [deploy|destroy|synth|diff|export|ls] [OPTIONS]"
+        echo "Usage: $0 [deploy|destroy|synth|diff|export|ls|config] [OPTIONS]"
+        echo ""
+        echo "Actions:"
+        echo "  config             Show saved answers (workshop.env)"
+        echo "  config --reset     Delete saved answers and start fresh"
         echo ""
         echo "Options:"
         echo "  --stack STACK      Deploy specific stack"
