@@ -99,15 +99,26 @@ Expect the printed policy to contain `"bedrock-agentcore:CreateMemory"` and the 
 
 ### A4b. Gateway configuration SCPs render (control-plane, item "1b")
 
+The 8 gateway controls are rendered individually from the control-library
+(`local.gateway_scp_rendered`) and then merged into ONE consolidated SCP
+(`local.gateway_scp_consolidated`) to fit the 5-SCPs-per-target Organizations quota.
+
 ```bash
 cd terraform/org-guardrails
 terraform init -backend=false
 terraform validate
 
-# All 8 Gateway SCPs are built and their sentinels resolved:
-printf 'keys(local.gateway_scps)\n' | terraform console
-printf 'local.gateway_scps["enforce-approved-idp"]\n' | terraform console | grep -c 'https://'   # → 1 (DiscoveryUrl pattern injected)
-printf 'local.gateway_scps["require-cmk"]\n' | terraform console | grep -c 'kms_key_arn_pattern'  # → 0 (sentinel resolved; note console wraps output in <<EOT)
+# All 8 gateway controls are rendered from the library:
+printf 'keys(local.gateway_scp_rendered)\n' | terraform console                                            # → the 8 control names
+# Sentinels resolved in the per-control renders:
+printf 'local.gateway_scp_rendered["enforce-approved-idp"]\n' | terraform console | grep -c 'https://'     # → 1 (DiscoveryUrl pattern injected)
+printf 'local.gateway_scp_rendered["require-cmk"]\n' | terraform console | grep -c 'kms_key_arn_pattern'   # → 0 (sentinel resolved; note console wraps output in <<EOT)
+
+# The consolidated document contains every control's statements, no unresolved sentinels,
+# and stays under the 5,120-character SCP quota:
+printf 'local.gateway_scp_statements[*].Sid\n' | terraform console                                         # → 10 unique Sids (require-cmk and require-policy-engine carry 2 each)
+printf 'local.gateway_scp_consolidated\n' | terraform console | grep -c '<<'                               # → 0 (no unresolved <<sentinel>> tokens)
+printf 'length(local.gateway_scp_consolidated)\n' | terraform console                                      # → < 5120
 cd ../..
 ```
 

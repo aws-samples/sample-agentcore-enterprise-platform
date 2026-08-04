@@ -20,6 +20,10 @@ locals {
 }
 
 # ── scp.memory.enforce-cmk ──
+# Kept as its own policy (not merged into the consolidated gateway SCP in gateway.tf): it
+# guards a different service surface and its enable flag toggles independently. Quota math
+# with everything enabled: 1 memory SCP + 1 consolidated gateway SCP = 2 attachments per
+# target, comfortably under the 5-per-target limit (4 usable after FullAWSAccess).
 resource "aws_organizations_policy" "memory_enforce_cmk" {
   count = var.enable_scp_memory_enforce_cmk ? 1 : 0
 
