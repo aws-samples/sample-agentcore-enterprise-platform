@@ -12,7 +12,9 @@ log_info() { :; }
 # Sandbox: pull ONLY the config vars + functions out of deploy.sh (no main flow).
 # shellcheck disable=SC2034  # used by the eval'd CONFIG_FILE= line below
 PROJECT_DIR="$TMP"
-eval "$(sed -n '/^CONFIG_FILE=/p; /^CONFIG_KEYS=/,/ENVIRONMENT)/p;
+# The CONFIG_KEYS range ends at the first line closing the array, so adding a
+# key to deploy.sh does not silently swallow the rest of the file here.
+eval "$(sed -n '/^CONFIG_FILE=/p; /^CONFIG_KEYS=/,/)$/p;
                 /^save_config()/,/^}/p; /^load_config()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
 CFG="$TMP/workshop.env"
 [ "$CONFIG_FILE" = "$CFG" ] || fail "CONFIG_FILE extraction broken: $CONFIG_FILE"
@@ -47,5 +49,34 @@ bash "$TMP/scripts/deploy.sh" config --reset >/dev/null
 [ ! -f "$CFG" ] || fail "config --reset left the file behind"
 bash "$TMP/scripts/deploy.sh" config | grep -q 'none' || fail "config after reset should say none"
 echo "PASS: config / config --reset"
+
+# (d) AGENT_PATTERN round-trips through workshop.env like any other answer.
+AGENT_PATTERN="langgraph-agent" save_config
+grep -q '^AGENT_PATTERN=langgraph-agent$' "$CFG" || fail "AGENT_PATTERN not persisted: $(cat "$CFG")"
+unset AGENT_PATTERN
+load_config
+[ "${AGENT_PATTERN:-}" = "langgraph-agent" ] || fail "AGENT_PATTERN not restored"
+AGENT_PATTERN="strands-agent"
+load_config
+[ "$AGENT_PATTERN" = "strands-agent" ] || fail "env AGENT_PATTERN clobbered by saved file"
+echo "PASS: AGENT_PATTERN persists and env var still wins"
+
+# (e) an unknown pattern fails fast with the valid list, before any AWS call.
+rm -f "$CFG"
+out="$(AGENT_PATTERN=bogus-agent bash "$TMP/scripts/deploy.sh" config 2>&1)" && \
+    fail "unknown agent pattern was accepted"
+grep -q 'bogus-agent' <<<"$out"      || fail "error does not name the bad pattern: $out"
+grep -q 'langgraph-agent' <<<"$out"  || fail "error does not list valid patterns: $out"
+AGENT_PATTERN=langgraph-agent bash "$TMP/scripts/deploy.sh" config >/dev/null \
+    || fail "valid agent pattern rejected"
+echo "PASS: unknown AGENT_PATTERN rejected with the valid list"
+
+# (f) the pattern actually reaches CDK as a context flag (it used to rely on
+# process env inheritance alone, which workshop.env could not restore).
+eval "$(sed -n '/^build_context_args()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
+PROJECT_NAME=p ENVIRONMENT=e AGENT_PATTERN=claude-sdk-agent build_context_args
+[[ " ${CONTEXT_ARGS[*]} " == *" agent_pattern=claude-sdk-agent "* ]] \
+    || fail "agent_pattern missing from CDK context args: ${CONTEXT_ARGS[*]}"
+echo "PASS: agent_pattern passed to CDK as a context flag"
 
 echo "OK: all deploy-config checks passed"
