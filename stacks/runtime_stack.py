@@ -253,6 +253,15 @@ class RuntimeStack(cdk.Stack):
             "network_configuration": network_config,
             "protocol_configuration": protocol,
             "environment_variables": env_vars,
+            # Forward Authorization to the container so agents can read JWT claims
+            # (agent-code/shared/auth.py). Without this, context.request_headers is
+            # empty and every JWT-consuming pattern fails at invoke time. Runtime
+            # has already validated the token via the authorizer below, so the agent
+            # decodes without re-verifying the signature. Docs: "Propagate a JWT
+            # token to AgentCore Runtime" (runtime-oauth) + runtime-header-allowlist.
+            "request_header_configuration": {
+                "requestHeaderAllowlist": ["Authorization"],
+            },
         }
 
         # CUSTOM_JWT auth for HTTP and MCP runtimes
@@ -369,8 +378,15 @@ class RuntimeStack(cdk.Stack):
                     "bedrock-agentcore:InvokeGateway",
                     "bedrock-agentcore:GetGateway",
                     "bedrock-agentcore:ListGateways",
+                    # Memory data plane. ListEvents/ListSessions/DeleteEvent are
+                    # required by the framework memory integrations (e.g. LangGraph's
+                    # AgentCoreMemorySaver checkpointer lists events to rehydrate a
+                    # thread); without them memory-backed patterns fail at invoke.
                     "bedrock-agentcore:CreateEvent",
                     "bedrock-agentcore:GetEvent",
+                    "bedrock-agentcore:ListEvents",
+                    "bedrock-agentcore:DeleteEvent",
+                    "bedrock-agentcore:ListSessions",
                     "bedrock-agentcore:RetrieveMemoryRecords",
                     "bedrock-agentcore:StartBrowserSession",
                     "bedrock-agentcore:StopBrowserSession",
