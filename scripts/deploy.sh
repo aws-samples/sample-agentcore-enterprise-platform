@@ -56,7 +56,7 @@ log_explain(){ echo -e "${YELLOW}📖${NC} $*"; }
 # declarative Pydantic/YAML config task on the board.
 CONFIG_FILE="$PROJECT_DIR/workshop.env"
 CONFIG_KEYS=(AWS_REGION IDP_TYPE IDP_TENANT_ID IDP_CLIENT_ID IDP_ISSUER_URL
-             MODEL_ID ORG_ID PROJECT_NAME ENVIRONMENT)
+             MODEL_ID ORG_ID PROJECT_NAME ENVIRONMENT AGENT_PATTERN)
 
 save_config() {
     # CI runs (NON_INTERACTIVE=1) never write the file.
@@ -92,6 +92,18 @@ load_config
 PROJECT_NAME="${PROJECT_NAME:-agentcore-workshop}"
 ENVIRONMENT="${ENVIRONMENT:-dev}"
 PREFIX="${PROJECT_NAME}-${ENVIRONMENT}"
+
+# ── Agent Pattern ──
+# Selects which Dockerfile under agent-code/ the runtime builds (app.py reads
+# it as the agent_pattern context value). Validated here because a typo would
+# otherwise surface minutes later as a CodeBuild failure on a missing path.
+AGENT_PATTERNS="orchestrator strands-agent langgraph-agent claude-sdk-agent claude-sdk-multi-agent agui-strands-agent agui-langgraph-agent"
+AGENT_PATTERN="${AGENT_PATTERN:-orchestrator}"
+case " $AGENT_PATTERNS " in
+    *" $AGENT_PATTERN "*) ;;
+    *) log_error "Unknown agent pattern: '$AGENT_PATTERN'. Valid patterns: $AGENT_PATTERNS"
+       exit 1 ;;
+esac
 
 # ═══════════════════════════════════════════════════════════════
 # Workshop Module → CDK Stack Mapping (Requirement 19)
@@ -300,6 +312,25 @@ prompt_region() {
     log_info "Region set to: $AWS_REGION"
 }
 
+prompt_agent_pattern() {
+    if [ "${NON_INTERACTIVE:-0}" = "1" ]; then return; fi
+    # shellcheck disable=SC2206  # deliberate word split: AGENT_PATTERNS is a fixed literal list
+    local choice i=1 pats=($AGENT_PATTERNS)
+    echo ""
+    echo "Agent framework pattern (the container the runtime builds):"
+    for p in "${pats[@]}"; do echo "  $i) $p"; i=$((i + 1)); done
+    read -rp "Select pattern [keep: ${AGENT_PATTERN}]: " choice
+    # Accept the menu number or the pattern name; anything else keeps the current value.
+    if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#pats[@]}" ]; then
+        AGENT_PATTERN="${pats[$((choice - 1))]}"
+    elif [ -n "$choice" ] && [[ " $AGENT_PATTERNS " == *" $choice "* ]]; then
+        AGENT_PATTERN="$choice"
+    elif [ -n "$choice" ]; then
+        log_warn "Unknown pattern '$choice' — keeping ${AGENT_PATTERN}"
+    fi
+    log_info "Agent pattern set to: $AGENT_PATTERN"
+}
+
 prompt_idp() {
     if [ "${NON_INTERACTIVE:-0}" = "1" ]; then return; fi
     if [ -n "${IDP_TYPE:-}" ]; then
@@ -454,6 +485,9 @@ build_context_args() {
 
     # Optional Bedrock model ID override (agents fall back to their in-code default)
     [ -n "${MODEL_ID:-}" ]                 && CONTEXT_ARGS+=(-c "model_id=${MODEL_ID}")
+
+    # Agent framework pattern (validated above; always set)
+    CONTEXT_ARGS+=(-c "agent_pattern=${AGENT_PATTERN}")
 
     return 0
 }
@@ -694,6 +728,7 @@ case "$ACTION" in
     deploy)
         if [ "${NON_INTERACTIVE:-0}" != "1" ]; then
             prompt_region
+            prompt_agent_pattern
             prompt_idp
             prompt_api_keys
             upsert_idp_secret   # Store any newly prompted IdP secret; sets IDP_CLIENT_SECRET_NAME
@@ -730,10 +765,12 @@ case "$ACTION" in
 
         log_header "Guided Workshop — profile: $PROFILE"
         log_info "Module sequence: $SEQUENCE"
+        log_info "Agent pattern: $AGENT_PATTERN"
         [ "$DRY_RUN" = "1" ] && log_info "DRY RUN — nothing will be deployed"
 
         if [ "$DRY_RUN" != "1" ] && [ "${NON_INTERACTIVE:-0}" != "1" ]; then
             prompt_region
+            prompt_agent_pattern
             prompt_idp
             prompt_api_keys
             upsert_idp_secret   # Store any newly prompted IdP secret; sets IDP_CLIENT_SECRET_NAME

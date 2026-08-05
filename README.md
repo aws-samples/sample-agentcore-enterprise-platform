@@ -102,16 +102,20 @@ The `agent_pattern` CDK context variable selects which `agent-code/<pattern>/` d
 the runtime stack builds and deploys — participants pick their framework without touching
 infrastructure code:
 
+Patterns: `orchestrator` (default), `strands-agent`, `langgraph-agent`, `claude-sdk-agent`,
+`claude-sdk-multi-agent`, `agui-strands-agent`, `agui-langgraph-agent`. An unknown value is
+rejected before any deployment starts.
+
 ```bash
-# Default Strands agent
-cdk deploy agentcore-workshop-dev-runtime-orchestrator
+# Pick a framework — saved to workshop.env and reused on later runs
+AGENT_PATTERN=langgraph-agent ./scripts/deploy.sh deploy --module 6
 
-# LangGraph instead
-cdk deploy agentcore-workshop-dev-runtime-orchestrator -c agent_pattern=langgraph-agent
-
-# Claude Agent SDK
+# Or straight through the CDK CLI
 cdk deploy agentcore-workshop-dev-runtime-orchestrator -c agent_pattern=claude-sdk-agent
 ```
+
+`./scripts/deploy.sh deploy` prompts for the pattern interactively; the guided
+`workshop` action prints the pattern in use before the first module.
 
 Agent application code and shared utilities are adapted from the
 [fullstack-solution-template-for-agentcore](https://github.com/aws-samples/fullstack-solution-template-for-agentcore)
@@ -163,6 +167,7 @@ All configuration via CDK context (`-c key=value`) or environment variables:
 | `enable_security` | `ENABLE_SECURITY` | `false` | Enable security stack |
 | `enable_a2a` | `ENABLE_A2A` | `true` | Enable A2A agent stacks |
 | `model_id` | `MODEL_ID` | *(in-code per pattern)* | Bedrock model ID override for all agents (e.g. `us.anthropic.claude-sonnet-5`) |
+| `agent_pattern` | `AGENT_PATTERN` | `orchestrator` | Agent framework pattern built for the runtime (see [Agent Pattern Selection](#agent-pattern-selection)) |
 
 Interactive answers from `./scripts/deploy.sh deploy` are saved to `workshop.env` (gitignored)
 and reused on later runs. Precedence: environment variable > saved `workshop.env` > default.

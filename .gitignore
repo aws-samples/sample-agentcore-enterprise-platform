@@ -37,3 +37,6 @@ dashboard/public/status.json
 
 # Kiro session steering (local-only, must never ship)
 .kiro/
+
+# Local git worktrees (parallel branches checked out inside the repo)
+.worktrees/

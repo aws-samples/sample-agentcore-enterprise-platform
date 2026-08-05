@@ -43,6 +43,12 @@ grep -q 'Would verify: .venv/bin/python scripts/invoke.py' <<<"$out" || fail "mo
 [ ! -f "$TMP/aws-was-called" ] || fail "dry run made an AWS call"
 echo "PASS: greenfield dry run prints 3 4 5 6 9 in order with stacks + verify, no AWS"
 
+# The chosen framework must be visible in the plan, not silently defaulted.
+grep -q 'Agent pattern: orchestrator' <<<"$out" || fail "default agent pattern not shown in the plan"
+out2="$(AGENT_PATTERN=langgraph-agent run workshop --dry-run --profile greenfield)"
+grep -q 'Agent pattern: langgraph-agent' <<<"$out2" || fail "selected agent pattern not shown in the plan"
+echo "PASS: guided plan states the agent pattern in use"
+
 # (c) --from 6 skips earlier modules.
 out="$(run workshop --dry-run --profile greenfield --from 6)"
 mods="$(grep -o 'Module [0-9A-E] —' <<<"$out" | awk '{print $2}' | paste -sd' ' -)"
