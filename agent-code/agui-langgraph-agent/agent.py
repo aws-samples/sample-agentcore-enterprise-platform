@@ -77,25 +77,20 @@ async def create_langgraph_agent():
     )
 
 
-class ActorAwareLangGraphAgent(LangGraphAGUIAgent):
-    """LangGraphAGUIAgent that creates the graph per-request with fresh tokens."""
-
-    async def run(self, input: RunAgentInput):
-        self.graph = await create_langgraph_agent()
-        async for event in super().run(input):
-            yield event
-
-
 @app.entrypoint
 async def invocations(payload: dict, context: RequestContext):
     input_data = RunAgentInput.model_validate(payload)
 
     user_id = extract_user_id_from_context(context)
 
-    agent = ActorAwareLangGraphAgent(
+    # Build the graph before constructing the AG-UI wrapper: LangGraphAGUIAgent
+    # inspects graph.nodes in __init__, so it cannot be handed graph=None and
+    # filled in later. The entrypoint already runs per request, so the graph
+    # (and its gateway token) is still created fresh for every invocation.
+    agent = LangGraphAGUIAgent(
         name="agui_langgraph_agent",
         description="AG-UI LangGraph agent with Gateway MCP tools and Memory",
-        graph=None,
+        graph=await create_langgraph_agent(),
         config={"configurable": {"actor_id": user_id}},
     )
 
