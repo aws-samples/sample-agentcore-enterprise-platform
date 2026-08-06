@@ -372,6 +372,80 @@ cd terraform/org-guardrails && terraform destroy && cd ../..
 
 ---
 
+## Part C — Agent pattern matrix (live)
+
+Every pattern shares `agent-code/` but builds its own Dockerfile, so a green deploy of one
+proves nothing about the others. Run this matrix before a release: it has caught defects that
+a single orchestrator invoke cannot reach (a stale container image, a missing forwarded header,
+and two missing runtime-role permissions — none of which fail at synth or deploy time).
+
+One redeploy of the orchestrator runtime per pattern, roughly 5–8 minutes each (CodeBuild):
+
+```bash
+export AWS_PROFILE=<your-profile> AWS_REGION=us-east-1
+
+for p in orchestrator strands-agent langgraph-agent claude-sdk-agent claude-sdk-multi-agent; do
+  AGENT_PATTERN=$p NON_INTERACTIVE=1 ./scripts/deploy.sh deploy \
+    --stack agentcore-workshop-dev-runtime-orchestrator
+  python scripts/invoke.py "Reply with exactly: $p LIVE"
+done
+
+# The agui-* patterns speak AG-UI, not plain HTTP — use --agui
+for p in agui-strands-agent agui-langgraph-agent; do
+  AGENT_PATTERN=$p NON_INTERACTIVE=1 ./scripts/deploy.sh deploy \
+    --stack agentcore-workshop-dev-runtime-orchestrator
+  python scripts/invoke.py --agui "Reply with exactly: $p LIVE"
+done
+```
+
+Then check the tools actually loaded, which exercises the gateway MCP client and the
+AgentCore Identity token vault (`--agui` for the AG-UI patterns):
+
+```bash
+python scripts/invoke.py "List the names of the tools you have available. Names only."
+# Expect the gateway target plus execute_python_securely, e.g.
+#   sample-tool___text_analysis_tool, execute_python_securely
+```
+
+Two things worth asserting beyond "it answered":
+
+```bash
+# The runtime really is on the pattern you asked for (protocol + fresh image)
+ARN=$(aws ssm get-parameter --name /agentcore-workshop/dev/runtimes/orchestrator/arn \
+  --query Parameter.Value --output text)
+aws bedrock-agentcore-control get-agent-runtime --agent-runtime-id "${ARN##*/}" \
+  --query '[agentRuntimeVersion,protocolConfiguration,agentRuntimeArtifact]'
+# agui-* patterns → serverProtocol AGUI; all others → HTTP
+
+# Each pattern pushed its own image tag (identical tags mean no rebuild happened)
+aws ecr describe-images --repository-name agentcore-workshop-dev-orchestrator \
+  --query 'sort_by(imageDetails,&imagePushedAt)[-5:].{tags:imageTags,pushed:imagePushedAt}'
+```
+
+Results as of the last full run (account-agnostic; re-run per release):
+
+| Pattern | Protocol | Invoke | Gateway tools | Notes |
+|---------|----------|--------|---------------|-------|
+| `orchestrator` | HTTP | ✓ | ✓ | default |
+| `strands-agent` | HTTP | ✓ | n/a | gateway/code-interpreter tools not wired in this pattern yet |
+| `langgraph-agent` | HTTP | ✓ | ✓ | needs the memory data-plane IAM actions (`ListEvents`) |
+| `claude-sdk-agent` | HTTP | ✓ | ✓ | replies include `claude_session_id` |
+| `claude-sdk-multi-agent` | HTTP | ✓ | ✓ | delegates to the `code-analyst` subagent |
+| `agui-strands-agent` | AGUI | ✓ | ✓ | typed SSE events; verify with `--agui` |
+| `agui-langgraph-agent` | AGUI | ✓ | ✓ | slower first response (graph build per request) |
+
+If a pattern fails, read the container logs before changing anything — every failure so far
+named its own cause there:
+
+```bash
+aws logs filter-log-events \
+  --log-group-name "/aws/bedrock-agentcore/runtimes/<runtime-id>-DEFAULT" \
+  --start-time $(( ($(date +%s) - 900) * 1000 )) \
+  --query 'events[].message' --output text | grep -iE 'error|denied|traceback'
+```
+
+---
+
 ## Known caveats to validate on first live deploy
 
 1. **Interceptor event shape.** The Lambda scans all string leaves in
