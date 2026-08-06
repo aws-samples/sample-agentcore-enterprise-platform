@@ -295,6 +295,22 @@ gateway_stack.add_dependency(auth_stack)
 # RUNTIME LAYER
 # ═══════════════════════════════════════════════════════════════
 
+# ── Runtime network placement ──
+# With enable_networking the runtimes belong IN the VPC. Passing nothing here is
+# what used to make "enterprise network isolation" false: the VPC and its
+# endpoints were built and every agent still ran with networkMode PUBLIC.
+runtime_network = (
+    {
+        "network_mode": "VPC",
+        "subnet_ids": networking_stack.private_subnet_ids,
+        "security_group_ids": [
+            networking_stack.runtime_security_group.security_group_id
+        ],
+    }
+    if networking_stack
+    else {}
+)
+
 # ── Orchestrator Runtime (HTTP protocol) ──
 # Agent pattern selects source directory: cdk deploy -c agent_pattern=langgraph-agent
 runtime_orchestrator = RuntimeStack(
@@ -318,10 +334,13 @@ runtime_orchestrator = RuntimeStack(
         "LTM_RELEVANCE_SCORE": str(ltm_relevance_score),
         **model_env,
     },
+    **runtime_network,
     env=cdk_env,
 )
 runtime_orchestrator.add_dependency(gateway_stack)
 runtime_orchestrator.add_dependency(memory_stack)
+if networking_stack:
+    runtime_orchestrator.add_dependency(networking_stack)
 # The orchestrator fetches Gateway tokens through the identity stack's M2M
 # credential provider, so the provider must exist before the runtime starts.
 # code-agent / research-agent runtimes don't get GATEWAY_CREDENTIAL_PROVIDER_NAME:
@@ -346,9 +365,12 @@ if enable_a2a:
         cognito_issuer_url=auth_stack.issuer_url,
         cognito_allowed_clients=[auth_stack.app_client_id, auth_stack.m2m_client_id],
         extra_env_vars=model_env,
+        **runtime_network,
         env=cdk_env,
     )
     runtime_code_agent.add_dependency(auth_stack)
+    if networking_stack:
+        runtime_code_agent.add_dependency(networking_stack)
 
     # Research Agent (A2A protocol)
     runtime_research_agent = RuntimeStack(
@@ -362,9 +384,12 @@ if enable_a2a:
         cognito_issuer_url=auth_stack.issuer_url,
         cognito_allowed_clients=[auth_stack.app_client_id, auth_stack.m2m_client_id],
         extra_env_vars=model_env,
+        **runtime_network,
         env=cdk_env,
     )
     runtime_research_agent.add_dependency(auth_stack)
+    if networking_stack:
+        runtime_research_agent.add_dependency(networking_stack)
 
 # ═══════════════════════════════════════════════════════════════
 # OBSERVABILITY LAYER

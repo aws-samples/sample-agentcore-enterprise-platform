@@ -38,6 +38,7 @@ from aws_cdk import (
 )
 from constructs import Construct
 
+from infra_utils.runtime_network import build_network_config
 from infra_utils.runtime_protocol import needs_jwt_authorizer, resolve_protocol
 from infra_utils.source_hash import component_image_tag
 
@@ -234,12 +235,11 @@ class RuntimeStack(cdk.Stack):
         env_vars.update(extra_env_vars or {})
 
         # ── Network Configuration ──
-        network_config: dict = {"networkMode": network_mode}
-        if network_mode == "VPC" and subnet_ids and security_group_ids:
-            network_config["vpcConfiguration"] = {
-                "subnetIds": subnet_ids,
-                "securityGroupIds": security_group_ids,
-            }
+        # Shape and fail-fast rules live in infra_utils so they are testable
+        # without CDK (tests/test_runtime_network.py).
+        network_config = build_network_config(
+            network_mode, subnet_ids, security_group_ids
+        )
 
         # ── CfnRuntime ──
         runtime_props: dict = {

@@ -26,7 +26,7 @@ Maintained source: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (Mermaid diagr
 | `runtime-code-agent` | ECR, CodeBuild, CfnRuntime | A2A sub-agent for code tasks |
 | `runtime-research-agent` | ECR, CodeBuild, CfnRuntime | A2A sub-agent for research |
 | `observability` | Vended logs, X-Ray delivery | Per-resource monitoring |
-| `networking` *(optional)* | VPC, subnets, endpoints | Enterprise network isolation |
+| `networking` *(optional)* | VPC, private subnets, endpoints, runtime SG | Runs the agents inside your VPC ([details](#network-isolation-enable_networking)) |
 | `security` *(optional)* | KMS CMK, CloudTrail | Security hardening |
 
 ## Quick Start
@@ -123,6 +123,42 @@ cdk deploy agentcore-workshop-dev-runtime-orchestrator -c agent_pattern=claude-s
 Agent application code and shared utilities are adapted from the
 [fullstack-solution-template-for-agentcore](https://github.com/aws-samples/fullstack-solution-template-for-agentcore)
 (FAST) patterns; the CDK stacks are original to this workshop.
+
+## Network isolation (`enable_networking`)
+
+With `enable_networking=true` the runtimes are placed **in** the VPC: AgentCore
+creates network interfaces in the private subnets, attached to a security group that
+allows HTTPS egress only and no inbound. Egress leaves through the NAT gateway, with
+interface endpoints for Bedrock, ECR (api + dkr), CloudWatch Logs and the AgentCore
+Gateway, plus the free S3 gateway endpoint that ECR layer pulls use.
+
+What this does and does not give you:
+
+- **Does**: no public network path from the agent, private access to resources in your
+  VPC, and security-group control over what the agent can reach.
+- **Does not**: an air-gapped VPC. The private subnets keep a NAT route because agents
+  reach AWS APIs and, for some patterns, the public internet. Remove the NAT only after
+  adding endpoints for every service your agents call.
+
+Verify placement rather than trusting the flag:
+
+```bash
+python scripts/check_network.py                  # subnets in supported AZs + runtimes in VPC
+python scripts/check_network.py --expect-public   # for deployments without networking
+```
+
+> **Availability Zones**: AgentCore supports VPC connectivity in specific AZs, and an AZ
+> *name* (`us-east-1a`) maps to a different AZ *id* (`use1-az1`) in every account. A VPC
+> that works in one account can fail at runtime creation in another. `check_network.py`
+> catches this at the networking module instead, and the guided workshop runs it as
+> module C's verification.
+
+> **Teardown**: AgentCore's network interfaces persist for up to 8 hours after a runtime
+> stops using VPC mode, so destroying the networking stack in that window fails on the
+> private subnets and the runtime security group with "has dependencies and cannot be
+> deleted". The NAT gateway and VPC endpoints — everything that bills hourly — are deleted
+> in the same run, so the leftovers are free. Re-run the destroy once the interfaces age
+> out (`aws ec2 describe-network-interfaces --filters Name=interface-type,Values=agentic_ai`).
 
 ## Customer Profiles
 
