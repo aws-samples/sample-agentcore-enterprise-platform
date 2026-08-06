@@ -158,7 +158,7 @@ MODULE_VERIFY[7]='.venv/bin/python scripts/test_gateway.py'
 MODULE_VERIFY[8]='aws ssm get-parameter --name "/$PROJECT_NAME/$ENVIRONMENT/runtimes/code-agent/arn" --region "$AWS_REGION" --query Parameter.Value --output text'
 MODULE_VERIFY[9]='aws cloudformation describe-stacks --stack-name "$PREFIX-observability" --region "$AWS_REGION" --query "Stacks[0].StackStatus" --output text | grep -q COMPLETE'
 MODULE_VERIFY[A]='.venv/bin/python scripts/test_memory.py'
-MODULE_VERIFY[C]='aws cloudformation describe-stacks --stack-name "$PREFIX-networking" --region "$AWS_REGION" --query "Stacks[0].StackStatus" --output text | grep -q COMPLETE'
+MODULE_VERIFY[C]='aws cloudformation describe-stacks --stack-name "$PREFIX-networking" --region "$AWS_REGION" --query "Stacks[0].StackStatus" --output text | grep -q COMPLETE && .venv/bin/python scripts/check_network.py'
 MODULE_VERIFY[E]='aws cloudformation describe-stacks --stack-name "$PREFIX-security" --region "$AWS_REGION" --query "Stacks[0].StackStatus" --output text | grep -q COMPLETE'
 }
 
