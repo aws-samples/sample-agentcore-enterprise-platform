@@ -75,6 +75,9 @@ python scripts/test.py
 # Invoke the deployed agent (add --session <id> to continue a conversation)
 python scripts/invoke.py "What tools do you have?"
 
+# For the agui-* patterns, use the AG-UI protocol (RunAgentInput + SSE events)
+python scripts/invoke.py --agui "What tools do you have?"
+
 # List the gateway's MCP tools
 python scripts/invoke.py --tools
 

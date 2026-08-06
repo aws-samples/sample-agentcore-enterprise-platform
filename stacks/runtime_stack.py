@@ -38,6 +38,7 @@ from aws_cdk import (
 )
 from constructs import Construct
 
+from infra_utils.runtime_protocol import needs_jwt_authorizer, resolve_protocol
 from infra_utils.source_hash import component_image_tag
 
 
@@ -220,8 +221,7 @@ class RuntimeStack(cdk.Stack):
         self._attach_runtime_permissions(runtime_role, repo.repository_arn)
 
         # ── Protocol Configuration ──
-        protocol_map = {"orchestrator": "HTTP", "a2a_agent": "A2A", "mcp_server": "MCP"}
-        protocol = protocol_map.get(runtime_type, "HTTP")
+        protocol = resolve_protocol(runtime_type, dockerfile_pattern)
 
         # ── Environment Variables ──
         env_vars: dict[str, str] = {
@@ -264,8 +264,8 @@ class RuntimeStack(cdk.Stack):
             },
         }
 
-        # CUSTOM_JWT auth for HTTP and MCP runtimes
-        if protocol in ("HTTP", "MCP") and cognito_issuer_url:
+        # CUSTOM_JWT auth for client-facing protocols (HTTP, MCP, AGUI).
+        if needs_jwt_authorizer(protocol) and cognito_issuer_url:
             runtime_props["authorizer_configuration"] = {
                 "customJwtAuthorizer": {
                     "discoveryUrl": f"{cognito_issuer_url}/.well-known/openid-configuration",
@@ -399,6 +399,24 @@ class RuntimeStack(cdk.Stack):
                     "bedrock-agentcore:GetWorkloadAccessTokenForUserId",
                 ],
                 resources=["*"],
+            ),
+            # AgentCore Identity token vault. GetResourceOauth2Token reads the
+            # credential provider's client secret from a Secrets Manager secret
+            # that AgentCore Identity owns, using the CALLER's identity — so
+            # without this the gateway MCP token fetch fails with
+            # AccessDeniedException and Strands aborts loading gateway tools.
+            # Scoped to the vault's own secret path, not all secrets.
+            iam.PolicyStatement(
+                sid="AgentCoreIdentityTokenVaultSecrets",
+                actions=["secretsmanager:GetSecretValue"],
+                resources=[
+                    cdk.Stack.of(role).format_arn(
+                        service="secretsmanager",
+                        resource="secret",
+                        resource_name="bedrock-agentcore-identity!default/oauth2/*",
+                        arn_format=cdk.ArnFormat.COLON_RESOURCE_NAME,
+                    ),
+                ],
             ),
         ]
         for stmt in statements:
