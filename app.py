@@ -89,6 +89,13 @@ enable_traceability = (
     app.node.try_get_context("enable_traceability")
     or os.environ.get("ENABLE_TRACEABILITY", "false")
 ) == "true"
+# CloudWatch Transaction Search. Defaults ON because tracing does not work without
+# it (X-Ray rejects every span batch with HTTP 400), but it is an account- and
+# region-level setting: turn it off where a platform team owns tracing centrally.
+enable_transaction_search = (
+    app.node.try_get_context("enable_transaction_search")
+    or os.environ.get("ENABLE_TRANSACTION_SEARCH", "true")
+) == "true"
 # AWS Organizations ID (o-xxxx). Required when enable_resource_policies is on, so the
 # in-account-only resource policies can render their aws:PrincipalOrgID deny guard.
 org_id = app.node.try_get_context("org_id") or os.environ.get("ORG_ID", "")
@@ -412,6 +419,7 @@ obs_stack = ObservabilityStack(
     environment=env_name,
     monitored_resources=monitored_resources,
     enable_traceability=enable_traceability,
+    enable_transaction_search=enable_transaction_search,
     env=cdk_env,
 )
 obs_stack.add_dependency(runtime_orchestrator)
