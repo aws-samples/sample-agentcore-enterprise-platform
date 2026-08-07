@@ -160,6 +160,31 @@ python scripts/check_network.py --expect-public   # for deployments without netw
 > in the same run, so the leftovers are free. Re-run the destroy once the interfaces age
 > out (`aws ec2 describe-network-interfaces --filters Name=interface-type,Values=agentic_ai`).
 
+## Tracing (CloudWatch Transaction Search)
+
+AgentCore runtimes emit OTLP spans whether or not the account is set up to receive them.
+If the account's X-Ray trace segment destination is still `XRay`, every span batch is
+rejected with HTTP 400 and no trace ever appears — while the deployment reports success.
+The observability stack therefore configures the two prerequisites from
+[Enable transaction search](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Enable-TransactionSearch.html):
+a CloudWatch Logs resource policy allowing X-Ray to write the span log groups, and the
+trace segment destination set to `CloudWatchLogs`.
+
+```bash
+python scripts/check_observability.py   # destination + span policy + log deliveries
+```
+
+> **Account-level setting**: both are account- and Region-scoped, not per-stack. Where a
+> platform team owns tracing centrally, deploy with `-c enable_transaction_search=false`.
+> Destroying the stack deliberately does **not** revert the destination — other workloads
+> in the account may depend on it by then.
+
+> **Span visibility**: the prerequisites above stop the rejections. Delivering spans to the
+> agent's own log group (instead of the shared `aws/spans`) additionally needs
+> `aws-opentelemetry-distro>=0.18.0` in the agent image; the runtime currently bundles
+> `0.16.0`, which ignores span destination configuration. Enabling Transaction Search also
+> switches the account to CloudWatch span ingestion pricing, with 1% indexed for free.
+
 ## Customer Profiles
 
 | Profile | Networking | Security | A2A |
@@ -207,6 +232,7 @@ All configuration via CDK context (`-c key=value`) or environment variables:
 | `enable_a2a` | `ENABLE_A2A` | `true` | Enable A2A agent stacks |
 | `model_id` | `MODEL_ID` | *(in-code per pattern)* | Bedrock model ID override for all agents (e.g. `us.anthropic.claude-sonnet-5`) |
 | `agent_pattern` | `AGENT_PATTERN` | `orchestrator` | Agent framework pattern built for the runtime (see [Agent Pattern Selection](#agent-pattern-selection)) |
+| `enable_transaction_search` | `ENABLE_TRANSACTION_SEARCH` | `true` | Configure CloudWatch Transaction Search — account-level ([details](#tracing-cloudwatch-transaction-search)) |
 
 Interactive answers from `./scripts/deploy.sh deploy` are saved to `workshop.env` (gitignored)
 and reused on later runs. Precedence: environment variable > saved `workshop.env` > default.

@@ -1,9 +1,12 @@
-"""Observability Stack — CloudWatch vended logs for AgentCore resources.
+"""Observability Stack — CloudWatch vended logs and traces for AgentCore resources.
 
 Implements Requirement 12: Observability Integration
 - CloudWatch vended log delivery per AgentCore resource (APPLICATION_LOGS)
 - Log groups with 1-month retention
+- CloudWatch Transaction Search, without which X-Ray rejects every span
 """
+
+import json
 
 import aws_cdk as cdk
 from aws_cdk import (
@@ -13,12 +16,24 @@ from aws_cdk import (
     aws_events_targets as targets,
 )
 from aws_cdk import (
+    aws_iam as iam,
+)
+from aws_cdk import (
     aws_logs as logs,
 )
 from aws_cdk import (
     aws_sns as sns,
 )
+from aws_cdk import (
+    custom_resources as cr,
+)
 from constructs import Construct
+
+from infra_utils.transaction_search import (
+    TRACE_DESTINATION,
+    transaction_search_caller_statements,
+    xray_logs_resource_policy,
+)
 
 
 class ObservabilityStack(cdk.Stack):
@@ -31,11 +46,58 @@ class ObservabilityStack(cdk.Stack):
         environment: str,
         monitored_resources: dict[str, str] | None = None,
         enable_traceability: bool = False,
+        enable_transaction_search: bool = True,
         **kwargs,
     ):
         super().__init__(scope, id, **kwargs)
 
         prefix = f"{project_name}-{environment}"
+
+        # ── CloudWatch Transaction Search (prerequisite for any tracing) ──
+        # The runtimes emit OTLP spans whether or not this is configured; with
+        # the account still pointed at the XRay destination, X-Ray answers every
+        # batch with HTTP 400 and the traces this module promises never exist.
+        #
+        # CAVEAT: both resources below are account- and region-scoped, not
+        # per-stack. In an account where a platform team owns tracing centrally,
+        # deploy with -c enable_transaction_search=false. Deleting this stack
+        # deliberately does NOT revert the destination: other workloads in the
+        # account may depend on it by then.
+        if enable_transaction_search:
+            logs.CfnResourcePolicy(
+                self,
+                "XRaySpansResourcePolicy",
+                policy_name=f"{prefix}-transaction-search-xray",
+                policy_document=json.dumps(
+                    xray_logs_resource_policy(self.account, self.region)
+                ),
+            )
+
+            self.trace_destination = cr.AwsCustomResource(
+                self,
+                "TraceSegmentDestination",
+                # No onDelete: see the caveat above.
+                on_update=cr.AwsSdkCall(
+                    service="XRay",
+                    action="updateTraceSegmentDestination",
+                    parameters={"Destination": TRACE_DESTINATION},
+                    physical_resource_id=cr.PhysicalResourceId.of(
+                        f"{prefix}-trace-destination"
+                    ),
+                ),
+                # UpdateTraceSegmentDestination also provisions the span log
+                # groups and starts Application Signals discovery, so the caller
+                # needs more than the two xray actions. Full set in infra_utils.
+                policy=cr.AwsCustomResourcePolicy.from_statements(
+                    [
+                        iam.PolicyStatement.from_json(statement)
+                        for statement in transaction_search_caller_statements(
+                            self.partition
+                        )
+                    ]
+                ),
+                install_latest_aws_sdk=False,
+            )
 
         for resource_name, resource_arn in (monitored_resources or {}).items():
             safe_name = resource_name.replace("-", "").replace("_", "").title()
