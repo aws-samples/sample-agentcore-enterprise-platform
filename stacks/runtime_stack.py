@@ -323,13 +323,18 @@ class RuntimeStack(cdk.Stack):
                 ],
                 resources=["*"],
             ),
-            # CloudWatch Logs
+            # CloudWatch Logs. PutResourcePolicy is what lets AgentCore allow
+            # X-Ray to deliver this agent's spans into the agent's own log group
+            # (the unified span destination) instead of the shared aws/spans
+            # group. Kept scoped to the runtime log groups: account-wide it would
+            # let the agent open any log group to another account.
             iam.PolicyStatement(
                 sid="CloudWatchLogs",
                 actions=[
                     "logs:CreateLogGroup",
                     "logs:CreateLogStream",
                     "logs:PutLogEvents",
+                    "logs:PutResourcePolicy",
                 ],
                 resources=[
                     "arn:aws:logs:*:*:log-group:/aws/bedrock-agentcore/runtimes/*"
