@@ -91,6 +91,20 @@ class RuntimeStack(cdk.Stack):
             repository_name=f"{prefix}-{component_name}",
             removal_policy=cdk.RemovalPolicy.DESTROY,
             empty_on_delete=True,
+            # Scan every pushed image: the agent images pull in a large Python
+            # dependency tree, and this is the only automatic signal that a base
+            # image or package has a known CVE (Checkov CKV_AWS_163).
+            image_scan_on_push=True,
+            # NOT setting encryption=KMS here, deliberately. ECR encryption is
+            # immutable, so changing it requires replacing the repository, and
+            # CloudFormation refuses to replace a resource with an explicit
+            # repository_name ("cannot update a stack when a custom-named
+            # resource requires replacing"). Verified: it rolls the stack back.
+            # Retrofitting it therefore costs either the predictable repo name
+            # that docs and scripts rely on, or a destroy/redeploy of every
+            # runtime stack — a migration decision, tracked separately
+            # (Checkov CKV_AWS_136). Repositories are encrypted with AES256 by
+            # default in the meantime.
             lifecycle_rules=[
                 ecr.LifecycleRule(max_image_count=10, description="Keep last 10 images")
             ],
@@ -219,7 +233,9 @@ class RuntimeStack(cdk.Stack):
             assumed_by=iam.ServicePrincipal("bedrock-agentcore.amazonaws.com"),
             role_name=f"{prefix}-{component_name}-runtime-role",
         )
-        self._attach_runtime_permissions(runtime_role, repo.repository_arn)
+        self._attach_runtime_permissions(
+            runtime_role, repo.repository_arn, project_name=project_name
+        )
 
         # ── Protocol Configuration ──
         protocol = resolve_protocol(runtime_type, dockerfile_pattern)
@@ -310,17 +326,30 @@ class RuntimeStack(cdk.Stack):
         return self._runtime.attr_agent_runtime_id
 
     @staticmethod
-    def _attach_runtime_permissions(role: iam.Role, ecr_repo_arn: str) -> None:
-        """Attach the standard AgentCore Runtime permissions to a role."""
+    def _attach_runtime_permissions(
+        role: iam.Role, ecr_repo_arn: str, *, project_name: str
+    ) -> None:
+        """Attach the standard AgentCore Runtime permissions to a role.
+
+        Wildcard resources are used only where the AWS action does not support
+        resource-level permissions; each one says so. Everything that can be
+        scoped is scoped, because this role is what a compromised agent inherits.
+        """
         statements = [
-            # ECR image pull
+            # ECR image pull, limited to this component's own repository. It used
+            # to be resources=["*"], which let any runtime role pull every image
+            # in the account (Checkov CKV_AWS_108) — the repo ARN was already
+            # being passed to this function and simply ignored.
             iam.PolicyStatement(
-                sid="ECRAccess",
-                actions=[
-                    "ecr:BatchGetImage",
-                    "ecr:GetDownloadUrlForLayer",
-                    "ecr:GetAuthorizationToken",
-                ],
+                sid="ECRPull",
+                actions=["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
+                resources=[ecr_repo_arn],
+            ),
+            # GetAuthorizationToken has no resource to scope to: it returns an
+            # account-level token, so IAM only accepts "*".
+            iam.PolicyStatement(
+                sid="ECRAuth",
+                actions=["ecr:GetAuthorizationToken"],
                 resources=["*"],
             ),
             # CloudWatch Logs. PutResourcePolicy is what lets AgentCore allow
@@ -340,13 +369,15 @@ class RuntimeStack(cdk.Stack):
                     "arn:aws:logs:*:*:log-group:/aws/bedrock-agentcore/runtimes/*"
                 ],
             ),
-            # X-Ray tracing
+            # X-Ray tracing. These two actions accept no resource ARN, so "*" is
+            # the only valid value — not a missed scoping opportunity.
             iam.PolicyStatement(
                 sid="XRayTracing",
                 actions=["xray:PutTraceSegments", "xray:PutTelemetryRecords"],
                 resources=["*"],
             ),
-            # CloudWatch metrics
+            # CloudWatch metrics. PutMetricData also takes no resource ARN; the
+            # namespace condition is what constrains it instead.
             iam.PolicyStatement(
                 sid="CloudWatchMetrics",
                 actions=["cloudwatch:PutMetricData"],
@@ -369,13 +400,23 @@ class RuntimeStack(cdk.Stack):
                     "arn:aws:bedrock:*:*:inference-profile/*",
                 ],
             ),
-            # SSM Parameter Store (cross-stack discovery)
+            # SSM Parameter Store (cross-stack discovery), scoped to this
+            # project's own parameter path. On "*" the agent could read every
+            # parameter in the account, which is the classic data-exfiltration
+            # path Checkov CKV_AWS_108 looks for. infra_utils/agentcore_role.py
+            # — the file that calls itself the reference policy — already scoped
+            # these actions this way; this makes the two agree.
             iam.PolicyStatement(
                 sid="SSMAccess",
                 actions=["ssm:GetParameter", "ssm:GetParameters"],
-                resources=["*"],
+                resources=[f"arn:aws:ssm:*:*:parameter/{project_name}/*"],
             ),
-            # AgentCore service access (Gateway, Memory, A2A, Registry, etc.)
+            # AgentCore service access (Gateway, Memory, A2A, Registry, etc.).
+            # Still "*", and knowingly so: scoping these needs the gateway,
+            # memory and sibling-runtime ARNs, and the A2A targets do not exist
+            # yet when this role is built. Tracked as its own task rather than
+            # rushed here, because getting it wrong breaks every live-verified
+            # path (gateway tools, memory, A2A delegation).
             iam.PolicyStatement(
                 sid="AgentCoreAccess",
                 actions=[
