@@ -328,6 +328,11 @@ runtime_orchestrator = RuntimeStack(
         "GATEWAY_URL": gateway_stack.gateway_url,
         "GATEWAY_CREDENTIAL_PROVIDER_NAME": identity_stack.gateway_credential_provider_name,
         "MEMORY_ID": memory_stack.memory_id,
+        # shared/auth.py verifies the caller's JWT against this issuer's JWKS
+        # instead of trusting that the runtime authorizer ran. Without these the
+        # agent refuses the request rather than decoding it unverified.
+        "COGNITO_ISSUER_URL": auth_stack.issuer_url,
+        "COGNITO_ALLOWED_CLIENTS": f"{auth_stack.app_client_id},{auth_stack.m2m_client_id}",
         "STACK_NAME": prefix,
         "USE_LONG_TERM_MEMORY": str(use_long_term_memory).lower(),
         "LTM_TOP_K": str(ltm_top_k),

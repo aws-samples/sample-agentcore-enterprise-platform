@@ -13,29 +13,58 @@ import jwt
 from bedrock_agentcore.identity.auth import requires_access_token
 from bedrock_agentcore.runtime import RequestContext
 
+from shared.jwt_claims import TokenRejected, validate_claims
+
 logger = logging.getLogger(__name__)
+
+# Issuer and clients this deployment accepts. RuntimeStack injects both.
+COGNITO_ISSUER_URL = os.environ.get("COGNITO_ISSUER_URL", "").rstrip("/")
+ALLOWED_CLIENTS = tuple(
+    c for c in os.environ.get("COGNITO_ALLOWED_CLIENTS", "").split(",") if c
+)
+
+# JWKS is fetched once per container and cached by PyJWKClient, which also
+# refreshes when it sees an unknown key id (Cognito rotates signing keys).
+_jwks_client: jwt.PyJWKClient | None = None
+
+
+def _signing_key(token: str) -> str:
+    """Public key for this token, from the issuer's published JWKS."""
+    global _jwks_client
+    if _jwks_client is None:
+        _jwks_client = jwt.PyJWKClient(
+            f"{COGNITO_ISSUER_URL}/.well-known/jwks.json",
+            cache_keys=True,
+        )
+    return _jwks_client.get_signing_key_from_jwt(token).key
 
 
 def extract_user_id_from_context(context: RequestContext) -> str:
     """
-    Securely extract the user ID from the JWT token in the request context.
+    Extract the caller's user ID from the verified JWT in the request context.
 
-    AgentCore Runtime validates the JWT token before passing it to the agent,
-    so we can safely skip signature verification here. The user ID is taken
-    from the token's 'sub' claim rather than from the request payload, which
-    prevents impersonation via prompt injection.
+    The token's signature, expiry, issuer and client are all checked here even
+    though AgentCore Runtime's CUSTOM_JWT authorizer already validated the token
+    upstream. That is deliberate defence in depth: the upstream check is a
+    property of the *deployment*, not of this code. A runtime deployed without
+    an authorizer — an A2A runtime, or any runtime built without a Cognito
+    issuer — forwards whatever Authorization header it is handed, and an
+    unverified decode would then take an attacker's word for who they are.
+
+    The identity comes from the token's 'sub' claim, never from the request
+    payload, so it cannot be moved by prompt injection.
 
     Args:
         context (RequestContext): The request context provided by AgentCore
-            Runtime, containing validated request headers including the
-            Authorization JWT.
+            Runtime, containing the forwarded Authorization header.
 
     Returns:
-        str: The user ID (sub claim) extracted from the validated JWT token.
+        str: The user ID (sub claim) of the verified token.
 
     Raises:
-        ValueError: If the Authorization header is missing or the JWT does
-            not contain a 'sub' claim.
+        ValueError: If the Authorization header is missing, or the token fails
+            verification, or it carries no usable identity. Never falls back to
+            trusting an unverified token.
     """
     request_headers = context.request_headers
     if not request_headers:
@@ -60,26 +89,37 @@ def extract_user_id_from_context(context: RequestContext) -> str:
         else auth_header
     )
 
-    # Decode without signature verification — AgentCore Runtime already validated the token
-    # before forwarding it to the agent. Re-verifying here would require fetching JWKS keys
-    # and adds latency with no security benefit (the runtime is the trust boundary).
-    claims = jwt.decode(
-        jwt=token,
-        algorithms=["RS256"],
-        options={
-            "verify_signature": False,  # nosec B105 — pre-validated by AgentCore Runtime
-            "verify_exp": False,
-            "verify_aud": False,
-        },
-    )
-
-    user_id = claims.get("sub")
-    if not user_id:
+    if not COGNITO_ISSUER_URL:
         raise ValueError(
-            "JWT token does not contain a 'sub' claim. Cannot determine user identity."
+            "COGNITO_ISSUER_URL is not set, so the token's signature cannot be "
+            "verified. Refusing to trust an unverified token — redeploy the "
+            "runtime so RuntimeStack injects the issuer."
         )
 
-    logger.info("Extracted user_id from JWT: %s", user_id)
+    try:
+        # Signature and expiry are verified against the issuer's JWKS. aud is
+        # checked in validate_claims instead: Cognito M2M access tokens carry
+        # client_id rather than aud, and verify_aud here would reject them.
+        claims = jwt.decode(
+            jwt=token,
+            key=_signing_key(token),
+            algorithms=["RS256"],
+            options={
+                "verify_signature": True,
+                "verify_exp": True,
+                "verify_aud": False,
+            },
+        )
+    except jwt.PyJWTError as exc:
+        # Message only: the token itself must never reach the logs.
+        raise ValueError(f"JWT verification failed: {exc}") from exc
+
+    try:
+        user_id = validate_claims(claims, COGNITO_ISSUER_URL, ALLOWED_CLIENTS)
+    except TokenRejected as exc:
+        raise ValueError(str(exc)) from exc
+
+    logger.info("Verified JWT for user_id: %s", user_id)
     return user_id
 
 

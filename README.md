@@ -160,6 +160,32 @@ python scripts/check_network.py --expect-public   # for deployments without netw
 > in the same run, so the leftovers are free. Re-run the destroy once the interfaces age
 > out (`aws ec2 describe-network-interfaces --filters Name=interface-type,Values=agentic_ai`).
 
+## Agent identity: who is the caller?
+
+Agents take the caller's identity from the `sub` claim of the JWT in the
+`Authorization` header, never from the request payload — a prompt cannot talk an agent
+into acting as someone else.
+
+`agent-code/shared/auth.py` **verifies** that token: signature against the issuer's
+published JWKS, plus expiry, issuer, and that the client is one this deployment created.
+It fails closed; there is no fallback to an unverified decode.
+
+That verification is deliberate duplication. AgentCore Runtime's `CUSTOM_JWT` authorizer
+already validates the token before the container sees it, so the check inside the agent is
+redundant *for the runtimes in this repo today*. It is kept because the upstream guarantee
+is a property of the deployment, not of the code: `runtime_stack.py` attaches an authorizer
+only for client-facing protocols with a Cognito issuer, so an A2A runtime — or any runtime
+built without an issuer — forwards whatever `Authorization` header it is handed. The agent
+should not be the component that assumes.
+
+`RuntimeStack` injects `COGNITO_ISSUER_URL` and `COGNITO_ALLOWED_CLIENTS`; without them the
+agent refuses the request rather than trusting it. JWKS is fetched once per container and
+cached, so the cost is one HTTPS call on cold start.
+
+> Cognito M2M (`client_credentials`) access tokens carry `client_id` rather than `aud`.
+> Checking only `aud` would reject every machine caller, including this repo's own
+> `scripts/invoke.py` — see `agent-code/shared/jwt_claims.py`.
+
 ## Customer Profiles
 
 | Profile | Networking | Security | A2A |
