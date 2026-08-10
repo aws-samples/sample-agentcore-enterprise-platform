@@ -79,4 +79,30 @@ PROJECT_NAME=p ENVIRONMENT=e AGENT_PATTERN=claude-sdk-agent build_context_args
     || fail "agent_pattern missing from CDK context args: ${CONTEXT_ARGS[*]}"
 echo "PASS: agent_pattern passed to CDK as a context flag"
 
+# (g) the CDK CLI probe never blocks on npx's install prompt. A hang here shows
+# up as this check timing out instead of as a mystery in the field.
+STUB="$TMP/stub"; mkdir -p "$STUB"
+cat > "$STUB/npx" <<'STUB_NPX'
+#!/usr/bin/env bash
+# Models npx when aws-cdk is not in the cache: a bare call prompts and waits
+# forever with no TTY; --no-install fails fast instead.
+for a in "$@"; do [ "$a" = "--no-install" ] && { echo "npx: not found: cdk" >&2; exit 1; }; done
+echo "Need to install the following packages: aws-cdk  Ok to proceed? (y)"
+sleep 300
+STUB_NPX
+# Stubbed so the fallback records its arguments instead of really installing.
+printf '#!/usr/bin/env bash\necho "$*" >> "%s/npm.args"\n' "$TMP" > "$STUB/npm"
+chmod +x "$STUB/npx" "$STUB/npm"
+log_header() { :; }; log_warn() { :; }; log_error() { :; }
+eval "$(sed -n '/^check_prereqs()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
+
+PATH="$STUB:$PATH" check_prereqs >/dev/null 2>&1 & probe=$!
+( sleep 15; kill -9 "$probe" 2>/dev/null ) & watchdog=$!
+wait "$probe" && probe_rc=0 || probe_rc=$?
+kill "$watchdog" 2>/dev/null || true
+[ "$probe_rc" -ne 137 ] || fail "check_prereqs hung on the npx install prompt"
+grep -q -- 'install -g aws-cdk' "$TMP/npm.args" \
+    || fail "probe failed but the install fallback never ran: $(cat "$TMP/npm.args" 2>/dev/null)"
+echo "PASS: CDK probe fails fast and falls back to installing, never prompts"
+
 echo "OK: all deploy-config checks passed"
