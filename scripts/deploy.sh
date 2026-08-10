@@ -220,12 +220,26 @@ check_prereqs() {
         log_info "○ docker: not installed (optional — image builds run in AWS CodeBuild)"
     fi
 
-    # Check CDK CLI
-    if npx cdk --version &>/dev/null 2>&1; then
-        log_info "✓ cdk: $(npx cdk --version 2>/dev/null)"
+    # Check CDK CLI. --no-install is what keeps this from hanging: a bare
+    # `npx cdk` prints "Need to install the following packages ... Ok to
+    # proceed?" when aws-cdk is not in the npx cache, and with the output
+    # suppressed and no TTY (CI, a background deploy, the guided wizard) that
+    # wait never ends — the probe never returns, so the install below never ran.
+    # --no-install fails fast instead. npx still prefers a cdk already on PATH.
+    #
+    # The other `npx cdk` calls in this script stay safe because of this: past
+    # here the CLI is resolvable, or we exited.
+    local cdk_version
+    if cdk_version=$(npx --no-install cdk --version 2>/dev/null); then
+        log_info "✓ cdk: $cdk_version"
     else
         log_warn "CDK CLI not found, installing..."
-        npm install -g aws-cdk
+        if npm install -g aws-cdk; then
+            log_info "✓ cdk: installed"
+        else
+            log_error "✗ cdk: 'npm install -g aws-cdk' failed — install it manually and retry"
+            missing=1
+        fi
     fi
 
     if [ "$missing" -eq 1 ]; then
