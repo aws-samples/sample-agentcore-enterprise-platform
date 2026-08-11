@@ -1,6 +1,6 @@
-# AgentCore and Security Accelerator
+# AgentCore Accelerator
 
-Modular AWS CDK (Python) infrastructure for the **AgentCore and Security Accelerator** 2-day workshop.
+Modular AWS CDK (Python) infrastructure for the **AgentCore Accelerator** 2-day workshop.
 
 > **Security controls:** opt-in SCPs, VPC endpoint / IAM policies, Cedar policies, resource
 > policies, Bedrock Guardrails + egress interceptor, and traceability alerting are documented
