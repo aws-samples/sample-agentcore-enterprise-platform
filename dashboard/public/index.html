@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgentCore Platform Accelerator — Workshop Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0a0a0f;--bg2:#12121a;--bg3:#1a1a2e;--bg4:#22223a;
+  --accent:#FF9900;--accent2:#ffb84d;
+  --text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;
+  --green:#22c55e;--amber:#f59e0b;--red:#ef4444;--gray:#6b7280;
+  --radius:12px;--radius-sm:8px;
+}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);line-height:1.6;min-height:100vh}
+a{color:var(--accent);text-decoration:none}
+
+/* NAV */
+.nav{position:sticky;top:0;z-index:100;background:rgba(10,10,15,.92);backdrop-filter:blur(20px);border-bottom:1px solid rgba(255,153,0,.15);padding:0 2rem;display:flex;align-items:center;justify-content:space-between;height:60px}
+.nav-brand{display:flex;align-items:center;gap:.75rem;font-weight:700;font-size:1.1rem}
+.nav-brand .logo{width:32px;height:32px;background:var(--accent);border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem;color:#000}
+.nav-tabs{display:flex;gap:4px;background:var(--bg2);border-radius:10px;padding:4px}
+.nav-tab{padding:.5rem 1.5rem;border-radius:8px;cursor:pointer;font-weight:500;font-size:.875rem;color:var(--text2);transition:all .25s;border:none;background:none}
+.nav-tab:hover{color:var(--text)}
+.nav-tab.active{background:var(--accent);color:#000;font-weight:600}
+.nav-right{display:flex;align-items:center;gap:1rem;font-size:.8rem;color:var(--text3)}
+.refresh-badge{display:flex;align-items:center;gap:.4rem;background:var(--bg3);padding:.3rem .7rem;border-radius:6px;font-variant-numeric:tabular-nums}
+.refresh-dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+
+/* TAB CONTENT */
+.tab-content{display:none;animation:fadeIn .4s}
+.tab-content.active{display:block}
+
+/* APPROACH TAB */
+.hero{text-align:center;padding:5rem 2rem 4rem;background:radial-gradient(ellipse at 50% 0%,rgba(255,153,0,.08) 0%,transparent 60%)}
+.hero-badge{display:inline-block;background:rgba(255,153,0,.12);color:var(--accent);padding:.35rem 1rem;border-radius:20px;font-size:.8rem;font-weight:600;letter-spacing:.5px;margin-bottom:1.5rem;border:1px solid rgba(255,153,0,.2)}
+.hero h1{font-size:3rem;font-weight:800;line-height:1.15;margin-bottom:1rem;background:linear-gradient(135deg,#fff 0%,var(--accent) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.hero p{font-size:1.25rem;color:var(--text2);max-width:640px;margin:0 auto}
+
+.section{max-width:1200px;margin:0 auto;padding:4rem 2rem}
+.section-label{color:var(--accent);font-size:.75rem;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:.5rem}
+.section h2{font-size:2rem;font-weight:700;margin-bottom:1rem}
+.section p.desc{color:var(--text2);max-width:700px;margin-bottom:2rem;font-size:1.05rem}
+
+.problem-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1.5rem}
+.problem-card{background:var(--bg2);border:1px solid rgba(239,68,68,.15);border-radius:var(--radius);padding:1.75rem}
+.problem-card .icon{font-size:1.5rem;margin-bottom:.75rem}
+.problem-card h3{font-size:1.1rem;font-weight:600;margin-bottom:.5rem}
+.problem-card p{color:var(--text2);font-size:.9rem}
+
+.solution-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1.5rem}
+.solution-card{background:var(--bg2);border:1px solid rgba(34,197,94,.15);border-radius:var(--radius);padding:1.75rem}
+.solution-card .icon{font-size:1.5rem;margin-bottom:.75rem}
+.solution-card h3{font-size:1.1rem;font-weight:600;margin-bottom:.5rem}
+.solution-card p{color:var(--text2);font-size:.9rem}
+
+/* ARCHITECTURE DIAGRAM */
+.arch{display:flex;flex-direction:column;gap:1rem;max-width:900px;margin:0 auto}
+.arch-layer{display:flex;align-items:center;gap:1rem;background:var(--bg2);border-radius:var(--radius);padding:1.25rem 1.5rem;border-left:4px solid var(--accent);position:relative}
+.arch-layer::after{content:'';position:absolute;left:50%;bottom:-1rem;width:2px;height:1rem;background:var(--bg4)}
+.arch-layer:last-child::after{display:none}
+.arch-num{background:var(--accent);color:#000;width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.85rem;flex-shrink:0}
+.arch-info{flex:1}
+.arch-info h4{font-weight:600;font-size:1rem;margin-bottom:.2rem}
+.arch-info p{color:var(--text2);font-size:.85rem}
+.arch-stacks{display:flex;gap:.5rem;flex-wrap:wrap}
+.arch-stacks span{background:var(--bg4);padding:.25rem .6rem;border-radius:6px;font-size:.75rem;color:var(--text2);font-weight:500}
+
+/* WORKSHOP FLOW */
+.flow-days{display:grid;grid-template-columns:1fr 1fr;gap:2rem}
+@media(max-width:768px){.flow-days{grid-template-columns:1fr}}
+.flow-day{background:var(--bg2);border-radius:var(--radius);padding:2rem;border:1px solid var(--bg4)}
+.flow-day h3{font-size:1.25rem;font-weight:700;margin-bottom:.25rem}
+.flow-day .subtitle{color:var(--text2);font-size:.9rem;margin-bottom:1.5rem}
+.flow-module{display:flex;gap:1rem;padding:1rem 0;border-top:1px solid var(--bg4)}
+.flow-module:first-of-type{border-top:none}
+.flow-module .num{background:var(--bg4);color:var(--accent);width:28px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.8rem;flex-shrink:0}
+.flow-module h4{font-weight:600;font-size:.95rem;margin-bottom:.15rem}
+.flow-module p{color:var(--text2);font-size:.8rem}
+
+/* PROFILES */
+.profiles-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1.25rem}
+.profile-card{background:var(--bg2);border-radius:var(--radius);padding:1.5rem;border:1px solid var(--bg4);transition:border-color .25s}
+.profile-card:hover{border-color:var(--accent)}
+.profile-card .emoji{font-size:2rem;margin-bottom:.75rem}
+.profile-card h3{font-size:1rem;font-weight:600;margin-bottom:.5rem}
+.profile-card p{color:var(--text2);font-size:.8rem;margin-bottom:.75rem}
+.profile-modules{display:flex;flex-wrap:wrap;gap:.35rem}
+.profile-modules span{background:rgba(255,153,0,.1);color:var(--accent);padding:.15rem .5rem;border-radius:4px;font-size:.7rem;font-weight:500}
+
+/* TEAMS */
+.teams-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1.5rem}
+.team-card{background:var(--bg2);border-radius:var(--radius);padding:1.75rem;border:1px solid var(--bg4)}
+.team-card h3{font-size:1.1rem;font-weight:600;margin-bottom:.25rem}
+.team-card .role{color:var(--accent);font-size:.85rem;margin-bottom:1rem}
+.team-stacks{display:flex;flex-direction:column;gap:.5rem}
+.team-stack{display:flex;align-items:center;gap:.5rem;font-size:.85rem;color:var(--text2)}
+.team-stack .dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+
+/* TAKE HOME */
+.artifacts-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:1.25rem}
+.artifact{background:var(--bg2);border-radius:var(--radius);padding:1.5rem;border:1px solid var(--bg4)}
+.artifact .icon{font-size:1.5rem;margin-bottom:.75rem}
+.artifact h3{font-size:1rem;font-weight:600;margin-bottom:.35rem}
+.artifact p{color:var(--text2);font-size:.85rem}
+
+/* MONITOR TAB */
+.monitor-offline{text-align:center;padding:6rem 2rem}
+.monitor-offline .icon{font-size:3rem;margin-bottom:1rem}
+.monitor-offline h2{font-size:1.5rem;margin-bottom:.5rem}
+.monitor-offline p{color:var(--text2);margin-bottom:1.5rem}
+.monitor-offline code{background:var(--bg3);padding:.4rem .8rem;border-radius:6px;font-size:.9rem;color:var(--accent)}
+
+.monitor-wrap{max-width:1400px;margin:0 auto;padding:1.5rem 2rem 4rem}
+
+/* SUMMARY BAR */
+.summary-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.5rem}
+@media(max-width:600px){.summary-bar{grid-template-columns:repeat(2,1fr)}}
+.summary-card{background:var(--bg2);border-radius:var(--radius);padding:1.25rem;text-align:center;border:1px solid var(--bg4)}
+.summary-card .count{font-size:2.5rem;font-weight:800;line-height:1}
+.summary-card .label{font-size:.8rem;color:var(--text2);margin-top:.25rem;font-weight:500}
+.summary-card.deployed .count{color:var(--green)}
+.summary-card.in-progress .count{color:var(--amber)}
+.summary-card.failed .count{color:var(--red)}
+.summary-card.not-deployed .count{color:var(--gray)}
+
+/* ACCOUNT BAR */
+.account-bar{display:flex;flex-wrap:wrap;gap:1.5rem;background:var(--bg2);border-radius:var(--radius-sm);padding:.75rem 1.25rem;margin-bottom:2rem;font-size:.8rem;color:var(--text2);border:1px solid var(--bg4)}
+.account-bar .item{display:flex;align-items:center;gap:.4rem}
+.account-bar .item strong{color:var(--text);font-weight:600}
+
+/* LAYER GROUP */
+.layer-group{margin-bottom:2rem}
+.layer-group h3{font-size:.85rem;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:1px;margin-bottom:1rem;padding-bottom:.5rem;border-bottom:1px solid var(--bg4)}
+
+/* STACK CARDS */
+.stacks-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:1rem;margin-bottom:.5rem}
+.stack-card{background:var(--bg2);border-radius:var(--radius);padding:1.25rem;border:1px solid var(--bg4);transition:all .3s}
+.stack-card:hover{border-color:rgba(255,153,0,.3);transform:translateY(-1px)}
+.stack-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.75rem}
+.stack-name{font-weight:600;font-size:1rem}
+.stack-module{font-size:.7rem;color:var(--text3);margin-top:.15rem}
+.stack-badges{display:flex;gap:.4rem;align-items:center}
+.badge{padding:.2rem .6rem;border-radius:5px;font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
+.badge-team{background:var(--bg4);color:var(--text2)}
+.badge-status{color:#000}
+.badge-deployed{background:var(--green)}
+.badge-in-progress{background:var(--amber);animation:pulse 2s infinite}
+.badge-failed{background:var(--red)}
+.badge-not-deployed{background:var(--gray);color:var(--text)}
+.stack-resources{font-size:.8rem;color:var(--text2);margin-bottom:.75rem}
+.stack-outputs{display:flex;flex-direction:column;gap:.35rem}
+.stack-output{display:flex;justify-content:space-between;gap:.5rem;font-size:.75rem;padding:.3rem .5rem;background:var(--bg3);border-radius:4px}
+.stack-output .key{color:var(--text2);flex-shrink:0}
+.stack-output .val{color:var(--accent);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px}
+
+/* SSM TABLE */
+.ssm-section{margin-top:2rem}
+.ssm-section h3{font-size:1rem;font-weight:600;margin-bottom:1rem}
+.ssm-table{width:100%;border-collapse:collapse;font-size:.8rem}
+.ssm-table th{text-align:left;padding:.6rem .75rem;background:var(--bg3);color:var(--text2);font-weight:600;border-bottom:1px solid var(--bg4)}
+.ssm-table td{padding:.5rem .75rem;border-bottom:1px solid var(--bg4);color:var(--text2)}
+.ssm-table td:first-child{color:var(--accent);font-family:monospace;font-size:.75rem}
+.ssm-table td:last-child{max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ANIMATIONS */
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* SCROLLBAR */
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--bg4);border-radius:3px}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav class="nav">
+  <div class="nav-brand"><div class="logo">AC</div> AgentCore Accelerator</div>
+  <div class="nav-tabs">
+    <button class="nav-tab active" onclick="switchTab('approach')">Approach</button>
+    <button class="nav-tab" onclick="switchTab('monitor')">Monitor</button>
+  </div>
+  <div class="nav-right">
+    <div class="refresh-badge" id="refreshBadge" style="display:none"><div class="refresh-dot"></div> <span id="countdown">10s</span></div>
+  </div>
+</nav>
+
+<!-- ==================== APPROACH TAB ==================== -->
+<div id="tab-approach" class="tab-content active">
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="hero-badge">☁️ Amazon Bedrock AgentCore</div>
+    <h1>AgentCore Platform &amp;<br>Security Accelerator</h1>
+    <p>2-Day Hands-On Workshop — Go from architecture design to production-deployed AI agents with enterprise-grade security, identity, and observability.</p>
+  </section>
+
+  <!-- THE PROBLEM -->
+  <section class="section">
+    <div class="section-label">The Challenge</div>
+    <h2>The Problem</h2>
+    <p class="desc">Enterprises are stuck between prototype and production. AI agent PoCs sit idle for 3–6 months while teams navigate scattered security reviews, identity integration, and infrastructure decisions.</p>
+    <div class="problem-grid">
+      <div class="problem-card">
+        <div class="icon">⏳</div>
+        <h3>3–6 Month Delays</h3>
+        <p>Security reviews, compliance checks, and infrastructure decisions create months of back-and-forth before a single agent reaches production.</p>
+      </div>
+      <div class="problem-card">
+        <div class="icon">🔀</div>
+        <h3>Scattered Reviews</h3>
+        <p>Identity, networking, encryption, and observability are handled by different teams with no unified blueprint — leading to inconsistent implementations.</p>
+      </div>
+      <div class="problem-card">
+        <div class="icon">🚧</div>
+        <h3>Prototype Graveyard</h3>
+        <p>Promising agent PoCs never make it past the demo stage. Without a clear path to production, innovation stalls and momentum is lost.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- THE SOLUTION -->
+  <section class="section">
+    <div class="section-label">Our Approach</div>
+    <h2>The Solution</h2>
+    <p class="desc">A structured 2-day sprint with modular, progressive deployment. Every stack builds on the last, and every decision is made with production in mind from day one.</p>
+    <div class="solution-grid">
+      <div class="solution-card">
+        <div class="icon">🏗️</div>
+        <h3>Modular Architecture</h3>
+        <p>10 independent CDK stacks that compose into a complete platform. Deploy what you need, skip what you don't.</p>
+      </div>
+      <div class="solution-card">
+        <div class="icon">🔐</div>
+        <h3>Security-First</h3>
+        <p>KMS encryption, VPC endpoints, SCPs, and enterprise identity integration baked in from the foundation layer — not bolted on later.</p>
+      </div>
+      <div class="solution-card">
+        <div class="icon">⚡</div>
+        <h3>2 Days to Production</h3>
+        <p>From architecture whiteboard to deployed, observable, secure AI agents — with all the IaC, runbooks, and documentation to maintain it.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ARCHITECTURE DIAGRAM -->
+  <section class="section">
+    <div class="section-label">Architecture</div>
+    <h2>Progressive Deployment Layers</h2>
+    <p class="desc">Each layer builds on the one below. Deploy bottom-up for a complete platform, or pick the layers you need.</p>
+    <div class="arch">
+      <div class="arch-layer">
+        <div class="arch-num">5</div>
+        <div class="arch-info"><h4>Observability</h4><p>Tracing, monitoring, and alerting pipeline</p></div>
+        <div class="arch-stacks"><span>observability</span></div>
+      </div>
+      <div class="arch-layer">
+        <div class="arch-num">4</div>
+        <div class="arch-info"><h4>Runtime</h4><p>Agent execution, orchestration, and A2A connectivity</p></div>
+        <div class="arch-stacks"><span>runtime-orchestrator</span><span>runtime-code-agent</span><span>runtime-research-agent</span></div>
+      </div>
+      <div class="arch-layer">
+        <div class="arch-num">3</div>
+        <div class="arch-info"><h4>Service</h4><p>API gateway and managed memory for agents</p></div>
+        <div class="arch-stacks"><span>gateway</span><span>memory</span></div>
+      </div>
+      <div class="arch-layer">
+        <div class="arch-num">2</div>
+        <div class="arch-info"><h4>Identity</h4><p>Authentication, authorization, and enterprise SSO</p></div>
+        <div class="arch-stacks"><span>auth</span><span>identity</span></div>
+      </div>
+      <div class="arch-layer">
+        <div class="arch-num">1</div>
+        <div class="arch-info"><h4>Foundation</h4><p>Networking, security controls, and encryption</p></div>
+        <div class="arch-stacks"><span>networking</span><span>security</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- WORKSHOP FLOW -->
+  <section class="section">
+    <div class="section-label">Schedule</div>
+    <h2>Workshop Flow</h2>
+    <p class="desc">Two focused days that take you from design to deployment.</p>
+    <div class="flow-days">
+      <div class="flow-day">
+        <h3>Day 1 — Foundation &amp; Design</h3>
+        <p class="subtitle">Architecture decisions, identity integration, core infrastructure</p>
+        <div class="flow-module"><div class="num">1</div><div><h4>Platform Architecture</h4><p>Multi-account strategy, networking, security controls, KMS encryption</p></div></div>
+        <div class="flow-module"><div class="num">2</div><div><h4>Identity &amp; Auth</h4><p>Cognito setup, enterprise IdP integration (Entra ID / Okta), OAuth flows</p></div></div>
+        <div class="flow-module"><div class="num">3</div><div><h4>Gateway &amp; Memory</h4><p>MCP gateway with Lambda/OpenAPI targets, managed memory configuration</p></div></div>
+        <div class="flow-module"><div class="num">4</div><div><h4>Design Review</h4><p>Architecture review, threat modeling, deployment planning for Day 2</p></div></div>
+      </div>
+      <div class="flow-day">
+        <h3>Day 2 — Build &amp; Validate</h3>
+        <p class="subtitle">Agent deployment, A2A connectivity, observability, hardening</p>
+        <div class="flow-module"><div class="num">5</div><div><h4>Runtime Deployment</h4><p>Deploy orchestrator agent, code agent, and research agent to AgentCore Runtime</p></div></div>
+        <div class="flow-module"><div class="num">6</div><div><h4>Agent-to-Agent</h4><p>Configure A2A connectivity, multi-agent orchestration patterns</p></div></div>
+        <div class="flow-module"><div class="num">7</div><div><h4>Observability</h4><p>OpenTelemetry tracing, CloudWatch dashboards, alerting pipeline</p></div></div>
+        <div class="flow-module"><div class="num">8</div><div><h4>Security Hardening</h4><p>SCPs, VPC endpoints, PrivateLink, final security review and validation</p></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CUSTOMER PROFILES -->
+  <section class="section">
+    <div class="section-label">Customization</div>
+    <h2>Customer Profiles</h2>
+    <p class="desc">Every workshop is tailored. Select the profile that matches your starting point — we'll customize the module selection accordingly.</p>
+    <div class="profiles-grid">
+      <div class="profile-card">
+        <div class="emoji">🌱</div>
+        <h3>Greenfield</h3>
+        <p>Starting fresh with AI agents. Need the full platform from scratch.</p>
+        <div class="profile-modules"><span>networking</span><span>security</span><span>auth</span><span>identity</span><span>gateway</span><span>memory</span><span>runtime</span><span>observability</span></div>
+      </div>
+      <div class="profile-card">
+        <div class="emoji">🔄</div>
+        <h3>Migration</h3>
+        <p>Moving existing agents from Bedrock Agents or custom infra to AgentCore.</p>
+        <div class="profile-modules"><span>identity</span><span>gateway</span><span>memory</span><span>runtime</span><span>observability</span></div>
+      </div>
+      <div class="profile-card">
+        <div class="emoji">🤖</div>
+        <h3>Multi-Agent</h3>
+        <p>Building complex multi-agent systems with A2A orchestration.</p>
+        <div class="profile-modules"><span>auth</span><span>identity</span><span>gateway</span><span>runtime</span><span>observability</span></div>
+      </div>
+      <div class="profile-card">
+        <div class="emoji">🏢</div>
+        <h3>Platform Team</h3>
+        <p>Building a shared agent platform for multiple development teams.</p>
+        <div class="profile-modules"><span>networking</span><span>security</span><span>auth</span><span>identity</span><span>gateway</span><span>memory</span><span>observability</span></div>
+      </div>
+      <div class="profile-card">
+        <div class="emoji">🛡️</div>
+        <h3>Security-Focused</h3>
+        <p>Hardening an existing deployment with enterprise security controls.</p>
+        <div class="profile-modules"><span>networking</span><span>security</span><span>auth</span><span>identity</span><span>observability</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TEAM WORKSTREAMS -->
+  <section class="section">
+    <div class="section-label">Parallel Execution</div>
+    <h2>Team Workstreams</h2>
+    <p class="desc">Three teams work in parallel, each owning a set of stacks. Dependencies are managed through SSM parameters published by each stack.</p>
+    <div class="teams-grid">
+      <div class="team-card">
+        <h3>🏗️ Platform Team</h3>
+        <div class="role">Infrastructure &amp; Foundation</div>
+        <div class="team-stacks">
+          <div class="team-stack"><div class="dot"></div> networking — VPC, subnets, endpoints</div>
+          <div class="team-stack"><div class="dot"></div> security — KMS keys, SCPs, guardrails</div>
+          <div class="team-stack"><div class="dot"></div> auth — Cognito user pool, app clients</div>
+          <div class="team-stack"><div class="dot"></div> identity — AgentCore identity, IdP integration</div>
+          <div class="team-stack"><div class="dot"></div> observability — Tracing, dashboards, alerts</div>
+        </div>
+      </div>
+      <div class="team-card">
+        <h3>🤖 Agent Team</h3>
+        <div class="role">Agent Development &amp; Deployment</div>
+        <div class="team-stacks">
+          <div class="team-stack"><div class="dot"></div> gateway — MCP gateway, tool targets</div>
+          <div class="team-stack"><div class="dot"></div> memory — Semantic &amp; event memory</div>
+          <div class="team-stack"><div class="dot"></div> runtime-orchestrator — Main orchestrator agent</div>
+          <div class="team-stack"><div class="dot"></div> runtime-code-agent — Code execution agent</div>
+          <div class="team-stack"><div class="dot"></div> runtime-research-agent — Research agent</div>
+        </div>
+      </div>
+      <div class="team-card">
+        <h3>🛡️ Security Team</h3>
+        <div class="role">Security Review &amp; Hardening</div>
+        <div class="team-stacks">
+          <div class="team-stack"><div class="dot"></div> Review all stack outputs for compliance</div>
+          <div class="team-stack"><div class="dot"></div> Validate KMS encryption configuration</div>
+          <div class="team-stack"><div class="dot"></div> Verify VPC endpoint policies</div>
+          <div class="team-stack"><div class="dot"></div> Audit IAM roles and permissions</div>
+          <div class="team-stack"><div class="dot"></div> Threat model the agent architecture</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- WHAT YOU TAKE HOME -->
+  <section class="section">
+    <div class="section-label">Deliverables</div>
+    <h2>What You Take Home</h2>
+    <p class="desc">Everything you need to operate and evolve your agent platform after the workshop.</p>
+    <div class="artifacts-grid">
+      <div class="artifact"><div class="icon">📦</div><h3>Production IaC</h3><p>10 CDK stacks — fully parameterized, tested, and ready for your CI/CD pipeline.</p></div>
+      <div class="artifact"><div class="icon">🤖</div><h3>Deployed Agents</h3><p>Working orchestrator, code, and research agents on AgentCore Runtime with A2A connectivity.</p></div>
+      <div class="artifact"><div class="icon">🔐</div><h3>Security Baseline</h3><p>KMS encryption, VPC endpoints, SCPs, and enterprise identity integration — all configured.</p></div>
+      <div class="artifact"><div class="icon">📊</div><h3>Observability Pipeline</h3><p>OpenTelemetry tracing, CloudWatch dashboards, and alerting — ready for production traffic.</p></div>
+      <div class="artifact"><div class="icon">📋</div><h3>Architecture Decision Records</h3><p>Documented decisions, trade-offs, and rationale for every architectural choice made.</p></div>
+      <div class="artifact"><div class="icon">🗺️</div><h3>Expansion Roadmap</h3><p>Prioritized backlog for adding agents, integrations, and capabilities post-workshop.</p></div>
+    </div>
+  </section>
+
+</div><!-- end approach tab -->
+
+<!-- ==================== MONITOR TAB ==================== -->
+<div id="tab-monitor" class="tab-content">
+
+  <!-- OFFLINE STATE -->
+  <div id="monitorOffline" class="monitor-offline">
+    <div class="icon">📡</div>
+    <h2>Monitor Not Running</h2>
+    <p>Start the deployment monitor to see live stack status.</p>
+    <code>python3 monitor.py</code>
+  </div>
+
+  <!-- ONLINE STATE -->
+  <div id="monitorOnline" class="monitor-wrap" style="display:none">
+
+    <!-- SUMMARY BAR -->
+    <div class="summary-bar">
+      <div class="summary-card deployed"><div class="count" id="countDeployed">0</div><div class="label">Deployed</div></div>
+      <div class="summary-card in-progress"><div class="count" id="countInProgress">0</div><div class="label">In Progress</div></div>
+      <div class="summary-card failed"><div class="count" id="countFailed">0</div><div class="label">Failed</div></div>
+      <div class="summary-card not-deployed"><div class="count" id="countNotDeployed">0</div><div class="label">Not Deployed</div></div>
+    </div>
+
+    <!-- ACCOUNT BAR -->
+    <div class="account-bar" id="accountBar">
+      <div class="item">Project: <strong id="infoProject">—</strong></div>
+      <div class="item">Env: <strong id="infoEnv">—</strong></div>
+      <div class="item">Region: <strong id="infoRegion">—</strong></div>
+      <div class="item">Account: <strong id="infoAccount">—</strong></div>
+      <div class="item">Updated: <strong id="infoUpdated">—</strong></div>
+    </div>
+
+    <!-- STACK CARDS (filled by JS) -->
+    <div id="stackLayers"></div>
+
+    <!-- SSM PARAMETERS -->
+    <div class="ssm-section" id="ssmSection" style="display:none">
+      <h3>📌 Published SSM Parameters</h3>
+      <table class="ssm-table">
+        <thead><tr><th>Parameter Path</th><th>Value</th></tr></thead>
+        <tbody id="ssmBody"></tbody>
+      </table>
+    </div>
+
+  </div>
+</div>
+
+<script>
+/* ── CONFIG ── */
+const POLL_INTERVAL = 10000;
+const LAYERS = [
+  { name: 'Foundation', stacks: ['networking', 'security'] },
+  { name: 'Identity', stacks: ['auth', 'identity'] },
+  { name: 'Service', stacks: ['gateway', 'memory'] },
+  { name: 'Runtime', stacks: ['runtime-orchestrator', 'runtime-code-agent', 'runtime-research-agent'] },
+  { name: 'Observability', stacks: ['observability'] }
+];
+const STACK_META = {
+  'networking':            { module: 'Module 1', team: 'Platform' },
+  'security':              { module: 'Module 1', team: 'Platform' },
+  'auth':                  { module: 'Module 2', team: 'Platform' },
+  'identity':              { module: 'Module 2', team: 'Platform' },
+  'gateway':               { module: 'Module 3', team: 'Agent' },
+  'memory':                { module: 'Module 3', team: 'Agent' },
+  'runtime-orchestrator':  { module: 'Module 5', team: 'Agent' },
+  'runtime-code-agent':    { module: 'Module 5', team: 'Agent' },
+  'runtime-research-agent':{ module: 'Module 5', team: 'Agent' },
+  'observability':         { module: 'Module 7', team: 'Platform' }
+};
+
+let countdownVal = 10;
+let pollTimer = null;
+let countdownTimer = null;
+
+/* ── TAB SWITCHING ── */
+function switchTab(tab) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  document.querySelector(`.nav-tab[onclick*="${tab}"]`).classList.add('active');
+  document.getElementById('refreshBadge').style.display = tab === 'monitor' ? 'flex' : 'none';
+  if (tab === 'monitor') fetchStatus();
+}
+
+/* ── TIME HELPERS ── */
+function relativeTime(iso) {
+  if (!iso) return '—';
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (diff < 5) return 'just now';
+  if (diff < 60) return Math.floor(diff) + 's ago';
+  if (diff < 3600) return Math.floor(diff / 60) + ' min ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  return Math.floor(diff / 86400) + 'd ago';
+}
+
+function truncate(str, len) {
+  if (!str) return '—';
+  return str.length > len ? str.slice(0, len) + '…' : str;
+}
+
+function statusClass(s) {
+  if (!s) return 'not-deployed';
+  const l = s.toLowerCase().replace(/[_ ]/g, '-');
+  // Order matters: NOT_DEPLOYED contains "deployed" and ROLLBACK_COMPLETE
+  // contains "complete", so check the negative/failed states first.
+  if (l === 'not-deployed' || l.includes('delete-complete')) return 'not-deployed';
+  if (l.includes('fail') || l.includes('rollback') || l.includes('error')) return 'failed';
+  if (l.includes('progress') || l.includes('pending')) return 'in-progress';
+  if (l.includes('complete')) return 'deployed';
+  return 'not-deployed';
+}
+
+function statusLabel(s) {
+  if (!s) return 'Not Deployed';
+  return s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+/* ── RENDER ── */
+function render(data) {
+  const offline = document.getElementById('monitorOffline');
+  const online = document.getElementById('monitorOnline');
+  offline.style.display = 'none';
+  online.style.display = 'block';
+
+  // Account info
+  const meta = data.metadata || data;
+  document.getElementById('infoProject').textContent = meta.project || meta.projectName || '—';
+  document.getElementById('infoEnv').textContent = meta.environment || meta.env || '—';
+  document.getElementById('infoRegion').textContent = meta.region || '—';
+  document.getElementById('infoAccount').textContent = meta.accountId || meta.account || '—';
+  document.getElementById('infoUpdated').textContent = relativeTime(data.timestamp || data.lastUpdated);
+
+  // Stacks — monitor.py keys by full stack name ({project}-{env}-{short});
+  // LAYERS/STACK_META use short names, so resolve each short name by suffix.
+  const stacks = data.stacks || {};
+  const allNames = Object.keys(stacks);
+  const bySuffix = short => stacks[allNames.find(n => n.endsWith('-' + short)) || short];
+  let counts = { deployed: 0, 'in-progress': 0, failed: 0, 'not-deployed': 0 };
+  const total = Math.max(allNames.length, 10);
+
+  allNames.forEach(name => {
+    const cls = statusClass(stacks[name]?.status);
+    counts[cls] = (counts[cls] || 0) + 1;
+  });
+  counts['not-deployed'] = Math.max(0, total - counts.deployed - counts['in-progress'] - counts.failed);
+
+  document.getElementById('countDeployed').textContent = counts.deployed + '/' + total;
+  document.getElementById('countInProgress').textContent = counts['in-progress'] + '/' + total;
+  document.getElementById('countFailed').textContent = counts.failed + '/' + total;
+  document.getElementById('countNotDeployed').textContent = counts['not-deployed'] + '/' + total;
+
+  // Stack layers
+  const container = document.getElementById('stackLayers');
+  container.innerHTML = '';
+  LAYERS.forEach(layer => {
+    const group = document.createElement('div');
+    group.className = 'layer-group';
+    group.innerHTML = `<h3>${layer.name} Layer</h3>`;
+    const grid = document.createElement('div');
+    grid.className = 'stacks-grid';
+
+    layer.stacks.forEach(stackKey => {
+      const s = bySuffix(stackKey) || {};
+      const cls = statusClass(s.status);
+      const meta = STACK_META[stackKey] || { module: '—', team: '—' };
+      const outputs = s.outputs || {};
+      const outputKeys = Object.keys(outputs);
+      const resources = Array.isArray(s.resources) ? s.resources.length : (s.resourceCount ?? s.resources ?? '—');
+
+      let outputsHtml = '';
+      outputKeys.slice(0, 4).forEach(k => {
+        outputsHtml += `<div class="stack-output"><span class="key">${truncate(k, 25)}</span><span class="val" title="${outputs[k]}">${truncate(String(outputs[k]), 40)}</span></div>`;
+      });
+      if (outputKeys.length > 4) {
+        outputsHtml += `<div class="stack-output"><span class="key" style="color:var(--text3)">+${outputKeys.length - 4} more</span><span class="val"></span></div>`;
+      }
+
+      const card = document.createElement('div');
+      card.className = 'stack-card';
+      card.style.animation = 'fadeIn .4s';
+      card.innerHTML = `
+        <div class="stack-header">
+          <div><div class="stack-name">${stackKey}</div><div class="stack-module">${meta.module}</div></div>
+          <div class="stack-badges">
+            <span class="badge badge-team">${meta.team}</span>
+            <span class="badge badge-status badge-${cls}">${statusLabel(s.status)}</span>
+          </div>
+        </div>
+        <div class="stack-resources">${resources !== '—' ? resources + ' resources' : 'No resources yet'}</div>
+        <div class="stack-outputs">${outputsHtml || '<span style="font-size:.8rem;color:var(--text3)">No outputs</span>'}</div>
+      `;
+      grid.appendChild(card);
+    });
+
+    group.appendChild(grid);
+    container.appendChild(group);
+  });
+
+  // SSM Parameters
+  const ssm = data.ssm_parameters || data.ssmParameters || data.ssm || {};
+  const ssmKeys = Object.keys(ssm);
+  const ssmSection = document.getElementById('ssmSection');
+  const ssmBody = document.getElementById('ssmBody');
+  if (ssmKeys.length > 0) {
+    ssmSection.style.display = 'block';
+    ssmBody.innerHTML = '';
+    ssmKeys.sort().forEach(k => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${k}</td><td title="${ssm[k]}">${truncate(String(ssm[k]), 80)}</td>`;
+      ssmBody.appendChild(tr);
+    });
+  } else {
+    ssmSection.style.display = 'none';
+  }
+}
+
+/* ── FETCH ── */
+async function fetchStatus() {
+  try {
+    const res = await fetch('/status.json?t=' + Date.now());
+    if (!res.ok) throw new Error(res.status);
+    const data = await res.json();
+    render(data);
+  } catch (e) {
+    document.getElementById('monitorOffline').style.display = 'block';
+    document.getElementById('monitorOnline').style.display = 'none';
+  }
+}
+
+/* ── COUNTDOWN ── */
+function startPolling() {
+  fetchStatus();
+  countdownVal = 10;
+  clearInterval(pollTimer);
+  clearInterval(countdownTimer);
+  pollTimer = setInterval(() => { fetchStatus(); countdownVal = 10; }, POLL_INTERVAL);
+  countdownTimer = setInterval(() => {
+    countdownVal = Math.max(0, countdownVal - 1);
+    const el = document.getElementById('countdown');
+    if (el) el.textContent = countdownVal + 's';
+  }, 1000);
+}
+
+startPolling();
+</script>
+</body>
+</html>

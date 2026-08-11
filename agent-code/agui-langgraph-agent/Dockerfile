@@ -1,0 +1,38 @@
+# Adapted from fullstack-solution-template-for-agentcore
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# python 3.12: copilotkit==0.1.83 requires Python >=3.10,<3.13
+FROM public.ecr.aws/docker/library/python:3.12-slim
+
+WORKDIR /app
+
+# Container environment configuration
+ENV DOCKER_CONTAINER=1 \
+    OTEL_PYTHON_LOG_CORRELATION=true \
+    PYTHONUNBUFFERED=1
+
+# Copy and install agent-specific requirements
+COPY agui-langgraph-agent/requirements.txt requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir aws-opentelemetry-distro==0.10.1
+
+# Copy shared utilities
+COPY shared/ shared/
+
+# Create non-root user
+RUN useradd -m -u 1000 bedrock_agentcore
+USER bedrock_agentcore
+
+EXPOSE 8080
+
+# Copy agent code and tools
+COPY agui-langgraph-agent/agent.py .
+COPY agui-langgraph-agent/tools/ tools/
+
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/ping', timeout=2)" || exit 1
+
+# Start agent with OpenTelemetry instrumentation
+CMD ["opentelemetry-instrument", "python", "-m", "agent"]

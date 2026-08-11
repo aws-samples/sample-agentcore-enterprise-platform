@@ -1,0 +1,3 @@
+# git-secrets false positives.
+# 111122223333 is the AWS documentation placeholder account ID.
+111122223333

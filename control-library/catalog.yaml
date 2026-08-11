@@ -1,0 +1,260 @@
+# control-library catalog — machine-readable index of security control definitions.
+#
+# Each control declares:
+#   id          Stable identifier used by policy_loader.load_control(id, params).
+#   file         Path relative to this control-library/ root.
+#   type         SCP | RCP | RESOURCE_POLICY | IAM | VPCE | CEDAR | GUARDRAIL
+#   scope        org | account | workload
+#   attach_to    Valid attach points (informational + used for validation).
+#   engine       IaC engines that consume this control today.
+#   default_mode enforce | log_only | audit  (safe default posture)
+#   params       name -> {required, default?, description}. Values inject over <<NAME>> tokens.
+#   validate     CI validators that must pass for this artifact.
+version: 1
+description: AgentCore security control definitions (SCP, RCP, resource, IAM, VPCE, Cedar, Guardrails).
+
+controls:
+  # ── Item 1: SCP — enforce CMK on Memory creation (org scope, Terraform) ──
+  - id: scp.memory.enforce-cmk
+    file: scp/memory/enforce-cmk.json
+    type: SCP
+    scope: org
+    attach_to: [OU, ACCOUNT]
+    engine: [terraform]
+    default_mode: enforce
+    params:
+      kms_key_arn_pattern:
+        required: false
+        default: "arn:aws:kms:*:*:key/*"
+        description: >-
+          KMS key ARN pattern that CreateMemory must reference. Default requires any CMK.
+          Narrow to a specific key/OU-owned key ARN pattern to restrict further.
+    validate: [checkov, access-analyzer]
+
+  # ── Item 4: Resource-based policy — Memory in-account-only (workload scope, CDK) ──
+  - id: resource-policy.memory.in-account-only
+    file: resource-policies/memory/in-account-only.json
+    type: RESOURCE_POLICY
+    scope: workload
+    attach_to: [MEMORY]
+    engine: [cdk]
+    default_mode: enforce
+    params:
+      account_id:
+        required: true
+        description: AWS account ID that owns the Memory resource.
+      memory_arn:
+        required: true
+        description: >-
+          Exact ARN of the Memory resource. AgentCore resource-based policies do not
+          support "*" in the Resource field.
+      org_id:
+        required: true
+        description: AWS Organizations ID (o-xxxx) used in the aws:PrincipalOrgID deny guard.
+    validate: [checkov, access-analyzer]
+
+  # ── Items 5+6: Bedrock Guardrails config for the egress interceptor (workload scope, CDK) ──
+  # CloudFormation PascalCase shape (AWS::Bedrock::Guardrail properties). Applied to the
+  # Gateway egress interceptor Lambda via ApplyGuardrail. Not an IAM policy document, so it
+  # has no Version/Statement.
+  - id: guardrail.egress-default
+    file: guardrails/egress-default.json
+    type: GUARDRAIL
+    scope: workload
+    attach_to: [GATEWAY]
+    engine: [cdk]
+    default_mode: enforce
+    params: {}
+    validate: [json]
+
+  # ── Item 3: AgentCore Cedar policies for the Gateway policy engine (workload scope, CDK) ──
+  # Plain-text Cedar (not JSON). Loaded via load_control_text and attached to a CfnPolicyEngine.
+  # Shipped in LOG_ONLY mode by default (evaluate + log, do not block); flip to ENFORCE via
+  # the cedar_mode context/flag once decision logs are validated.
+  # Cedar is implicit default-deny: anything not explicitly permitted is denied, so no
+  # blanket forbid policy is shipped (a matching forbid would override every permit).
+  - id: cedar.gateway-default.permit-read
+    file: cedar/gateway-default/10-permit-read-tools.cedar
+    type: CEDAR
+    scope: workload
+    attach_to: [GATEWAY]
+    engine: [cdk]
+    default_mode: log_only
+    params:
+      read_action:
+        required: false
+        default: "sample-tool___text_analysis_tool"
+        description: >-
+          AgentCore action name (<TargetName>___<tool_name>) for the read-only tool to permit.
+          Matches the sample gateway target 'sample-tool' and tool 'text_analysis_tool'.
+    validate: [cedar]
+
+  # ── Item 2: fine-grained VPC endpoint policy (account scope, CDK) ──
+  # Attached to AgentCore interface VPC endpoints. Restricts the endpoint to the AgentCore
+  # data-plane action set (invoke + OAuth PRM discovery); every other action is implicitly
+  # denied. The org restriction applies to SigV4 callers ONLY: a Deny with a Null guard
+  # blocks IAM principals from outside the org. OAuth/JWT (Bearer) callers carry NO IAM
+  # principal, so per AWS docs the Allow uses Principal "*" with no IAM-principal
+  # conditions — VPC endpoint policies CANNOT constrain OAuth callers (that lockdown is
+  # the RCP / InboundJwtClaim roadmap item in docs/SECURITY_CONTROLS.md).
+  - id: vpce.agentcore-in-org
+    file: vpce/agentcore-in-org.json
+    type: VPCE
+    scope: account
+    attach_to: [VPCE]
+    engine: [cdk]
+    default_mode: enforce
+    params:
+      org_id:
+        required: true
+        description: >-
+          AWS Organizations ID (o-xxxx). SigV4 callers outside this org are denied;
+          OAuth callers are not constrained by this policy.
+    validate: [checkov, access-analyzer]
+
+  # ── Item 2: least-privilege AgentCore Runtime execution role policy (account scope, CDK) ──
+  # Reference least-privilege policy for a Runtime execution role. Consumed as a template;
+  # scope the ECR repo prefix / SSM path to your project.
+  - id: iam.runtime-execution-least-privilege
+    file: iam/runtime-execution-least-privilege.json
+    type: IAM
+    scope: account
+    attach_to: [ROLE]
+    engine: [cdk]
+    default_mode: enforce
+    params:
+      region:
+        required: true
+        description: AWS region of the runtime.
+      account_id:
+        required: true
+        description: AWS account ID that owns the runtime.
+      project:
+        required: true
+        description: Project name; scopes the SSM parameter path (/project/*).
+      ecr_repo_prefix:
+        required: false
+        default: "bedrock-agentcore-"
+        description: ECR repository name prefix the runtime pulls its image from.
+    validate: [checkov, access-analyzer]
+
+  # ── Gateway configuration guardrails (org scope, Terraform) ──
+  # Control-plane SCPs using the launched AgentCore Gateway configuration condition keys.
+  # They constrain what admins can Create/Update, not who can invoke (data-plane keys + RCP
+  # ingress controls launch later — see docs/SECURITY_CONTROLS.md roadmap).
+  - id: scp.gateway.require-cmk
+    file: scp/gateway/require-cmk.json
+    type: SCP
+    scope: org
+    attach_to: [OU, ACCOUNT]
+    engine: [terraform]
+    default_mode: enforce
+    params:
+      kms_key_arn_pattern:
+        required: false
+        default: "arn:aws:kms:*:*:key/*"
+        description: KMS key ARN pattern the Gateway must use. Narrow to restrict further.
+    validate: [checkov, access-analyzer]
+
+  - id: scp.gateway.deny-no-auth
+    file: scp/gateway/deny-no-auth.json
+    type: SCP
+    scope: org
+    attach_to: [OU, ACCOUNT]
+    engine: [terraform]
+    default_mode: enforce
+    params: {}
+    # NOTE: bedrock-agentcore:GatewayAuthorizerType is an existing key but its registration
+    # under Create/UpdateGateway is not clearly reflected in the public service authorization
+    # reference. Validate with IAM Access Analyzer before enforcing org-wide.
+    validate: [checkov, access-analyzer]
+
+  - id: scp.gateway.require-policy-engine
+    file: scp/gateway/require-policy-engine.json
+    type: SCP
+    scope: org
+    attach_to: [OU, ACCOUNT]
+    engine: [terraform]
+    default_mode: enforce
+    params: {}
+    # Requires a Cedar policy engine attached AND mode=ENFORCE. Both statements INTENTIONALLY
+    # deny when their key is absent: Null:true requires PolicyEngineArn to be present, and
+    # plain StringNotEquals (no IfExists) denies when PolicyEngineMode is absent OR not
+    # ENFORCE — an omitted mode would fall back to a service default that may not be ENFORCE.
+    # Drop the second statement to allow LOG_ONLY during rollout.
+    validate: [checkov, access-analyzer]
+
+  - id: scp.gateway.enforce-approved-idp
+    file: scp/gateway/enforce-approved-idp.json
+    type: SCP
+    scope: org
+    attach_to: [OU, ACCOUNT]
+    engine: [terraform]
+    default_mode: enforce
+    params:
+      approved_discovery_url_pattern:
+        required: false
+        default: "https://*"
+        description: >-
+          Allowed OIDC discovery URL pattern (bedrock-agentcore:DiscoveryUrl). Default only
+          requires HTTPS; narrow to your IdP, e.g. https://login.microsoftonline.com/<tenant>/*.
+          A Null guard scopes the deny to requests that include a DiscoveryUrl, so IAM-auth
+          gateways (key absent) are unaffected. (Negated operators in a Deny match absent
+          keys — even with IfExists — so the guard is required for this exemption.)
+    validate: [checkov, access-analyzer]
+
+  - id: scp.gateway.restrict-protocol
+    file: scp/gateway/restrict-protocol.json
+    type: SCP
+    scope: org
+    attach_to: [OU, ACCOUNT]
+    engine: [terraform]
+    default_mode: enforce
+    params:
+      allowed_protocol:
+        required: false
+        default: "MCP"
+        description: Allowed Gateway protocolType (bedrock-agentcore:ProtocolType).
+    # A Null guard scopes the deny to requests that include ProtocolType, so UpdateGateway
+    # calls that don't touch the protocol are not blocked. Known gap: CreateGateway with
+    # protocolType explicitly omitted falls back to the service default, which this SCP
+    # does not constrain.
+    validate: [checkov, access-analyzer]
+
+  - id: scp.gateway.targets-require-private-endpoint
+    file: scp/gateway/targets-require-private-endpoint.json
+    type: SCP
+    scope: org
+    attach_to: [OU, ACCOUNT]
+    engine: [terraform]
+    default_mode: enforce
+    params: {}
+    # Requires every target to declare a private endpoint (managedVpcResource /
+    # selfManagedLatticeResource) -> private egress to targets.
+    validate: [checkov, access-analyzer]
+
+  - id: scp.gateway.targets-restrict-credential-provider
+    file: scp/gateway/targets-restrict-credential-provider.json
+    type: SCP
+    scope: org
+    attach_to: [OU, ACCOUNT]
+    engine: [terraform]
+    default_mode: enforce
+    params: {}
+    # Denies API_KEY and JWT_PASSTHROUGH credential providers. Edit the array to change the
+    # denied set.
+    validate: [checkov, access-analyzer]
+
+  - id: scp.gateway.targets-restrict-type
+    file: scp/gateway/targets-restrict-type.json
+    type: SCP
+    scope: org
+    attach_to: [OU, ACCOUNT]
+    engine: [terraform]
+    default_mode: enforce
+    params: {}
+    # Allow-list of MCP target types (lambda, mcpServer). A Null guard scopes the deny to
+    # requests that include McpTargetConfigurationType, so non-MCP targets (key absent) are
+    # unaffected (negated operators in a Deny match absent keys, even with IfExists).
+    # Edit the array to change the allow-list.
+    validate: [checkov, access-analyzer]

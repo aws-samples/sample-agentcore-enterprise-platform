@@ -1,0 +1,75 @@
+# Adapted from fullstack-solution-template-for-agentcore
+name: ASH Security Scan - Post Comments
+
+on:
+  workflow_run:
+    workflows: ["ASH Security Scan"]
+    types:
+      - completed
+
+permissions:
+  pull-requests: write
+  actions: read
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.event == 'pull_request'
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ash-security-results
+          path: /tmp/ash-results
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get PR information
+        id: pr-info
+        run: |
+          if [ -f /tmp/ash-results/pr_number.txt ]; then
+            echo "pr_number=$(cat /tmp/ash-results/pr_number.txt)" >> "$GITHUB_OUTPUT"
+          else
+            exit 1
+          fi
+          if [ -f /tmp/ash-results/pr_sha.txt ]; then
+            echo "pr_sha=$(cat /tmp/ash-results/pr_sha.txt)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Post comment on PR
+        if: steps.pr-info.outputs.pr_number
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const commentPath = '/tmp/ash-results/pr_comment.md';
+            if (!fs.existsSync(commentPath)) return;
+
+            const commentBody = fs.readFileSync(commentPath, 'utf8');
+            const prNumber = parseInt(fs.readFileSync('/tmp/ash-results/pr_number.txt', 'utf8').trim());
+            const prSha = fs.existsSync('/tmp/ash-results/pr_sha.txt')
+              ? fs.readFileSync('/tmp/ash-results/pr_sha.txt', 'utf8').trim() : 'unknown';
+            if (!prNumber) return;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber,
+            });
+
+            const ashComments = comments.filter(c =>
+              c.user.type === 'Bot' && c.body.includes('<!-- ASH-SECURITY-SCAN-COMMENT -->')
+            ).sort((a, b) => b.id - a.id);
+
+            // Clean up duplicates
+            for (const c of ashComments.slice(1)) {
+              try { await github.rest.issues.deleteComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: c.id }); } catch {}
+            }
+
+            const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+            const body = `**Commit:** \`${prSha.substring(0, 7)}\` **| Updated:** ${timestamp}\n\n${commentBody}\n\n<!-- ASH-SECURITY-SCAN-COMMENT -->`;
+
+            if (ashComments[0]) {
+              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: ashComments[0].id, body });
+            } else {
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, body });
+            }

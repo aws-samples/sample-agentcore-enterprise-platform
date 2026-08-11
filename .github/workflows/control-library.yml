@@ -1,0 +1,61 @@
+name: Control Library
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'control-library/**'
+      - 'infra_utils/policy_loader.py'
+      - 'scripts/validate_control_library.py'
+      - 'tests/**'
+      - 'terraform/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'control-library/**'
+      - 'infra_utils/policy_loader.py'
+      - 'scripts/validate_control_library.py'
+      - 'tests/**'
+      - 'terraform/**'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-control-library:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: pip install pyyaml pytest checkov
+
+      - name: Validate control-library against catalog (+ checkov scan)
+        run: python scripts/validate_control_library.py
+
+      - name: Run policy_loader unit tests
+        run: python -m pytest tests/ -q
+
+  validate-terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform fmt check
+        run: terraform fmt -check -recursive terraform/
+
+      - name: Terraform validate (org-guardrails)
+        working-directory: terraform/org-guardrails
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
