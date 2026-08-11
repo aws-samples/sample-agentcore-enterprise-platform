@@ -105,4 +105,35 @@ grep -q -- 'install -g aws-cdk' "$TMP/npm.args" \
     || fail "probe failed but the install fallback never ran: $(cat "$TMP/npm.args" 2>/dev/null)"
 echo "PASS: CDK probe fails fast and falls back to installing, never prompts"
 
+# (h) a targeted destroy is --exclusively (so CloudFormation refuses instead of
+# cascading into dependent stacks), --all still cascades, and a refused destroy
+# is reported instead of swallowed.
+STUB2="$TMP/stub2"; mkdir -p "$STUB2"
+cat > "$STUB2/npx" <<'STUB_CDK'
+#!/usr/bin/env bash
+# Records the CDK invocation; "boom" models a stack CloudFormation refuses.
+echo "$*" >> "$CDK_ARGS"
+for a in "$@"; do [ "$a" = boom ] && exit 1; done
+exit 0
+STUB_CDK
+chmod +x "$STUB2/npx"
+export CDK_ARGS="$TMP/cdk.args"
+log_step() { :; }
+CONTEXT_ARGS=()
+eval "$(sed -n '/^destroy_stacks()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
+
+PATH="$STUB2:$PATH" destroy_stacks net-stack >/dev/null 2>&1 || fail "targeted destroy errored"
+grep -q -- '--exclusively' "$TMP/cdk.args" \
+    || fail "targeted destroy would cascade into dependent stacks: $(cat "$TMP/cdk.args")"
+echo "PASS: targeted destroy passes --exclusively"
+
+: > "$TMP/cdk.args"
+PATH="$STUB2:$PATH" destroy_stacks >/dev/null 2>&1 || fail "destroy --all errored"
+grep -q -- '--all' "$TMP/cdk.args" || fail "destroy with no target did not use --all"
+! grep -q -- '--exclusively' "$TMP/cdk.args" || fail "--all must keep cascading"
+echo "PASS: destroy --all still cascades"
+
+PATH="$STUB2:$PATH" destroy_stacks boom >/dev/null 2>&1 && fail "refused destroy reported success"
+echo "PASS: a refused destroy is not swallowed"
+
 echo "OK: all deploy-config checks passed"

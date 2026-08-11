@@ -522,6 +522,34 @@ deploy_stacks() {
     done
 }
 
+# The destroy counterpart. `cdk destroy STACK` without --exclusively walks the
+# dependency graph and deletes every stack that DEPENDS ON the target too — the
+# mirror image of `cdk deploy` pulling dependencies in. Tearing down one module
+# would silently remove the shared platform from under the other teams (the
+# blast radius grew when the runtimes gained a dependency on networking), so a
+# targeted destroy is always --exclusively. CloudFormation then refuses with
+# "Export ... cannot be deleted as it is in use by <stack>", naming the consumer.
+# The cascade stays for `destroy --all`, where it is what was asked for.
+destroy_stacks() {
+    local stack rc=0
+    if [ "$#" -eq 0 ]; then
+        JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+            npx cdk destroy --all --force "${CONTEXT_ARGS[@]}" 2>&1 || rc=1
+        return "$rc"
+    fi
+    for stack in "$@"; do
+        log_step "Destroying: $stack (this stack only)"
+        JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+            npx cdk destroy "$stack" --exclusively --force "${CONTEXT_ARGS[@]}" 2>&1 || {
+            rc=1
+            log_error "Failed to destroy $stack"
+            log_error "If the error above names an export in use, another stack depends on this one."
+            log_error "Destroy the dependents first, or run 'destroy --all' for the whole environment."
+        }
+    done
+    return "$rc"
+}
+
 cdk_bootstrap() {
     log_header "CDK Bootstrap"
     local bootstrap_log
@@ -826,16 +854,10 @@ case "$ACTION" in
 
     destroy)
         log_header "Destroying"
-        if [ -n "$CDK_STACKS" ]; then
-            for stack in $CDK_STACKS; do
-                log_step "Destroying: $stack"
-                JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
-                    npx cdk destroy "$stack" --force "${CONTEXT_ARGS[@]}" 2>&1 || true
-            done
-        else
-            JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
-                npx cdk destroy --all --force "${CONTEXT_ARGS[@]}" 2>&1 || true
-        fi
+        # No stacks selected means --all. Failures are no longer swallowed: a
+        # refused destroy is the guard against cascading, so it has to be seen.
+        # shellcheck disable=SC2086  # stack list is space-separated by design
+        destroy_stacks ${CDK_STACKS:-} || exit 1
         ;;
 
     synth)
