@@ -434,6 +434,22 @@ Results as of the last full run (account-agnostic; re-run per release):
 | `agui-strands-agent` | AGUI | ✓ | ✓ | typed SSE events; verify with `--agui` |
 | `agui-langgraph-agent` | AGUI | ✓ | ✓ | slower first response (graph build per request) |
 
+After the matrix run, close the loop on observability — this is what makes module 9's
+"end-to-end traces" claim true, and it reuses a span from the invokes above:
+
+```bash
+python scripts/check_observability.py --spans
+# PASS: trace <id> searchable (5 spans, service agentcore_workshop_dev_orchestrator.DEFAULT)
+```
+
+Opt-in (not in `MODULE_VERIFY[9]`) because span delivery lags invocation by a minute or
+two. Two facts to keep you from "fixing" working telemetry (verified live, ADOT 0.16.0):
+spans are searchable via Logs Insights on `aws/spans` — the path the Transaction Search
+console uses — while the classic X-Ray APIs (`batch-get-traces`, `get-trace-summaries`)
+only serve the indexed sample (Default rule: 1%), so an empty result there is expected,
+not a delivery failure. And `aws-opentelemetry-distro>=0.18` merely moves spans to
+per-agent log groups; it is not needed for delivery or search.
+
 If a pattern fails, read the container logs before changing anything — every failure so far
 named its own cause there:
 
