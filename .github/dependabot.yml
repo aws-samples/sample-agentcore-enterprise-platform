@@ -1,0 +1,33 @@
+# Dependabot: visible PRs only, never auto-merged.
+#
+# This repo's GitHub presence (aws-samples) is a publish target; GitLab is the
+# source of truth. Dependency bumps are folded into GitLab deliberately —
+# container-import and live-invoke checks live there, GitHub Actions runs
+# neither — and reach GitHub through the next export. The auto-merge workflow
+# this replaces would have merged untested bumps into the sample.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directories:
+      - "/"
+      - "/agent-code/*"
+    schedule:
+      interval: "weekly"
+    groups:
+      python-deps:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: "docker"
+    directories:
+      - "/agent-code/*"
+    schedule:
+      interval: "weekly"
