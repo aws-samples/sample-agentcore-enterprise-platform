@@ -1,10 +1,9 @@
 # ═══════════════════════════════════════════════════════════════
 # AgentCore Gateway configuration guardrails (control-plane SCPs)
 #
-# Uses the launched AgentCore Gateway configuration condition keys to constrain what admins
-# can Create/Update. These are caller-side (IAM) control-plane controls. Data-plane ingress
-# controls (aws:SourceVpc / InboundJwtClaim) and RCP support launch later — see
-# docs/SECURITY_CONTROLS.md.
+# Uses the AgentCore Gateway configuration condition keys to constrain what admins can
+# Create/Update. These are caller-side (IAM) control-plane controls: they govern how a
+# gateway may be configured, not who may invoke one.
 #
 # All files are read from the shared control-library; scalar <<sentinels>> are injected with
 # replace() (never templatefile(), so IAM policy variables are untouched).

@@ -122,9 +122,8 @@ printf 'length(local.gateway_scp_consolidated)\n' | terraform console           
 cd ../..
 ```
 
-These SCPs use the launched **control-plane** condition keys only. Data-plane ingress
-controls (`aws:SourceVpc`, `InboundJwtClaim/*`) and RCP support are on the roadmap in
-`SECURITY_CONTROLS.md` and are not shipped yet.
+These SCPs use **control-plane** condition keys only: they constrain how a gateway may be
+configured, not who may invoke one.
 
 ### A5. Memory resource policy synthesizes only when enabled (item 4)
 

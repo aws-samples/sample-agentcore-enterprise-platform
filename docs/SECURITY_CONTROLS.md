@@ -140,26 +140,12 @@ precondition enforces the 5,120-character SCP limit plus Sid uniqueness — a ni
 fail at plan time. The `for_each` is on the *attachment*, over `var.target_ids`.
 
 **"Fully-private Gateway" bundle:** `deny-no-auth` + `require-policy-engine` +
-`targets-require-private-endpoint` (control plane). The data-plane half — locking down *who
-can invoke* — is on the roadmap below.
+`targets-require-private-endpoint`. These are control-plane controls: they constrain how a
+gateway may be configured, not who may invoke one.
 
-### Roadmap (not yet launched)
-
-Data-plane condition keys and RCP support are launching later. When available, this repo will
-add (as `control-library/rcp/` + Terraform `RESOURCE_CONTROL_POLICY`):
-
-- **Private ingress:** `aws:SourceVpc` / `aws:SourceVpce` / `aws:VpceOrgID` on `InvokeGateway`
-  — the universal ingress lockdown that also covers OAuth callers (SCPs and VPC endpoint
-  policies only reach SigV4 callers: OAuth/JWT requests carry no IAM principal, so the
-  item-2 endpoint policy must allow them via `Principal: "*"` and cannot restrict who they
-  are). Requires enabling the RCP policy type + org onboarding.
-- **Inbound JWT claims:** `InboundJwtClaim/{aud,client_id,iss,scope,sub}` to restrict OAuth
-  callers by claim, via RCP or per-gateway resource-based policy. This is the mechanism
-  that will close the OAuth-caller gap left open by the item-2 endpoint policy.
-
-Until then, per-gateway resource-based policies (attached with the native
-`AWS::BedrockAgentCore::ResourcePolicy`, as used for Memory) are the available data-plane
-fallback.
+For invoke-time restrictions, per-gateway resource-based policies attached with the native
+`AWS::BedrockAgentCore::ResourcePolicy` (as used for Memory in item 4) are the mechanism this
+repo uses today.
 
 ## Safe rollout
 
