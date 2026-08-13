@@ -22,4 +22,20 @@ This is account and Region scoped, not stack scoped. If a platform team manages 
 
 ## Span visibility
 
-The setup above stops the rejected batches. To deliver spans to an agent's own log group instead of shared `aws/spans`, use `aws-opentelemetry-distro>=0.18.0` in the agent image. The runtime currently includes `0.16.0`, which ignores span-destination configuration. Transaction Search also changes CloudWatch span-ingestion pricing, with 1% indexed for free.
+The setup above stops the rejected batches, and the pinned `aws-opentelemetry-distro==0.16.0`
+delivers spans to the shared `aws/spans` log group — verified live: an invocation's trace was
+queryable by traceId within ~2 minutes. Prove it end to end with:
+
+```bash
+python scripts/check_observability.py --spans   # needs an agent invocation in the last hour
+```
+
+Two things that look broken but are not:
+
+- The classic X-Ray APIs (`batch-get-traces`, `get-trace-summaries`) return nothing for most
+  traces. Transaction Search only *indexes* a sample (Default rule: 1%, free tier); span
+  *search* — Logs Insights over `aws/spans`, which is what the CloudWatch Transaction Search
+  console uses — sees 100%. An empty trace-API result is not a delivery failure.
+- `aws-opentelemetry-distro>=0.18.0` is not needed for delivery or search. What it changes is
+  routing: spans land in the agent's own log group instead of shared `aws/spans`. Cosmetic
+  for this deployment, so the pins stay.
