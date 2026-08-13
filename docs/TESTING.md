@@ -126,6 +126,43 @@ These SCPs use the launched **control-plane** condition keys only. Data-plane in
 controls (`aws:SourceVpc`, `InboundJwtClaim/*`) and RCP support are on the roadmap in
 `SECURITY_CONTROLS.md` and are not shipped yet.
 
+### A4c. Identity SCP denies the unverified-userId token path
+
+`GetWorkloadAccessTokenForUserId` accepts the user identifier as an unverified string, so the
+shipped default must exempt nobody. The exemption param defaults to a role ARN that cannot
+exist, which makes the control a blanket deny until an operator supplies a real pattern.
+
+```bash
+cd terraform/org-guardrails
+terraform init -backend=false
+terraform validate
+
+VARS='-var target_ids=["ou-example-11111111"]'
+
+# Sentinel resolved, and the statement denies the right action:
+printf 'length(regexall("<<", local.identity_userid_scp_rendered))\n' | terraform console $VARS   # → 0
+printf 'jsondecode(local.identity_userid_scp_rendered).Statement[0]\n' | terraform console $VARS  # → Deny on GetWorkloadAccessTokenForUserId
+
+# The default exemption names a role that does not exist, so nothing is exempt:
+printf 'jsondecode(local.identity_userid_scp_rendered).Statement[0].Condition.ArnNotLike["aws:PrincipalArn"]\n' \
+  | terraform console $VARS                                                                      # → arn:aws:iam::*:role/__no_principal_may_mint_tokens_by_userid__
+
+# Sid must not collide with the consolidated gateway SCP's statements:
+printf 'contains(local.gateway_scp_statements[*].Sid, "DenyWorkloadTokenForUserId")\n' \
+  | terraform console $VARS                                                                      # → false
+
+# Quota: 1 memory + 1 consolidated gateway + 1 identity = 3 of the 4 usable slots per target
+# (5-per-target limit minus FullAWSAccess). This mirrors the attachments_per_target output.
+printf '(var.enable_scp_memory_enforce_cmk ? 1 : 0) + (var.enable_gateway_scps ? 1 : 0) + (var.enable_scp_identity_deny_token_for_userid ? 1 : 0)\n' \
+  | terraform console $VARS                                                                      # → 3
+cd ../..
+```
+
+The matching `iam.identity-credential-provider-scoped` reference policy is covered by the
+loader tests in A3: it asserts the workload-identity and OAuth2-provider ARNs carry no
+wildcard, since AgentCore does not bind a workload identity to the providers it may read and
+IAM is the only thing scoping that access.
+
 ### A5. Memory resource policy synthesizes only when enabled (item 4)
 
 The Memory resource policy is attached with the native `AWS::BedrockAgentCore::ResourcePolicy`.

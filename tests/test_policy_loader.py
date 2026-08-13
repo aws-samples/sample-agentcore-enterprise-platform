@@ -107,6 +107,69 @@ def test_cedar_permit_substitutes_read_action():
     assert "<<" not in text
 
 
+# ── AgentCore Identity controls ──
+
+
+def test_identity_userid_scp_denies_by_default():
+    # GetWorkloadAccessTokenForUserId takes userId as an unverified string, so the shipped
+    # default must exempt nobody. If someone gives the exemption param a real-looking
+    # default, the control silently stops denying.
+    doc = load_control("scp.identity.deny-workload-token-for-userid")
+    statement = doc["Statement"][0]
+    assert statement["Effect"] == "Deny"
+    assert statement["Action"] == "bedrock-agentcore:GetWorkloadAccessTokenForUserId"
+    exempt = statement["Condition"]["ArnNotLike"]["aws:PrincipalArn"]
+    assert "__no_principal_may_mint_tokens_by_userid__" in exempt
+
+
+def test_identity_userid_scp_exemption_is_overridable():
+    doc = load_control(
+        "scp.identity.deny-workload-token-for-userid",
+        {
+            "approved_principal_arn_pattern": "arn:aws:iam::111122223333:role/break-glass"
+        },
+    )
+    exempt = doc["Statement"][0]["Condition"]["ArnNotLike"]["aws:PrincipalArn"]
+    assert exempt == "arn:aws:iam::111122223333:role/break-glass"
+
+
+def test_identity_credential_provider_policy_names_one_provider():
+    # AgentCore does not bind a workload identity to the providers it may read, so this
+    # policy is the only thing stopping one agent reading another's stored credentials.
+    # A wildcard in either resource defeats it entirely.
+    doc = load_control(
+        "iam.identity-credential-provider-scoped",
+        {
+            "region": "us-east-1",
+            "account_id": "111122223333",
+            "workload_identity_name": "finance-agent",
+            "oauth2_provider_name": "entra-graph",
+        },
+    )
+    by_sid = {s["Sid"]: s for s in doc["Statement"]}
+
+    workload = by_sid["AllowOwnWorkloadIdentityTokens"]["Resource"]
+    assert workload.endswith("workload-identity/finance-agent")
+    assert "*" not in workload
+
+    provider = by_sid["AllowScopedOauth2CredentialProvider"]["Resource"]
+    assert provider.endswith("oauth2-credential-provider/entra-graph")
+    assert "*" not in provider
+
+    # Defence in depth: the role denies the unverified-userId path outright, so the SCP
+    # is not the only thing standing between a compromised agent and other users' tokens.
+    userid = by_sid["DenyWorkloadTokenForUserId"]
+    assert userid["Effect"] == "Deny"
+    assert userid["Action"] == "bedrock-agentcore:GetWorkloadAccessTokenForUserId"
+
+    assert "<<" not in json.dumps(doc)
+
+
+def test_identity_credential_provider_policy_requires_its_params():
+    with pytest.raises(ValueError, match="missing required params"):
+        load_control("iam.identity-credential-provider-scoped", {"region": "us-east-1"})
+
+
 # ── Substitution semantics against a temp library ──
 
 

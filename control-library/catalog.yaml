@@ -138,6 +138,64 @@ controls:
         description: ECR repository name prefix the runtime pulls its image from.
     validate: [checkov, access-analyzer]
 
+  # ── AgentCore Identity: scoped credential-provider access (account scope, CDK) ──
+  # Reference policy for an agent's own execution role. AgentCore enforces no binding between
+  # a workload identity and the credential providers it may read, so IAM is the only fence:
+  # one workload identity and one role per trust boundary, each naming only the providers it
+  # needs. A shared execution role hands every agent every provider's credentials.
+  # Consumed as a template; the deployed role in infra_utils/agentcore_role.py does not read
+  # AgentCore Identity today.
+  - id: iam.identity-credential-provider-scoped
+    file: iam/identity-credential-provider-scoped.json
+    type: IAM
+    scope: account
+    attach_to: [ROLE]
+    engine: [cdk]
+    default_mode: enforce
+    params:
+      region:
+        required: true
+        description: AWS region of the workload identity and token vault.
+      account_id:
+        required: true
+        description: AWS account ID that owns the workload identity and token vault.
+      workload_identity_name:
+        required: true
+        description: >-
+          Name of the single workload identity this role may mint tokens for. One per agent
+          or trust boundary — never a wildcard.
+      oauth2_provider_name:
+        required: true
+        description: >-
+          Name of the one OAuth2 credential provider this role may read. Providers are per
+          integration, not per agent, so this is the control that stops one agent reading
+          another's stored credentials.
+    validate: [checkov, access-analyzer]
+
+  # ── AgentCore Identity guardrail (org scope, Terraform) ──
+  # Denies GetWorkloadAccessTokenForUserId. That API takes userId as an unverified string, so
+  # any principal holding the action can mint a workload token for ANY user and reach that
+  # user's stored credentials in the token vault — no JWT, no proof of identity. Agents behind
+  # Runtime or Gateway inbound auth never need it: the caller's token arrives in the request
+  # and GetWorkloadAccessTokenForJWT is the verified path.
+  - id: scp.identity.deny-workload-token-for-userid
+    file: scp/identity/deny-workload-token-for-userid.json
+    type: SCP
+    scope: org
+    attach_to: [OU, ACCOUNT]
+    engine: [terraform]
+    default_mode: enforce
+    params:
+      approved_principal_arn_pattern:
+        required: false
+        default: "arn:aws:iam::*:role/__no_principal_may_mint_tokens_by_userid__"
+        description: >-
+          Principal ARN pattern exempted from the deny (aws:PrincipalArn, ArnNotLike). The
+          default names a role that does not exist, so the control is a blanket deny until a
+          real pattern is supplied. Narrow to a specific break-glass role ARN if a migration
+          or batch job genuinely needs the userId path.
+    validate: [checkov, access-analyzer]
+
   # ── Gateway configuration guardrails (org scope, Terraform) ──
   # Control-plane SCPs using the launched AgentCore Gateway configuration condition keys.
   # They constrain what admins can Create/Update, not who can invoke (data-plane keys + RCP
