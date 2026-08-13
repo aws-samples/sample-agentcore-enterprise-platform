@@ -1,273 +1,239 @@
-# AgentCore Workshop CDK Platform
+# Enterprise Agentic AI Platform Accelerator
 
-Modular AWS CDK (Python) infrastructure for the **AgentCore Platform and Security Accelerator** 2-day workshop.
+Deploy a secure, governed foundation for production AI agents on Amazon Bedrock AgentCore. This **open-source, modular** project works as a self-service starter kit, a foundation to tailor to your environment, or a guided team build.
 
-> **Security controls:** opt-in SCPs, VPC endpoint / IAM policies, Cedar policies, resource
-> policies, Bedrock Guardrails + egress interceptor, and traceability alerting are documented
-> in [`docs/SECURITY_CONTROLS.md`](docs/SECURITY_CONTROLS.md). Test guide: [`docs/TESTING.md`](docs/TESTING.md).
+## What You Get
 
-![Workshop Dashboard — Monitor Tab](docs/dashboard-monitor.png)
+- **An AI platform for production agents:** AgentCore Runtime, Gateway, Identity, Memory, and observability.
+- **Your choice of agent framework:** use Strands Agents, LangGraph, Claude Agent SDK, without rebuilding the infrastructure.
+- **Security controls as you need them:** turn on VPC isolation, KMS encryption, CloudTrail, SCPs, Cedar policies, Bedrock Guardrails, resource policies, and traceability alerting.
+- **A repeatable way to ship:** deploy by profile, team, module, or CI/CD. Then verify the result with the included scripts and local dashboard.
 
-## Architecture
+> **Security details:** See [`docs/SECURITY_CONTROLS.md`](docs/SECURITY_CONTROLS.md) for available controls and enablement guidance.
 
-Maintained source: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (Mermaid diagram + verified request flows).
+## How to use this accelerator
 
-![AgentCore Workshop Architecture](docs/architecture.png)
+Use this five-step path to get from a starting point to a working deployment.
 
-## Stacks
+| Step | What you do | Where to start |
+|------|-------------|----------------|
+| 1 | Pick the deployment shape that fits your work | [Choose a profile](#choose-your-starting-point) |
+| 2 | Check your account, tools, AWS Region, and expected costs | [Review prerequisites](#getting-started) |
+| 3 | Deploy the profile, team, or module(s) you need | [Deploy the platform](#deploy) |
+| 4 | Invoke the sample agent and check the gateway | [Verify the deployment](#test-the-deployment) |
+| 5 | Follow rollout status while you work | [View deployed resources](#dashboard) |
 
-| Stack | Resources | Description |
-|-------|-----------|-------------|
-| `auth` | Cognito User Pool, 3 clients, SSM params | Identity foundation with federated IdP support |
-| `identity` | OAuth2 credential providers | 3LO delegation (Google, GitHub, Notion) |
-| `memory` | CfnMemory + strategies | Semantic + user preference memory |
-| `gateway` | CfnGateway + Lambda targets | MCP gateway with CUSTOM_JWT auth |
-| `runtime-orchestrator` | ECR, CodeBuild, CfnRuntime | Main agent (HTTP protocol) |
-| `runtime-code-agent` | ECR, CodeBuild, CfnRuntime | A2A sub-agent for code tasks |
-| `runtime-research-agent` | ECR, CodeBuild, CfnRuntime | A2A sub-agent for research |
-| `observability` | Vended logs, X-Ray delivery | Per-resource monitoring |
-| `networking` *(optional)* | VPC, private subnets, endpoints, runtime SG | Runs the agents inside your VPC ([details](#network-isolation-enable_networking)) |
-| `security` *(optional)* | KMS CMK, CloudTrail | Security hardening |
 
-## Quick Start
+## Choose Your Starting Point
+
+Pick the profile that looks most like your job today. It is a starting point, you can further customize your deployment later.
+
+| Profile | Good fit when you are... | Starting scope |
+|---------|--------------------------|----------------|
+| `greenfield` | Building new agents from scratch | Identity, gateway, one agent runtime, and observability |
+| `migration` | Moving agents from EC2, ECS, or Lambda | Identity, runtime migration, gateway integration, and observability |
+| `multi-agent` | Building specialist agents that work together | Gateway, orchestrator, A2A runtimes, and observability |
+| `platform-team` | Setting up shared infrastructure for your organization | Full platform, including memory, A2A, networking, and security |
+| `security-focused` | Starting with compliance and hardening | One-agent platform, networking, security, policy, egress, and traceability controls |
+
+
+## Getting Started
+
+### Prerequisites
+
+Before you deploy:
+
+- **AWS credentials:** permission to create IAM, Cognito, ECR, CodeBuild, Amazon Bedrock and Bedrock AgentCore resources. The deploy script validates them before making changes.
+- **Local tooling:** Docker, Python 3.13, Node.js/npm, and the AWS CLI. The script checks these and installs the AWS CDK CLI if it is missing.
+- **Region:** pick a Region where AgentCore and your chosen Bedrock model are available. The default is `us-east-1`.
+- **Cost awareness:** networking profiles create a NAT gateway and VPC endpoints with hourly billing. Enabling Transaction Search changes account-level span pricing. Tear down resources when you finish testing.
+
+### Architecture
+
+Want the full picture? Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the Mermaid diagram and request flows that the repository verifies end to end.
+
+![Enterprise Agentic AI Platform architecture](docs/architecture.png)
+
+### Deploy
+
+Start with a profile. You can narrow the deployment by team or module later. Want a guided run? That is available too.
 
 ```bash
 # 1. Install dependencies
 python3.13 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# 2. Guided workshop (recommended for participants): walks your profile's modules
-#    one by one — explains what each builds and why, deploys it, verifies it live, pauses.
-# Note: the deploy script requires bash 4 or newer. macOS ships bash 3.2 —
-# install a current bash with `brew install bash`, then run `bash scripts/deploy.sh ...`.
-./scripts/deploy.sh workshop                        # default profile: greenfield
-./scripts/deploy.sh workshop --profile multi-agent  # or migration|platform-team|security-focused
-./scripts/deploy.sh workshop --from 6               # resume from module 6
-./scripts/deploy.sh workshop --dry-run              # preview the plan, no AWS calls
-
-# 2b. Plain deploy (everything at once, interactive)
-./scripts/deploy.sh deploy
-
-# 3. Deploy specific workshop module
-./scripts/deploy.sh deploy --module 4    # Identity Integration
-
-# 4. Deploy for a specific team
-./scripts/deploy.sh deploy --team agent  # Agent team stacks only
-
-# 5. Deploy with a customer profile
+# 2. Pick a profile and deploy it
 ./scripts/deploy.sh deploy --profile greenfield
+# Other profiles: migration | multi-agent | platform-team | security-focused
 
-# 6. Non-interactive (CI/CD)
-NON_INTERACTIVE=1 AWS_REGION=us-east-1 ./scripts/deploy.sh deploy
+# 3. Deploy a smaller scope instead
+./scripts/deploy.sh deploy --team agent  # Agent team stacks only
+./scripts/deploy.sh deploy --module 4    # Identity integration
+
+# 4. Run a profile in CI/CD
+NON_INTERACTIVE=1 AWS_REGION=us-east-1 ./scripts/deploy.sh deploy --profile platform-team
+
+# 5. Use the guided run for explanations and checks after each module
+# The script needs bash 4 or newer. macOS includes bash 3.2.
+# Install a newer version with `brew install bash`, then run `bash scripts/deploy.sh ...`.
+./scripts/deploy.sh workshop                        # Default profile: greenfield
+./scripts/deploy.sh workshop --profile multi-agent  # Or migration|platform-team|security-focused
+./scripts/deploy.sh workshop --from 6               # Resume at module 6
+./scripts/deploy.sh workshop --dry-run              # Show the plan without AWS calls
 ```
 
-## Testing the Deployment
 
-Full architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+## Test the Deployment
+
+After deployment, run a few checks. They make it easier to spot a missing permission or a bad endpoint early.
 
 ```bash
-export AWS_PROFILE=<your-profile>   # skip if using default credentials
+export AWS_PROFILE=<your-profile>   # Skip if you use default credentials
 export AWS_REGION=us-east-1
 
-# Health check: token → invoke → resource status
+# Health check: token, invocation, and resource status
 python scripts/test.py
 
-# Invoke the deployed agent (add --session <id> to continue a conversation)
+# Invoke the deployed agent. Add --session <id> to continue a conversation.
 python scripts/invoke.py "What tools do you have?"
 
-# For the agui-* patterns, use the AG-UI protocol (RunAgentInput + SSE events)
+# Use the AG-UI protocol for agui-* patterns.
 python scripts/invoke.py --agui "What tools do you have?"
 
-# List the gateway's MCP tools
+# List the gateway's MCP tools.
 python scripts/invoke.py --tools
 
-# Gateway direct: MCP tools/list + one tools/call
+# Call the gateway directly: MCP tools/list and one tools/call.
 python scripts/test_gateway.py
 ```
 
-For live status of every deployed resource, run the [Dashboard](#dashboard).
-
-## Workshop Module Mapping
-
-| Module | Description | CDK Stacks |
-|--------|-------------|------------|
-| 3 | Infrastructure Blueprint | `auth` |
-| 4 | Identity Integration | `auth`, `identity` |
-| 5 | Gateway & Registry | `gateway` |
-| 6 | Agent Deployment | `runtime-orchestrator` |
-| 8 | Agent-to-Agent (A2A) | `runtime-code-agent`, `runtime-research-agent` |
-| 9 | Observability | `observability` |
-| A | Memory | `memory` |
-
-## Agent Pattern Selection
-
-The `agent_pattern` CDK context variable selects which `agent-code/<pattern>/` directory
-the runtime stack builds and deploys — participants pick their framework without touching
-infrastructure code:
-
-Patterns: `orchestrator` (default), `strands-agent`, `langgraph-agent`, `claude-sdk-agent`,
-`claude-sdk-multi-agent`, `agui-strands-agent`, `agui-langgraph-agent`. An unknown value is
-rejected before any deployment starts.
-
-```bash
-# Pick a framework — saved to workshop.env and reused on later runs
-AGENT_PATTERN=langgraph-agent ./scripts/deploy.sh deploy --module 6
-
-# Or straight through the CDK CLI
-cdk deploy agentcore-workshop-dev-runtime-orchestrator -c agent_pattern=claude-sdk-agent
-```
-
-`./scripts/deploy.sh deploy` prompts for the pattern interactively; the guided
-`workshop` action prints the pattern in use before the first module.
-
-Agent application code and shared utilities are adapted from the
-[fullstack-solution-template-for-agentcore](https://github.com/aws-samples/fullstack-solution-template-for-agentcore)
-(FAST) patterns; the CDK stacks are original to this workshop.
-
-## Network isolation (`enable_networking`)
-
-With `enable_networking=true` the runtimes are placed **in** the VPC: AgentCore
-creates network interfaces in the private subnets, attached to a security group that
-allows HTTPS egress only and no inbound. Egress leaves through the NAT gateway, with
-interface endpoints for Bedrock, ECR (api + dkr), CloudWatch Logs and the AgentCore
-Gateway, plus the free S3 gateway endpoint that ECR layer pulls use.
-
-What this does and does not give you:
-
-- **Does**: no public network path from the agent, private access to resources in your
-  VPC, and security-group control over what the agent can reach.
-- **Does not**: an air-gapped VPC. The private subnets keep a NAT route because agents
-  reach AWS APIs and, for some patterns, the public internet. Remove the NAT only after
-  adding endpoints for every service your agents call.
-
-Verify placement rather than trusting the flag:
-
-```bash
-python scripts/check_network.py                  # subnets in supported AZs + runtimes in VPC
-python scripts/check_network.py --expect-public   # for deployments without networking
-```
-
-> **Availability Zones**: AgentCore supports VPC connectivity in specific AZs, and an AZ
-> *name* (`us-east-1a`) maps to a different AZ *id* (`use1-az1`) in every account. A VPC
-> that works in one account can fail at runtime creation in another. `check_network.py`
-> catches this at the networking module instead, and the guided workshop runs it as
-> module C's verification.
-
-> **Teardown**: AgentCore's network interfaces persist for up to 8 hours after a runtime
-> stops using VPC mode, so destroying the networking stack in that window fails on the
-> private subnets and the runtime security group with "has dependencies and cannot be
-> deleted". The NAT gateway and VPC endpoints — everything that bills hourly — are deleted
-> in the same run, so the leftovers are free. Re-run the destroy once the interfaces age
-> out (`aws ec2 describe-network-interfaces --filters Name=interface-type,Values=agentic_ai`).
-
-## Agent identity: who is the caller?
-
-Agents take the caller's identity from the `sub` claim of the JWT in the
-`Authorization` header, never from the request payload — a prompt cannot talk an agent
-into acting as someone else.
-
-`agent-code/shared/auth.py` **verifies** that token: signature against the issuer's
-published JWKS, plus expiry, issuer, and that the client is one this deployment created.
-It fails closed; there is no fallback to an unverified decode.
-
-That verification is deliberate duplication. AgentCore Runtime's `CUSTOM_JWT` authorizer
-already validates the token before the container sees it, so the check inside the agent is
-redundant *for the runtimes in this repo today*. It is kept because the upstream guarantee
-is a property of the deployment, not of the code: `runtime_stack.py` attaches an authorizer
-only for client-facing protocols with a Cognito issuer, so an A2A runtime — or any runtime
-built without an issuer — forwards whatever `Authorization` header it is handed. The agent
-should not be the component that assumes.
-
-`RuntimeStack` injects `COGNITO_ISSUER_URL` and `COGNITO_ALLOWED_CLIENTS`; without them the
-agent refuses the request rather than trusting it. JWKS is fetched once per container and
-cached, so the cost is one HTTPS call on cold start.
-
-> Cognito M2M (`client_credentials`) access tokens carry `client_id` rather than `aud`.
-> Checking only `aud` would reject every machine caller, including this repo's own
-> `scripts/invoke.py` — see `agent-code/shared/jwt_claims.py`.
-
-## Tracing (CloudWatch Transaction Search)
-
-AgentCore runtimes emit OTLP spans whether or not the account is set up to receive them.
-If the account's X-Ray trace segment destination is still `XRay`, every span batch is
-rejected with HTTP 400 and no trace ever appears — while the deployment reports success.
-The observability stack therefore configures the two prerequisites from
-[Enable transaction search](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Enable-TransactionSearch.html):
-a CloudWatch Logs resource policy allowing X-Ray to write the span log groups, and the
-trace segment destination set to `CloudWatchLogs`.
-
-```bash
-python scripts/check_observability.py   # destination + span policy + log deliveries
-```
-
-> **Account-level setting**: both are account- and Region-scoped, not per-stack. Where a
-> platform team owns tracing centrally, deploy with `-c enable_transaction_search=false`.
-> Destroying the stack deliberately does **not** revert the destination — other workloads
-> in the account may depend on it by then.
-
-> **Span visibility**: the prerequisites above stop the rejections. Delivering spans to the
-> agent's own log group (instead of the shared `aws/spans`) additionally needs
-> `aws-opentelemetry-distro>=0.18.0` in the agent image; the runtime currently bundles
-> `0.16.0`, which ignores span destination configuration. Enabling Transaction Search also
-> switches the account to CloudWatch span ingestion pricing, with 1% indexed for free.
-
-## Customer Profiles
-
-| Profile | Networking | Security | A2A |
-|---------|-----------|----------|-----|
-| `greenfield` | ✗ | ✗ | ✗ |
-| `migration` | ✗ | ✗ | ✗ |
-| `multi-agent` | ✗ | ✗ | ✓ |
-| `platform-team` | ✓ | ✓ | ✓ |
-| `security-focused` | ✓ | ✓ | ✗ |
-
-## Team Workstreams
-
-| Team | Stacks |
-|------|--------|
-| `platform` | networking, auth, identity, gateway, observability |
-| `agent` | runtime-*, memory |
-| `security` | security, observability |
+For the wider test plan, read [`docs/TESTING.md`](docs/TESTING.md). For live resource status, use the [Dashboard](#dashboard).
 
 ## Dashboard
 
-Live workshop monitoring dashboard with approach explainer and deployment status:
+Want to see the platform come together? The local dashboard shows deployment status and a
+short explanation of the pieces you are deploying. It runs on your machine and polls the
+resources in your AWS account.
 
-Run both from the repo root; the dashboard is served on localhost only.
+Run both commands from the repository root. The dashboard is only available on localhost.
 
 ```bash
-# Terminal 1 — poller (writes dashboard/public/status.json every 15s)
+# Terminal 1: poller. Writes dashboard/public/status.json every 15 seconds.
 AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 .venv/bin/python dashboard/monitor.py
 
-# Terminal 2 — server (dashboard at http://localhost:8888)
+# Terminal 2: web server. Open http://localhost:8888.
 python3 -m http.server 8888 -d dashboard/public
 ```
 
-## Configuration
+![AgentCore deployment dashboard monitor tab](docs/dashboard-monitor.png)
 
-All configuration via CDK context (`-c key=value`) or environment variables:
+## Clean Up
 
-| Context Key | Env Var | Default | Description |
-|-------------|---------|---------|-------------|
+Destroy resources when you no longer need them
+
+```bash
+./scripts/deploy.sh destroy
+
+# Or destroy one stack.
+./scripts/deploy.sh destroy --stack <stack-name>
+```
+
+For networking deployments, AgentCore network interfaces can outlive a runtime for up to eight hours. A cleanup may need a retry. See [Network isolation](#run-runtimes-in-your-vpc-enable_networking) for the detail.
+
+
+## Understand the AWS CloudFormation Stacks
+
+### Stacks
+
+Profiles select from these stack building blocks.
+
+| Stack | Resources | What it does |
+|-------|-----------|--------------|
+| `auth` | Cognito User Pool, 3 clients, SSM params | Sets up identity with optional federated IdP support |
+| `identity` | OAuth2 credential providers | Supports 3LO delegation for Google, GitHub, and Notion |
+| `memory` | CfnMemory + strategies | Adds semantic and user-preference memory |
+| `gateway` | CfnGateway + Lambda targets | Exposes MCP tools with CUSTOM_JWT auth |
+| `runtime-orchestrator` | ECR, CodeBuild, CfnRuntime | Runs the main HTTP agent |
+| `runtime-code-agent` | ECR, CodeBuild, CfnRuntime | Runs an A2A sub-agent for code tasks |
+| `runtime-research-agent` | ECR, CodeBuild, CfnRuntime | Runs an A2A sub-agent for research |
+| `observability` | Vended logs, X-Ray delivery | Collects monitoring data for each resource |
+| `networking` *(optional)* | VPC, private subnets, endpoints, runtime SG | Puts agents in your VPC ([details](#run-runtimes-in-your-vpc-enable_networking)) |
+| `security` *(optional)* | KMS CMK, CloudTrail | Adds security hardening |
+
+## Customize, Operate, and Extend
+
+Use these sections when you need to change how the platform is deployed, secured, monitored, or integrated.
+
+### Choose an Agent Framework
+Each runtime stack builds one agent from the `agent-code/` directory. Pick the framework you want here; the CDK infrastructure does not change.
+
+Available patterns: `orchestrator` (default), `strands-agent`, `langgraph-agent`, `claude-sdk-agent`, `claude-sdk-multi-agent`, `agui-strands-agent`, and `agui-langgraph-agent`. A bad value stops the deployment before it starts.
+
+```bash
+# Pick a framework. The script saves the choice in workshop.env for later runs.
+AGENT_PATTERN=langgraph-agent ./scripts/deploy.sh deploy --module 6
+
+# Or pass it to CDK directly.
+cdk deploy agentcore-workshop-dev-runtime-orchestrator -c agent_pattern=claude-sdk-agent
+```
+
+`./scripts/deploy.sh deploy` asks for the pattern in an interactive run. The guided command prints the active pattern before its first module.
+
+The agent applications and shared utilities build on patterns from [fullstack-solution-template-for-agentcore](https://github.com/aws-samples/fullstack-solution-template-for-agentcore) (FAST). The CDK stacks are specific to this accelerator.
+
+### Run Runtimes in Your VPC (`enable_networking`)
+
+Use this when your agents need private access to resources in your VPC or tighter outbound network controls. Set `enable_networking=true` to run runtimes in your VPC. AgentCore creates network interfaces in private subnets and attaches them to a security group with HTTPS-only egress and no inbound access. Traffic goes out through the NAT gateway. Interface endpoints cover Bedrock, ECR, CloudWatch Logs, and AgentCore Gateway. ECR layer pulls use the free S3 gateway endpoint.
+
+This is not an air-gapped VPC.
+
+- **What you get:** no public network path from the agent, private access to resources in your VPC, and security-group control over destinations.
+- **What you do not get:** the private subnets still have a NAT route because agents call AWS APIs and some patterns use the public internet. Remove the NAT only after adding endpoints for every service your agents call.
+
+Do not trust the flag alone. After deploying, confirm the runtimes actually landed in private subnets:
+
+```bash
+python scripts/check_network.py                  # Supported subnets and runtimes in the VPC
+python scripts/check_network.py --expect-public   # Deployments without networking
+```
+
+> **Availability Zones:** AgentCore supports VPC connectivity in selected AZs. An AZ name such as `us-east-1a` maps to a different AZ ID, such as `use1-az1`, in each account. A VPC that works in one account can still fail when another account creates a runtime. `check_network.py` catches that during the networking module. The guided command runs it as module C's verification.
+
+> **Teardown:** network interfaces can remain for up to 8 hours after a runtime stops using VPC mode. During that window, deleting the networking stack can fail because the private subnets and runtime security group still have dependencies. The NAT gateway and VPC endpoints, which create the hourly charges, are deleted in the same run. Try the destroy again after the interfaces age out: `aws ec2 describe-network-interfaces --filters Name=interface-type,Values=agentic_ai`.
+
+### Customize a Deployment
+
+Use these settings to change the platform's name, environment, identity provider, optional capabilities, model, or agent framework. Set configuration with CDK context (`-c key=value`) or environment variables.
+
+| Context key | Environment variable | Default | Meaning |
+|-------------|----------------------|---------|---------|
 | `project` | `PROJECT_NAME` | `agentcore-workshop` | Project identifier |
 | `environment` | `ENVIRONMENT` | `dev` | Environment name |
-| `region` | `CDK_DEFAULT_REGION` | `us-east-1` | AWS region |
+| `region` | `CDK_DEFAULT_REGION` | `us-east-1` | AWS Region |
 | `idp_type` | `IDP_TYPE` | `cognito` | IdP: cognito/entra_id/okta/ping |
-| `enable_networking` | `ENABLE_NETWORKING` | `false` | Enable VPC stack |
-| `enable_security` | `ENABLE_SECURITY` | `false` | Enable security stack |
-| `enable_a2a` | `ENABLE_A2A` | `true` | Enable A2A agent stacks |
-| `model_id` | `MODEL_ID` | *(in-code per pattern)* | Bedrock model ID override for all agents (e.g. `us.anthropic.claude-sonnet-5`) |
-| `agent_pattern` | `AGENT_PATTERN` | `orchestrator` | Agent framework pattern built for the runtime (see [Agent Pattern Selection](#agent-pattern-selection)) |
-| `enable_transaction_search` | `ENABLE_TRANSACTION_SEARCH` | `true` | Configure CloudWatch Transaction Search — account-level ([details](#tracing-cloudwatch-transaction-search)) |
+| `enable_networking` | `ENABLE_NETWORKING` | `false` | Create the VPC stack |
+| `enable_security` | `ENABLE_SECURITY` | `false` | Create the security stack |
+| `enable_a2a` | `ENABLE_A2A` | `true` | Create A2A agent stacks |
+| `model_id` | `MODEL_ID` | *(in code for each pattern)* | Override the Bedrock model for all agents, for example `us.anthropic.claude-sonnet-5` |
+| `agent_pattern` | `AGENT_PATTERN` | `orchestrator` | Pattern built for the runtime. See [Agent Pattern Selection](#choose-an-agent-framework). |
+| `enable_transaction_search` | `ENABLE_TRANSACTION_SEARCH` | `true` | Configure CloudWatch Transaction Search. This setting is account scoped. See [details](#search-agent-traces). |
 
-Interactive answers from `./scripts/deploy.sh deploy` are saved to `workshop.env` (gitignored)
-and reused on later runs. Precedence: environment variable > saved `workshop.env` > default.
-Inspect with `./scripts/deploy.sh config`; start fresh with `./scripts/deploy.sh config --reset`.
-Secrets (IdP client secret, API keys) are never persisted — they go to AWS Secrets Manager.
+Interactive `./scripts/deploy.sh deploy` answers go into the gitignored `workshop.env` file and are used on later runs. Environment variables win over values in `workshop.env`, which win over defaults. Check the current values with `./scripts/deploy.sh config`. Start over with `./scripts/deploy.sh config --reset`.
 
-## Cross-Stack Communication
+Secrets such as an IdP client secret or API keys are never written to `workshop.env`. They go to AWS Secrets Manager.
 
-All stacks publish key outputs to SSM Parameter Store:
+### Verify Caller Identity
+
+Agents identify callers from the JWT in the `Authorization` header, not the request body. See [`docs/IDENTITY.md`](docs/IDENTITY.md) for how token validation works and why the agent checks it twice.
+
+### Search Agent Traces
+
+Runtime traces won't appear until the account is configured to receive them. See [`docs/TRACING.md`](docs/TRACING.md) for the setup and verification steps.
+
+### Extend the Platform with Other Stacks
+
+New stacks can read values from the platform through SSM Parameter Store. Here are the paths available after deployment:
 
 ```
 /{project}/{environment}/auth/issuer-url
