@@ -103,17 +103,36 @@ cd terraform/org-guardrails && terraform apply \
   -var 'identity_approved_principal_arn_pattern=arn:aws:iam::111122223333:role/break-glass'
 ```
 
+If you need the userId path for a specific service and want something narrower than an ARN
+exemption, the action also supports the `bedrock-agentcore:userid` condition key, so the deny
+can be scoped by user identifier instead. The blanket form is the safer default.
+
 Quota note: this is a standalone SCP, bringing the module to 3 attachments per target against
 4 usable slots (the 5-per-target limit minus `FullAWSAccess`). A fourth standalone SCP is the
 last one that fits — beyond that, merge statements the way `gateway.tf` does.
 
 **IAM: `iam.identity-credential-provider-scoped`.** A reference policy for an agent's own
-execution role. AgentCore enforces no binding between a workload identity and the credential
-providers it may read, so IAM is the only fence: one workload identity and one role per trust
-boundary, each naming exactly one provider. A shared execution role hands every agent every
-provider's credentials. Like `iam.runtime-execution-least-privilege`, this is a template —
+execution role. AgentCore [does not enforce any binding][scope-cp] between a workload identity
+and the credential providers it may read, so IAM is the only fence: one workload identity and
+one role per trust boundary, each naming exactly one provider. A shared execution role hands
+every agent every provider's credentials.
+
+Note each `Allow` lists the parent resources as well as the leaf. `GetResourceOauth2Token` and
+the `GetWorkloadAccessToken*` actions declare several **required** resource types — the
+directory and the token vault as well as the workload identity and the provider — so a
+statement naming only the provider ARN authorises nothing. The resulting `AccessDenied` is
+easy to "fix" by widening `Resource` to `"*"`, which defeats the control entirely. `Deny`
+statements need only the specific ARN they target.
+
+Like `iam.runtime-execution-least-privilege`, this is a template —
 `infra_utils/agentcore_role.py` does not read AgentCore Identity today, so nothing deploys it
 automatically.
+
+Retrieving a token is also not the same as retrieving credentials: what a workload gets back
+is scoped to the user identity in its workload access token, and for OAuth2 3LO providers the
+end user must have completed authorization before any credentials exist to return.
+
+[scope-cp]: https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/scope-credential-provider-access.html
 
 ## Gateway configuration hardening (control-plane SCPs)
 

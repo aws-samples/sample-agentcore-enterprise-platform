@@ -149,12 +149,12 @@ def test_identity_credential_provider_policy_names_one_provider():
     by_sid = {s["Sid"]: s for s in doc["Statement"]}
 
     workload = by_sid["AllowOwnWorkloadIdentityTokens"]["Resource"]
-    assert workload.endswith("workload-identity/finance-agent")
-    assert "*" not in workload
+    assert any(r.endswith("workload-identity/finance-agent") for r in workload)
+    assert not any("*" in r for r in workload)
 
     provider = by_sid["AllowScopedOauth2CredentialProvider"]["Resource"]
-    assert provider.endswith("oauth2-credential-provider/entra-graph")
-    assert "*" not in provider
+    assert any(r.endswith("oauth2-credential-provider/entra-graph") for r in provider)
+    assert not any("*" in r for r in provider)
 
     # Defence in depth: the role denies the unverified-userId path outright, so the SCP
     # is not the only thing standing between a compromised agent and other users' tokens.
@@ -163,6 +163,47 @@ def test_identity_credential_provider_policy_names_one_provider():
     assert userid["Action"] == "bedrock-agentcore:GetWorkloadAccessTokenForUserId"
 
     assert "<<" not in json.dumps(doc)
+
+
+def test_identity_allow_statements_cover_every_required_resource_type():
+    """GetResourceOauth2Token declares four REQUIRED resource types, not one.
+
+    The Service Authorization Reference marks the directory, workload identity, token
+    vault and credential provider all required (the * suffix) for these actions, so an
+    Allow naming only the provider ARN authorises nothing. That failure is usually
+    "fixed" by widening Resource to "*", which is the opposite of the intent — so assert
+    the parent resources are present rather than trusting the leaf ARN alone.
+    """
+    doc = load_control(
+        "iam.identity-credential-provider-scoped",
+        {
+            "region": "us-east-1",
+            "account_id": "111122223333",
+            "workload_identity_name": "finance-agent",
+            "oauth2_provider_name": "entra-graph",
+        },
+    )
+    by_sid = {s["Sid"]: s for s in doc["Statement"]}
+
+    workload_required = (
+        "workload-identity-directory/default",
+        "workload-identity-directory/default/workload-identity/finance-agent",
+    )
+    resources = by_sid["AllowOwnWorkloadIdentityTokens"]["Resource"]
+    for suffix in workload_required:
+        assert any(r.endswith(suffix) for r in resources), (
+            f"GetWorkloadAccessToken* needs a resource ending {suffix}; got {resources}"
+        )
+
+    oauth2_required = workload_required + (
+        "token-vault/default",
+        "token-vault/default/oauth2-credential-provider/entra-graph",
+    )
+    resources = by_sid["AllowScopedOauth2CredentialProvider"]["Resource"]
+    for suffix in oauth2_required:
+        assert any(r.endswith(suffix) for r in resources), (
+            f"GetResourceOauth2Token needs a resource ending {suffix}; got {resources}"
+        )
 
 
 def test_identity_credential_provider_policy_requires_its_params():
