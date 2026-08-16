@@ -19,8 +19,16 @@ time, never template syntax that would break linting.
 - **CDK (Python)** — account/workload-scope controls, loaded via
   `infra_utils/policy_loader.py` and toggled by feature flags.
 
-Nothing is on by default. Turn controls on with feature flags, or use the
-`security-focused` profile which enables the account/workload set together.
+Every security control below is off by default. Turn them on with feature flags, or use the
+`security-focused` profile which enables the account/workload set together (including
+`enable_security`, the KMS CMK + CloudTrail stack that item 7 depends on).
+
+Two unrelated flags elsewhere in `app.py` *do* default on — `enable_transaction_search`
+(an account- and region-level CloudWatch/X-Ray setting, on because tracing does not work
+without it) and `enable_a2a`. On the Terraform side both `enable_scp_memory_enforce_cmk` and
+`enable_gateway_scps` default to `true`, so `terraform apply` attaches both SCPs unless you
+opt out. Flags are matched against the exact lowercase string `"true"`; `-c enable_cedar=True`
+silently does nothing.
 
 ## Controls
 
@@ -28,10 +36,11 @@ Nothing is on by default. Turn controls on with feature flags, or use the
 |---|---|---|---|---|
 | 1 | **SCP: CMK-for-Memory** | (Terraform vars) | `terraform/org-guardrails/` ← `control-library/scp/` | enforce |
 | 1b | **SCP: Gateway configuration hardening** (CMK, no-auth, policy-engine=ENFORCE, approved IdP, protocol, private-endpoint targets, credential-provider, target-type) | `enable_gateway_scps` + vars | `terraform/org-guardrails/gateway.tf` ← `control-library/scp/gateway/` | enforce |
-| 2 | **VPC endpoint policy + least-privilege IAM** — action-scoped; org restriction covers **SigV4 callers only** (OAuth/JWT callers carry no IAM principal and pass via `Principal: "*"` per AWS docs) | `enable_networking`, `org_id` | `networking_stack.py`, `agentcore_role.py` ← `control-library/vpce/`, `iam/` | org-scoped (SigV4) |
+| 2 | **VPC endpoint policy** — action-scoped; org restriction covers **SigV4 callers only** (OAuth/JWT callers carry no IAM principal and pass via `Principal: "*"` per AWS docs). Requires `org_id`: without it the endpoint is created with **no policy at all** | `enable_networking`, `org_id` | `stacks/networking_stack.py` ← `control-library/vpce/` | org-scoped (SigV4) when `org_id` set |
+| 2b | **Least-privilege runtime IAM** — SSM reads are path-scoped in `infra_utils/agentcore_role.py`; `control-library/iam/runtime-execution-least-privilege.json` is a **reference policy, not deployed** by any stack (the live role still grants ECR/X-Ray/`PutMetricData` on `Resource: "*"`) | — | `infra_utils/agentcore_role.py` | partial |
 | 3 | **AgentCore Cedar policies** | `enable_cedar`, `cedar_mode` | `gateway_stack.py` ← `control-library/cedar/` | LOG_ONLY |
 | 4 | **Resource-based policy: Memory in-account-only** | `enable_resource_policies`, `org_id` | `memory_stack.py` ← `control-library/resource-policies/` | enforce |
-| 5+6 | **Bedrock Guardrails + egress Lambda interceptor** | `enable_egress_filter` | `gateway_stack.py`, `tools/egress_interceptor/` ← `control-library/guardrails/` | enforce (guardrail) |
+| 5+6 | **Bedrock Guardrails + egress Lambda interceptor** | `enable_egress_filter` | `gateway_stack.py`, `tools/egress_interceptor/` ← `control-library/guardrails/` | **masking**, not blocking (see below) |
 | 7 | **Observability: SNS + EventBridge alerting** | `enable_traceability` | `observability_stack.py` | off |
 
 ## Feature flags
@@ -46,7 +55,11 @@ Set via CDK context (`-c flag=value`) or environment variable (`FLAG=value`):
 | `cedar_mode` | `CEDAR_MODE` | `LOG_ONLY` (default) or `ENFORCE` |
 | `enable_traceability` | `ENABLE_TRACEABILITY` | Alerting on sensitive API calls (item 7) |
 | `enable_networking` | `ENABLE_NETWORKING` | VPC + AgentCore endpoint policy (item 2) |
+| `enable_security` | `ENABLE_SECURITY` | KMS CMK + CloudTrail; **prerequisite for item 7** (needs management events) |
 | `org_id` | `ORG_ID` | Org ID (o-xxxx) required by items 2 and 4 |
+
+Item 4 hard-fails without `org_id`; item 2 silently ships an unpolicied endpoint instead.
+`scripts/deploy.sh` fails fast (or prompts) when resource policies are on and `ORG_ID` is empty.
 
 ## Quick start
 
@@ -55,8 +68,8 @@ Set via CDK context (`-c flag=value`) or environment variable (`FLAG=value`):
 export ORG_ID=o-yourorgid
 ./scripts/deploy.sh deploy --profile security-focused
 
-# Or one control at a time:
-NON_INTERACTIVE=1 cdk deploy agentcore-workshop-dev-gateway -c enable_cedar=true
+# Or one control at a time (NON_INTERACTIVE is read by deploy.sh only, not by cdk):
+cdk deploy agentcore-workshop-dev-gateway -c enable_cedar=true
 
 # Org guardrails (from the Organizations management account):
 cd terraform/org-guardrails && terraform init && terraform apply -var 'target_ids=["ou-..."]'
@@ -68,11 +81,32 @@ cd terraform/org-guardrails && terraform init && terraform apply -var 'target_id
   (`tools/egress_interceptor/`), inspecting requests and responses before egress to
   tools/targets.
 - **What it does:** PII masking/filtering and prompt-injection checks via Bedrock
-  Guardrails (`ApplyGuardrail`), config sourced from `control-library/guardrails/`;
-  authorization via the gateway's Cedar policy engine (default-deny posture: Cedar denies
-  anything not explicitly permitted) from
-  `control-library/cedar/`.
+  Guardrails (`ApplyGuardrail`), config sourced from `control-library/guardrails/`. It performs
+  **no authorization** — Cedar (item 3) is a separate control behind a separate flag, and
+  `enable_egress_filter` alone gives you none of it.
+- **Masking, not blocking:** the handler raises only when an assessment comes back
+  `action == "BLOCKED"`; otherwise it substitutes anonymized text and the request proceeds.
+- **Caveats:** the `gatewayRequest`/`gatewayResponse` shape is unvalidated, so the handler
+  scans every string leaf generically and passes payload shapes it does not recognise through
+  **unchanged**. There is no try/except around `ApplyGuardrail`, so a Bedrock throttle surfaces
+  as a Lambda failure rather than a defined fail-open/fail-closed decision. Validate against
+  live Gateway traces before relying on it in production.
 - **Toggle:** `enable_egress_filter`, deployed by `gateway_stack.py` like every other flag.
+
+## Cedar authorization (item 3)
+
+Cedar is implicit-deny: anything not explicitly permitted is denied. Note the repo previously
+shipped a blanket `forbid` alongside the read permit, which was removed — in Cedar a matching
+`forbid` overrides every `permit`, so it made the permit dead code and denied everything.
+
+What that means in practice, before you describe this as a default-deny gateway:
+
+1. `enable_cedar` defaults off, so no policy engine is attached and no Cedar evaluation happens.
+2. `cedar_mode` defaults to `LOG_ONLY`, so decisions are logged, not enforced. Nothing is
+   actually denied until `cedar_mode=ENFORCE`.
+3. The one shipped policy is unconstrained on principal and resource
+   (`permit(principal, action in [AgentCore::Action::"<<read_action>>"], resource);`), so any
+   authenticated caller may invoke the sample tool on any gateway. Narrow it before enforcing.
 
 ## Adding a control
 
@@ -98,31 +132,28 @@ They constrain what admins can create/update (control plane), enforced via
 | `targets-restrict-credential-provider` | `CredentialProviderType` | Deny `API_KEY` / `JWT_PASSTHROUGH` |
 | `targets-restrict-type` | `McpTargetConfigurationType` | Allow-list target types (lambda, mcpServer) |
 
+**They deploy as one policy, not eight.** Organizations allows only 5 SCPs per target (4 usable
+after `FullAWSAccess`), so `gateway.tf` flattens all eight documents into a single consolidated
+SCP, `${name_prefix}-scp-gateway-guardrails`. Consequences: `enable_gateway_scps` is
+all-or-nothing (subsetting means editing the map in `gateway.tf`), and a `lifecycle`
+precondition enforces the 5,120-character SCP limit plus Sid uniqueness — a ninth control can
+fail at plan time. The `for_each` is on the *attachment*, over `var.target_ids`.
+
 **"Fully-private Gateway" bundle:** `deny-no-auth` + `require-policy-engine` +
-`targets-require-private-endpoint` (control plane). The data-plane half — locking down *who
-can invoke* — is on the roadmap below.
+`targets-require-private-endpoint`. These are control-plane controls: they constrain how a
+gateway may be configured, not who may invoke one.
 
-### Roadmap (not yet launched)
-
-Data-plane condition keys and RCP support are launching later. When available, this repo will
-add (as `control-library/rcp/` + Terraform `RESOURCE_CONTROL_POLICY`):
-
-- **Private ingress:** `aws:SourceVpc` / `aws:SourceVpce` / `aws:VpceOrgID` on `InvokeGateway`
-  — the universal ingress lockdown that also covers OAuth callers (SCPs and VPC endpoint
-  policies only reach SigV4 callers: OAuth/JWT requests carry no IAM principal, so the
-  item-2 endpoint policy must allow them via `Principal: "*"` and cannot restrict who they
-  are). Requires enabling the RCP policy type + org onboarding.
-- **Inbound JWT claims:** `InboundJwtClaim/{aud,client_id,iss,scope,sub}` to restrict OAuth
-  callers by claim, via RCP or per-gateway resource-based policy. This is the mechanism
-  that will close the OAuth-caller gap left open by the item-2 endpoint policy.
-
-Until then, per-gateway resource-based policies (attached with the native
-`AWS::BedrockAgentCore::ResourcePolicy`, as used for Memory) are the available data-plane
-fallback.
+For invoke-time restrictions, per-gateway resource-based policies attached with the native
+`AWS::BedrockAgentCore::ResourcePolicy` (as used for Memory in item 4) are the mechanism this
+repo uses today.
 
 ## Safe rollout
 
-- Cedar ships `LOG_ONLY`; validate decision logs before `cedar_mode=ENFORCE`.
+- Cedar ships `LOG_ONLY`; validate decision logs before `cedar_mode=ENFORCE`, and narrow the
+  shipped permit's principal/resource first.
 - SCPs are additive-deny; attach to a sandbox OU first.
-- Guardrail uses the `DRAFT` version; pin a published version for production.
-- Subscribe an endpoint to the item-7 SNS topic to actually receive alerts.
+- Guardrail resolves to the `DRAFT` version (via `guardrail.attr_version`, not a hardcoded
+  string); pin a published version for production.
+- Subscribe an endpoint to the item-7 SNS topic to actually receive alerts. The topic is not
+  KMS-encrypted — add a CMK if alert contents are sensitive in your environment.
+- Item 7 needs CloudTrail management events, so enable it together with `enable_security`.

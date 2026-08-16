@@ -95,8 +95,7 @@ controls:
   # denied. The org restriction applies to SigV4 callers ONLY: a Deny with a Null guard
   # blocks IAM principals from outside the org. OAuth/JWT (Bearer) callers carry NO IAM
   # principal, so per AWS docs the Allow uses Principal "*" with no IAM-principal
-  # conditions — VPC endpoint policies CANNOT constrain OAuth callers (that lockdown is
-  # the RCP / InboundJwtClaim roadmap item in docs/SECURITY_CONTROLS.md).
+  # conditions — VPC endpoint policies CANNOT constrain OAuth callers.
   - id: vpce.agentcore-in-org
     file: vpce/agentcore-in-org.json
     type: VPCE
@@ -139,9 +138,8 @@ controls:
     validate: [checkov, access-analyzer]
 
   # ── Gateway configuration guardrails (org scope, Terraform) ──
-  # Control-plane SCPs using the launched AgentCore Gateway configuration condition keys.
-  # They constrain what admins can Create/Update, not who can invoke (data-plane keys + RCP
-  # ingress controls launch later — see docs/SECURITY_CONTROLS.md roadmap).
+  # Control-plane SCPs using the AgentCore Gateway configuration condition keys.
+  # They constrain what admins can Create/Update, not who can invoke a gateway.
   - id: scp.gateway.require-cmk
     file: scp/gateway/require-cmk.json
     type: SCP
