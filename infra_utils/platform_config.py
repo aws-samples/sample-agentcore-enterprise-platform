@@ -34,20 +34,59 @@ _ACCOUNT_RE = r"^\d{12}$"
 _REGION_RE = r"^[a-z]{2}(-[a-z]+)+-\d$"
 
 
+class FederationConfig(BaseModel):
+    """Platform-account endpoints a federated WORKLOAD account consumes.
+
+    The platform team fills this block after deploying the platform account
+    and hands it to workload teams (all four values are outputs of the auth
+    and gateway stacks; none is secret — the M2M client secret itself goes
+    into the workload account's OWN Secrets Manager under
+    m2m_client_secret_name, never into this file).
+
+    Trust is pure OAuth, verified live (docs/MULTI_ACCOUNT.md): the workload
+    account's token vault exchanges these client credentials against the
+    platform Cognito token endpoint, and the platform gateway accepts the
+    resulting JWT. No cross-account IAM anywhere on the data plane.
+    """
+
+    gateway_url: str = ""
+    issuer_url: str = ""  # platform Cognito issuer; discovery URL is derived
+    m2m_client_id: str = ""
+    m2m_client_secret_name: str = ""  # Secrets Manager NAME in the workload account
+
+    @property
+    def discovery_url(self) -> str:
+        return f"{self.issuer_url.rstrip('/')}/.well-known/openid-configuration"
+
+    @property
+    def is_complete(self) -> bool:
+        return all(
+            (
+                self.gateway_url,
+                self.issuer_url,
+                self.m2m_client_id,
+                self.m2m_client_secret_name,
+            )
+        )
+
+
 class DeploymentConfig(BaseModel):
     """Multi-account strategy. See docs/MULTI_ACCOUNT.md.
 
     centralized — everything in one account (the default; today's behavior).
     distributed — each team/workload account runs its own full copy of this
         file; org guardrails (terraform/org-guardrails) apply org-wide.
-    federated — shared services (gateway, identity, memory, observability)
-        live in platform_account; workload_accounts run agent runtimes that
-        consume them cross-account.
+    federated — shared services (auth, gateway, observability account setting)
+        live in platform_account; workload_accounts run agent runtimes plus
+        their own credential provider, consuming the platform gateway via
+        OAuth. The account you deploy into decides what gets deployed: the
+        same file works in both.
     """
 
     strategy: Literal["centralized", "distributed", "federated"] = "centralized"
     platform_account: str = ""
     workload_accounts: list[str] = Field(default_factory=list)
+    federation: FederationConfig = Field(default_factory=FederationConfig)
 
     @field_validator("platform_account")
     @classmethod
@@ -183,6 +222,26 @@ class PlatformConfig(BaseModel):
         if self.gateway.web_search == "auto":
             return self.region in WEB_SEARCH_REGIONS
         return self.gateway.web_search == "on"
+
+    def federated_role(self, account: str) -> str | None:
+        """Which side of a federated deployment this account is.
+
+        The same platform.yaml works in both accounts — the account you
+        deploy into decides what gets deployed. Deploying a federated file
+        from an account named in neither list is a hard error: it is the
+        config-file version of deploying to the wrong account.
+        """
+        if self.deployment.strategy != "federated":
+            return None
+        if account == self.deployment.platform_account:
+            return "platform"
+        if account in self.deployment.workload_accounts:
+            return "workload"
+        raise ValueError(
+            f"strategy is 'federated' but account {account or '(unset)'} is neither "
+            f"deployment.platform_account ({self.deployment.platform_account}) nor in "
+            f"deployment.workload_accounts ({self.deployment.workload_accounts})"
+        )
 
 
 def load_platform_config(path: str | Path) -> PlatformConfig:

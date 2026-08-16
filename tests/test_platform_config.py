@@ -212,3 +212,68 @@ def test_app_py_resolves_through_cfg():
         "these app.py lookups bypass cfg() and so ignore platform.yaml:\n"
         + "\n".join(stale)
     )
+
+
+# ── Federated strategy (PR C) ──────────────────────────────────────────────
+
+FED = {
+    "deployment": {
+        "strategy": "federated",
+        "platform_account": "111122223333",
+        "workload_accounts": ["444455556666"],
+        "federation": {
+            "gateway_url": "https://example.gateway/mcp",
+            "issuer_url": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_X",
+            "m2m_client_id": "client123",
+            "m2m_client_secret_name": "agentcore/platform-m2m",
+        },
+    }
+}
+
+
+def test_federated_role_by_account():
+    config = PlatformConfig.model_validate(FED)
+    assert config.federated_role("111122223333") == "platform"
+    assert config.federated_role("444455556666") == "workload"
+
+
+def test_federated_role_wrong_account_is_a_hard_error():
+    config = PlatformConfig.model_validate(FED)
+    with pytest.raises(ValueError) as excinfo:
+        config.federated_role("999999999999")
+    assert "neither" in str(excinfo.value)
+
+
+def test_federated_role_is_none_for_other_strategies():
+    config = PlatformConfig.model_validate({})
+    assert config.federated_role("111122223333") is None
+
+
+def test_federation_block_completeness_and_derived_discovery():
+    config = PlatformConfig.model_validate(FED)
+    federation = config.deployment.federation
+    assert federation.is_complete
+    assert federation.discovery_url.endswith("/.well-known/openid-configuration")
+    incomplete = PlatformConfig.model_validate(
+        {
+            "deployment": {
+                "strategy": "federated",
+                "platform_account": "111122223333",
+                "workload_accounts": ["444455556666"],
+            }
+        }
+    )
+    assert not incomplete.deployment.federation.is_complete
+
+
+def test_app_gates_stacks_by_federated_role():
+    """Static guard: the stack graph must consult the role. If someone
+    unconditionally re-instantiates auth/gateway (platform-only) or the
+    runtimes (workload-only), federation silently degrades to centralized."""
+    src = (REPO / "app.py").read_text()
+    assert "is_fed_workload" in src and "is_fed_platform" in src
+    assert src.index("federated_role") < src.index("AuthStack(")
+    # auth + gateway skipped in workload accounts
+    assert "if not is_fed_workload:" in src
+    # runtimes skipped in the platform account
+    assert "if not is_fed_platform:" in src
