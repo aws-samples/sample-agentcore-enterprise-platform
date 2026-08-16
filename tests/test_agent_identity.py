@@ -113,3 +113,22 @@ def test_agents_importing_shared_copy_it_into_the_image():
     assert not offenders, (
         f"these agents import shared/ but their image does not contain it: {offenders}"
     )
+
+
+def test_header_allowlist_is_gated_with_the_authorizer():
+    """The Authorization allowlist must live inside the authorizer conditional.
+
+    The control plane rejects a runtime that allowlists Authorization without
+    customJWTAuthorizer ("Authorization header can be specified in
+    requestHeaderAllowlist only when runtime is set up with customJWTAuthorizer"
+    — observed live: every A2A runtime deploy failed while the allowlist was
+    unconditional). Both settings must be applied under the same
+    needs_jwt_authorizer(...) condition.
+    """
+    src = (REPO / "stacks" / "runtime_stack.py").read_text()
+    guard = src.index("if needs_jwt_authorizer(protocol) and cognito_issuer_url:")
+    allowlist = src.index('"requestHeaderAllowlist"')
+    assert allowlist > guard, (
+        "requestHeaderAllowlist is set before the authorizer conditional — "
+        "unconditional again; A2A runtime deploys will fail with InvalidRequest"
+    )
