@@ -13,7 +13,7 @@ identity:
   idp: entra_id
   tenant_id: "00000000-0000-0000-0000-000000000000"   # your Entra tenant
   client_id: "REPLACE_ME"
-  client_secret_name: "agentcore/idp-client-secret"
+  client_secret_name: "agentcore/idp-client-secret"  # pragma: allowlist secret — Secrets Manager NAME, not a value
 
 agents:
   pattern: langgraph-agent    # bring your framework; see the 7 patterns

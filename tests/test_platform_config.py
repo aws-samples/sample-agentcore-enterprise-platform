@@ -225,7 +225,7 @@ FED = {
             "gateway_url": "https://example.gateway/mcp",
             "issuer_url": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_X",
             "m2m_client_id": "client123",
-            "m2m_client_secret_name": "agentcore/platform-m2m",
+            "m2m_client_secret_name": "agentcore/platform-m2m",  # pragma: allowlist secret — a NAME
         },
     }
 }

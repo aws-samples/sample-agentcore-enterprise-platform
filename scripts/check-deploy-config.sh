@@ -20,7 +20,7 @@ CFG="$TMP/workshop.env"
 [ "$CONFIG_FILE" = "$CFG" ] || fail "CONFIG_FILE extraction broken: $CONFIG_FILE"
 
 # (a) env var already set wins over the saved file; unset vars are filled in.
-printf 'AWS_REGION=eu-central-1\nIDP_TYPE=okta\n' > "$CFG"
+printf 'AWS_REGION=eu-central-1\nIDP_TYPE=okta\n' > "$CFG"  # pragma: allowlist secret
 AWS_REGION="us-west-2"
 load_config
 [ "$AWS_REGION" = "us-west-2" ] || fail "env var clobbered by saved config"
@@ -28,7 +28,7 @@ load_config
 echo "PASS: env var wins over workshop.env; unset keys are loaded"
 
 # (b) secrets in the environment never reach the file.
-IDP_CLIENT_SECRET="supersecret" TAVILY_API_KEY="tv-key-123" save_config
+IDP_CLIENT_SECRET="supersecret" TAVILY_API_KEY="tv-key-123" save_config  # pragma: allowlist secret — test input proving secrets are never persisted
 [ -f "$CFG" ] || fail "save_config wrote nothing"
 ! grep -v '^#' "$CFG" | grep -qiE 'secret|api_key|tv-key' || fail "secret leaked: $(cat "$CFG")"
 grep -q '^AWS_REGION=us-west-2$' "$CFG" || fail "answer not persisted"
@@ -150,7 +150,7 @@ region: eu-west-1
 agents:
   pattern: langgraph-agent
 YAML
-printf 'AGENT_PATTERN=strands-agent\nAWS_REGION=eu-central-1\n' > "$CFG"
+printf 'AGENT_PATTERN=strands-agent\nAWS_REGION=eu-central-1\n' > "$CFG"  # pragma: allowlist secret
 unset PROJECT_NAME AGENT_PATTERN AWS_REGION 2>/dev/null || true
 AWS_REGION="us-west-2"            # explicit env: must survive everything
 apply_platform_config
