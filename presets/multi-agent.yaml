@@ -1,0 +1,28 @@
+# Multi-agent: orchestrator + A2A sub-agents, long-term memory.
+# Modules: 3 4 5 6 7 8 9
+project: agentcore-workshop
+environment: dev
+region: us-east-1
+
+deployment:
+  strategy: centralized
+
+identity:
+  idp: cognito
+
+agents:
+  pattern: claude-sdk-multi-agent
+  a2a: true
+  memory:
+    long_term: true
+    top_k: 10
+    relevance_score: 0.3
+
+gateway:
+  web_search: auto
+  tools: [sample-tool]
+
+security: {}
+
+observability:
+  transaction_search: true
