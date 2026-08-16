@@ -136,4 +136,34 @@ echo "PASS: destroy --all still cascades"
 PATH="$STUB2:$PATH" destroy_stacks boom >/dev/null 2>&1 && fail "refused destroy reported success"
 echo "PASS: a refused destroy is not swallowed"
 
+# (i) platform.yaml participates with the right precedence:
+# explicit env > platform.yaml > workshop.env.
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+eval "$(sed -n '/^PLATFORM_CONFIG=/p; /^apply_platform_config()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
+[ -n "$PLATFORM_CONFIG" ] || fail "apply_platform_config extraction broken"
+# The sandbox PROJECT_DIR has no venv/infra_utils — point the loader at the repo.
+PROJECT_DIR="$REPO_ROOT"
+PLATFORM_CONFIG="$TMP/platform.yaml"
+cat > "$PLATFORM_CONFIG" <<'YAML'
+project: from-yaml
+region: eu-west-1
+agents:
+  pattern: langgraph-agent
+YAML
+printf 'AGENT_PATTERN=strands-agent\nAWS_REGION=eu-central-1\n' > "$CFG"
+unset PROJECT_NAME AGENT_PATTERN AWS_REGION 2>/dev/null || true
+AWS_REGION="us-west-2"            # explicit env: must survive everything
+apply_platform_config
+load_config
+[ "$AWS_REGION" = "us-west-2" ]        || fail "env var lost to platform.yaml: $AWS_REGION"
+[ "$PROJECT_NAME" = "from-yaml" ]      || fail "platform.yaml value not applied: ${PROJECT_NAME:-unset}"
+[ "$AGENT_PATTERN" = "langgraph-agent" ] || fail "workshop.env beat platform.yaml: $AGENT_PATTERN"
+echo "PASS: env > platform.yaml > workshop.env precedence"
+
+# (j) an invalid platform.yaml stops the run instead of deploying defaults.
+printf 'agents:\n  pattern: skynet\n' > "$PLATFORM_CONFIG"
+( apply_platform_config ) >/dev/null 2>&1 && fail "invalid platform.yaml was accepted"
+echo "PASS: invalid platform.yaml refuses to continue"
+rm -f "$PLATFORM_CONFIG"
+
 echo "OK: all deploy-config checks passed"

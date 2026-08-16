@@ -23,6 +23,7 @@ import os
 
 import aws_cdk as cdk
 
+from infra_utils.platform_config import PlatformConfig, load_platform_config, to_env
 from stacks.auth_stack import AuthStack
 from stacks.gateway_stack import GatewayStack
 from stacks.identity_stack import IdentityStack
@@ -34,15 +35,42 @@ from stacks.security_stack import SecurityStack
 
 app = cdk.App()
 
-# ── Configuration (context or environment variables) ──
-project = app.node.try_get_context("project") or os.environ.get(
-    "PROJECT_NAME", "agentcore-workshop"
+# ── platform.yaml (optional declarative config) ──
+# Precedence: cdk context > env var > platform.yaml > legacy defaults.
+# Loading FAILS the synth on an invalid file (with every error listed) —
+# deploying defaults the user didn't write would be worse than stopping.
+# Without the file, behavior is identical to before it existed: _yaml_env is
+# empty and every lookup falls through to its legacy default (which is why
+# resolution goes through to_env() rather than PlatformConfig attributes —
+# schema defaults and legacy defaults deliberately differ, e.g. ENABLE_A2A).
+_config_path = app.node.try_get_context("platform_config") or os.environ.get(
+    "PLATFORM_CONFIG", "platform.yaml"
 )
-env_name = app.node.try_get_context("environment") or os.environ.get(
-    "ENVIRONMENT", "dev"
-)
-region = app.node.try_get_context("region") or os.environ.get(
-    "CDK_DEFAULT_REGION", "us-east-1"
+platform_config: PlatformConfig | None = None
+_yaml_env: dict[str, str] = {}
+if os.path.exists(_config_path):
+    platform_config = load_platform_config(_config_path)
+    _yaml_env = to_env(platform_config)
+
+
+def cfg(context_key: str, env_key: str, default: str) -> str:
+    """context > env > platform.yaml > legacy default."""
+    return (
+        app.node.try_get_context(context_key)
+        or os.environ.get(env_key, "")
+        or _yaml_env.get(env_key, "")
+        or default
+    )
+
+
+# ── Configuration (context, environment, or platform.yaml) ──
+project = cfg("project", "PROJECT_NAME", "agentcore-workshop")
+env_name = cfg("environment", "ENVIRONMENT", "dev")
+region = (
+    app.node.try_get_context("region")
+    or os.environ.get("CDK_DEFAULT_REGION", "")
+    or _yaml_env.get("AWS_REGION", "")
+    or "us-east-1"
 )
 account = os.environ.get("CDK_DEFAULT_ACCOUNT", "")
 
@@ -50,92 +78,72 @@ cdk_env = cdk.Environment(account=account, region=region)
 prefix = f"{project}-{env_name}"
 
 # Feature flags
-enable_networking = (
-    app.node.try_get_context("enable_networking")
-    or os.environ.get("ENABLE_NETWORKING", "false")
-) == "true"
-enable_security = (
-    app.node.try_get_context("enable_security")
-    or os.environ.get("ENABLE_SECURITY", "false")
-) == "true"
-enable_a2a = (
-    app.node.try_get_context("enable_a2a") or os.environ.get("ENABLE_A2A", "true")
-) == "true"
+enable_networking = cfg("enable_networking", "ENABLE_NETWORKING", "false") == "true"
+enable_security = cfg("enable_security", "ENABLE_SECURITY", "false") == "true"
+enable_a2a = cfg("enable_a2a", "ENABLE_A2A", "true") == "true"
 
 # Web Search built-in gateway connector: on by default where the connector
 # exists, off elsewhere (creating the target in an unsupported region fails the
-# deploy). Override either way with enable_web_search=true|false.
+# deploy). Override either way with enable_web_search=true|false; in
+# platform.yaml this is gateway.web_search (auto|on|off, auto = region gate).
 WEB_SEARCH_REGIONS = {"us-east-1", "eu-west-1", "ap-northeast-1"}
 enable_web_search = (
-    app.node.try_get_context("enable_web_search")
-    or os.environ.get("ENABLE_WEB_SEARCH", "")
-    or ("true" if region in WEB_SEARCH_REGIONS else "false")
-) == "true"
-idp_type = app.node.try_get_context("idp_type") or os.environ.get("IDP_TYPE", "cognito")
+    cfg(
+        "enable_web_search",
+        "ENABLE_WEB_SEARCH",
+        "true" if region in WEB_SEARCH_REGIONS else "false",
+    )
+    == "true"
+)
+idp_type = cfg("idp_type", "IDP_TYPE", "cognito")
 
 
 # Security control feature flags (control-library / scope-split model).
 # Additional flags (enable_guardrails, enable_cedar) will be added here as their stacks land.
 enable_resource_policies = (
-    app.node.try_get_context("enable_resource_policies")
-    or os.environ.get("ENABLE_RESOURCE_POLICIES", "false")
-) == "true"
+    cfg("enable_resource_policies", "ENABLE_RESOURCE_POLICIES", "false") == "true"
+)
 # Egress Lambda interceptor + Bedrock Guardrail on the Gateway (PII masking, prompt injection).
 enable_egress_filter = (
-    app.node.try_get_context("enable_egress_filter")
-    or os.environ.get("ENABLE_EGRESS_FILTER", "false")
-) == "true"
+    cfg("enable_egress_filter", "ENABLE_EGRESS_FILTER", "false") == "true"
+)
 # AgentCore Cedar policy engine on the Gateway (explicit read permits; Cedar's implicit
 # default-deny covers everything else). cedar_mode is
 # LOG_ONLY (evaluate + log) or ENFORCE (block); ships LOG_ONLY for safe rollout.
-enable_cedar = (
-    app.node.try_get_context("enable_cedar") or os.environ.get("ENABLE_CEDAR", "false")
-) == "true"
-cedar_mode = app.node.try_get_context("cedar_mode") or os.environ.get(
-    "CEDAR_MODE", "LOG_ONLY"
-)
+enable_cedar = cfg("enable_cedar", "ENABLE_CEDAR", "false") == "true"
+cedar_mode = cfg("cedar_mode", "CEDAR_MODE", "LOG_ONLY")
 # Detective controls: SNS + EventBridge alerting on sensitive AgentCore API calls (item 7).
 enable_traceability = (
-    app.node.try_get_context("enable_traceability")
-    or os.environ.get("ENABLE_TRACEABILITY", "false")
-) == "true"
+    cfg("enable_traceability", "ENABLE_TRACEABILITY", "false") == "true"
+)
 # CloudWatch Transaction Search. Defaults ON because tracing does not work without
 # it (X-Ray rejects every span batch with HTTP 400), but it is an account- and
 # region-level setting: turn it off where a platform team owns tracing centrally.
 enable_transaction_search = (
-    app.node.try_get_context("enable_transaction_search")
-    or os.environ.get("ENABLE_TRANSACTION_SEARCH", "true")
-) == "true"
+    cfg("enable_transaction_search", "ENABLE_TRANSACTION_SEARCH", "true") == "true"
+)
 # AWS Organizations ID (o-xxxx). Required when enable_resource_policies is on, so the
 # in-account-only resource policies can render their aws:PrincipalOrgID deny guard.
-org_id = app.node.try_get_context("org_id") or os.environ.get("ORG_ID", "")
+org_id = cfg("org_id", "ORG_ID", "")
 
 # Agent pattern selection (from FAST reference patterns)
 # Options: strands-agent, langgraph-agent, claude-sdk-agent, claude-sdk-multi-agent,
 #          agui-strands-agent, agui-langgraph-agent
-agent_pattern = app.node.try_get_context("agent_pattern") or os.environ.get(
-    "AGENT_PATTERN", "orchestrator"
-)
+agent_pattern = cfg("agent_pattern", "AGENT_PATTERN", "orchestrator")
 
 # Optional Bedrock model ID override (cross-region inference profile, e.g.
 # us.anthropic.claude-sonnet-5). When unset, MODEL_ID is NOT injected into the
 # runtimes and each agent pattern falls back to its in-code DEFAULT_MODEL_ID —
 # agent code stays the single source of truth for the default.
-model_id = app.node.try_get_context("model_id") or os.environ.get("MODEL_ID", "")
+model_id = cfg("model_id", "MODEL_ID", "")
 model_env = {"MODEL_ID": model_id} if model_id else {}
 
 # Long-term memory configuration
 use_long_term_memory = (
-    app.node.try_get_context("use_long_term_memory")
-    or os.environ.get("USE_LONG_TERM_MEMORY", "false")
-) == "true"
-ltm_top_k = int(
-    app.node.try_get_context("ltm_top_k") or os.environ.get("LTM_TOP_K", "10")
+    cfg("use_long_term_memory", "USE_LONG_TERM_MEMORY", "false") == "true"
 )
-ltm_relevance_score = float(
-    app.node.try_get_context("ltm_relevance_score")
-    or os.environ.get("LTM_RELEVANCE_SCORE", "0.3")
-)
+ltm_top_k = int(cfg("ltm_top_k", "LTM_TOP_K", "10"))
+ltm_relevance_score = float(cfg("ltm_relevance_score", "LTM_RELEVANCE_SCORE", "0.3"))
 
 # IdP config from context or env.
 # The IdP client secret is NEVER accepted as plaintext context — only the name of a
@@ -143,14 +151,10 @@ ltm_relevance_score = float(
 # {{resolve:secretsmanager:...}} dynamic reference so the value never appears in
 # process listings or the synthesized template.
 idp_config = {
-    "tenant_id": app.node.try_get_context("idp_tenant_id")
-    or os.environ.get("IDP_TENANT_ID", ""),
-    "client_id": app.node.try_get_context("idp_client_id")
-    or os.environ.get("IDP_CLIENT_ID", ""),
-    "client_secret_name": app.node.try_get_context("idp_client_secret_name")
-    or os.environ.get("IDP_CLIENT_SECRET_NAME", ""),
-    "issuer_url": app.node.try_get_context("idp_issuer_url")
-    or os.environ.get("IDP_ISSUER_URL", ""),
+    "tenant_id": cfg("idp_tenant_id", "IDP_TENANT_ID", ""),
+    "client_id": cfg("idp_client_id", "IDP_CLIENT_ID", ""),
+    "client_secret_name": cfg("idp_client_secret_name", "IDP_CLIENT_SECRET_NAME", ""),
+    "issuer_url": cfg("idp_issuer_url", "IDP_ISSUER_URL", ""),
 }
 
 # OAuth provider credentials

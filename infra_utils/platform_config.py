@@ -11,8 +11,9 @@ cycles. Validate without touching AWS:
 
     python -m infra_utils.platform_config platform.yaml
 
-Precedence when app.py consumes this (see load note below):
-    env var  >  cdk context  >  platform.yaml  >  model defaults
+Precedence when consumed (matches the pre-existing context-over-env order):
+    app.py:    cdk context  >  env var  >  platform.yaml  >  legacy defaults
+    deploy.sh: explicit env >  platform.yaml  >  workshop.env  >  prompts
 platform.yaml is optional — every existing flag keeps working without it.
 """
 
@@ -191,19 +192,65 @@ def load_platform_config(path: str | Path) -> PlatformConfig:
     return PlatformConfig.model_validate(raw)
 
 
+def to_env(config: PlatformConfig) -> dict[str, str]:
+    """Map the schema onto the env-var names deploy.sh and app.py already use.
+
+    Only these names cross the shell boundary; everything else stays in the
+    typed model. Empty values are omitted so fill-if-unset logic in deploy.sh
+    never clobbers a variable with "".
+    """
+    pairs = {
+        "PROJECT_NAME": config.project,
+        "ENVIRONMENT": config.environment,
+        "AWS_REGION": config.region,
+        "DEPLOYMENT_STRATEGY": config.deployment.strategy,
+        "PLATFORM_ACCOUNT": config.deployment.platform_account,
+        "IDP_TYPE": config.identity.idp,
+        "IDP_TENANT_ID": config.identity.tenant_id,
+        "IDP_CLIENT_ID": config.identity.client_id,
+        "IDP_ISSUER_URL": config.identity.issuer_url,
+        "IDP_CLIENT_SECRET_NAME": config.identity.client_secret_name,
+        "AGENT_PATTERN": config.agents.pattern,
+        "MODEL_ID": config.agents.model_id,
+        "ENABLE_A2A": str(config.agents.a2a).lower(),
+        "USE_LONG_TERM_MEMORY": str(config.agents.memory.long_term).lower(),
+        "LTM_TOP_K": str(config.agents.memory.top_k),
+        "LTM_RELEVANCE_SCORE": str(config.agents.memory.relevance_score),
+        "ENABLE_WEB_SEARCH": str(config.web_search_enabled).lower(),
+        "ENABLE_NETWORKING": str(config.security.networking).lower(),
+        "ENABLE_SECURITY": str(config.security.cloudtrail_alerting).lower(),
+        "ENABLE_RESOURCE_POLICIES": str(config.security.resource_policies).lower(),
+        "ENABLE_EGRESS_FILTER": str(config.security.egress_filter).lower(),
+        "ENABLE_CEDAR": str(config.security.cedar.enabled).lower(),
+        "CEDAR_MODE": config.security.cedar.mode,
+        "ENABLE_TRACEABILITY": str(config.security.traceability).lower(),
+        "ORG_ID": config.security.org_id,
+        "ENABLE_TRANSACTION_SEARCH": str(
+            config.observability.transaction_search
+        ).lower(),
+    }
+    return {k: v for k, v in pairs.items() if v != ""}
+
+
 def _main() -> int:
-    if len(sys.argv) != 2:
+    args = [a for a in sys.argv[1:] if a != "--export"]
+    export = "--export" in sys.argv[1:]
+    if len(args) != 1:
         print(
-            "usage: python -m infra_utils.platform_config <platform.yaml>",
+            "usage: python -m infra_utils.platform_config [--export] <platform.yaml>",
             file=sys.stderr,
         )
         return 2
     try:
-        config = load_platform_config(sys.argv[1])
+        config = load_platform_config(args[0])
     except Exception as exc:  # noqa: BLE001 — the point is printing them all
-        print(f"INVALID: {sys.argv[1]}\n{exc}", file=sys.stderr)
+        print(f"INVALID: {args[0]}\n{exc}", file=sys.stderr)
         return 1
-    print(f"OK: {sys.argv[1]}")
+    if export:
+        for key, value in to_env(config).items():
+            print(f"{key}={value}")
+        return 0
+    print(f"OK: {args[0]}")
     print(config.model_dump_json(indent=2))
     return 0
 

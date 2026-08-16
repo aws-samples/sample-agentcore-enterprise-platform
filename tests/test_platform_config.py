@@ -158,3 +158,57 @@ def test_preset_yaml_matches_schema_dump_roundtrip():
     for preset in PRESETS:
         raw = yaml.safe_load(preset.read_text())
         assert PlatformConfig.model_validate(raw)
+
+
+def test_to_env_maps_onto_the_names_deploy_already_uses():
+    from infra_utils.platform_config import to_env
+
+    env = to_env(load_platform_config(REPO / "presets" / "security-focused.yaml"))
+    assert env["ENABLE_NETWORKING"] == "true"
+    assert env["ENABLE_CEDAR"] == "true"
+    assert env["CEDAR_MODE"] == "LOG_ONLY"
+    assert env["ENABLE_SECURITY"] == "true"  # schema name: cloudtrail_alerting
+    assert env["AGENT_PATTERN"] == "orchestrator"
+    assert env["ORG_ID"] == "o-REPLACEME"
+    # web_search auto in us-east-1 resolves to on
+    assert env["ENABLE_WEB_SEARCH"] == "true"
+
+
+def test_to_env_omits_empty_values():
+    """Empty strings must not cross the shell boundary: deploy.sh fill-if-unset
+    would treat them as set and skip workshop.env / prompts."""
+    from infra_utils.platform_config import to_env
+
+    env = to_env(PlatformConfig.model_validate({}))
+    assert "MODEL_ID" not in env  # empty = pattern default, not ""
+    assert "IDP_TENANT_ID" not in env
+    assert all(v != "" for v in env.values())
+
+
+def test_app_py_resolves_through_cfg():
+    """Static guard: every legacy `try_get_context(...) or environ.get(...)`
+    lookup in app.py must go through cfg() so platform.yaml participates.
+    OAuth provider secrets are the deliberate exception (secrets never live
+    in the config file)."""
+    src = (REPO / "app.py").read_text()
+    allowed = (
+        "google_client",
+        "github_client",
+        "notion_client",
+        "platform_config",
+        "region",  # region merges CDK_DEFAULT_REGION explicitly
+        "CDK_DEFAULT_ACCOUNT",
+        "env_key",  # cfg()'s own body
+    )
+    stale = []
+    for i, line in enumerate(src.splitlines(), 1):
+        if (
+            "environ.get(" in line
+            and "cfg(" not in line
+            and not any(a in line or a in src.splitlines()[i - 2] for a in allowed)
+        ):
+            stale.append(f"app.py:{i}: {line.strip()}")
+    assert not stale, (
+        "these app.py lookups bypass cfg() and so ignore platform.yaml:\n"
+        + "\n".join(stale)
+    )
