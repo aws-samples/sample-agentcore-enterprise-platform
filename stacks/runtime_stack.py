@@ -269,26 +269,29 @@ class RuntimeStack(cdk.Stack):
             "network_configuration": network_config,
             "protocol_configuration": protocol,
             "environment_variables": env_vars,
-            # Forward Authorization to the container so agents can read JWT claims
-            # (agent-code/shared/auth.py). Without this, context.request_headers is
-            # empty and every JWT-consuming pattern fails at invoke time. The agent
-            # re-verifies the signature itself rather than trusting the authorizer
-            # below: this allowlist is unconditional, so a runtime deployed without
-            # an authorizer (A2A, or any runtime built without an issuer) forwards
-            # whatever Authorization header it is handed. Docs: "Propagate a JWT
-            # token to AgentCore Runtime" (runtime-oauth) + runtime-header-allowlist.
-            "request_header_configuration": {
-                "requestHeaderAllowlist": ["Authorization"],
-            },
         }
 
-        # CUSTOM_JWT auth for client-facing protocols (HTTP, MCP, AGUI).
+        # CUSTOM_JWT auth for client-facing protocols (HTTP, MCP, AGUI), plus the
+        # Authorization header allowlist so agents can read JWT claims
+        # (agent-code/shared/auth.py) — without it context.request_headers is
+        # empty and every JWT-consuming pattern fails at invoke time. The two are
+        # deliberately gated TOGETHER: the control plane rejects an Authorization
+        # allowlist on a runtime without customJWTAuthorizer ("Authorization
+        # header can be specified in requestHeaderAllowlist only when runtime is
+        # set up with customJWTAuthorizer", observed live on an A2A deploy). So
+        # an authorizer-less runtime (A2A, or built without an issuer) cannot
+        # forward Authorization at all — its agent must not require a caller JWT.
+        # Docs: "Propagate a JWT token to AgentCore Runtime" (runtime-oauth) +
+        # runtime-header-allowlist.
         if needs_jwt_authorizer(protocol) and cognito_issuer_url:
             runtime_props["authorizer_configuration"] = {
                 "customJwtAuthorizer": {
                     "discoveryUrl": f"{cognito_issuer_url}/.well-known/openid-configuration",
                     "allowedClients": cognito_allowed_clients or [],
                 },
+            }
+            runtime_props["request_header_configuration"] = {
+                "requestHeaderAllowlist": ["Authorization"],
             }
 
         self._runtime = agentcore.CfnRuntime(self, "Runtime", **runtime_props)

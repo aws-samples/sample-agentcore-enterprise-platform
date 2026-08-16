@@ -37,10 +37,14 @@ the runtime happens to be deployed.
 
 `runtime_stack.py` attaches an authorizer only when the protocol is client-facing
 (`HTTP`, `MCP`, `AGUI` — see `infra_utils/runtime_protocol.py`) **and** a Cognito issuer was
-supplied. The `Authorization` header allowlist, by contrast, is unconditional. So an A2A
-runtime, or any runtime built without an issuer, forwards whatever `Authorization` header it
-receives with nothing upstream having checked it. Those runtimes are guarded only by IAM
-(`InvokeAgentRuntime`).
+supplied. The `Authorization` header allowlist is gated on exactly the same condition, because
+the control plane enforces it: creating a runtime that allowlists `Authorization` without a
+`customJWTAuthorizer` is rejected with a validation error (observed live on an A2A deploy).
+So an A2A runtime, or any runtime built without an issuer, never sees an `Authorization`
+header at all — its agent cannot require a caller JWT, and such runtimes are guarded by IAM
+(`InvokeAgentRuntime`) instead. The agent-side verification in `shared/auth.py` still stands
+on client-facing runtimes: it keeps the check in your code rather than depending on how the
+runtime happens to be deployed.
 
 The Gateway has its own separate `CUSTOM_JWT` authorizer, configured the same way in
 `stacks/gateway_stack.py`. Runtime and Gateway are independent — configuring one says nothing
