@@ -47,6 +47,26 @@ variable "kms_key_arn_pattern" {
   default     = "arn:aws:kms:*:*:key/*"
 }
 
+# ── Control: scp.identity.deny-workload-token-for-userid ──
+variable "enable_scp_identity_deny_token_for_userid" {
+  description = "Create and attach the 'deny GetWorkloadAccessTokenForUserId' SCP."
+  type        = bool
+  default     = true
+}
+
+variable "identity_approved_principal_arn_pattern" {
+  description = <<-EOT
+    Principal ARN pattern exempted from the GetWorkloadAccessTokenForUserId deny
+    (aws:PrincipalArn, ArnNotLike). The default names a role that does not exist, so the
+    control is a blanket deny until a real pattern is supplied. Narrow to a specific
+    break-glass role ARN only if a migration or batch job genuinely needs the userId path.
+    Injected over the <<approved_principal_arn_pattern>> sentinel in
+    control-library/scp/identity/deny-workload-token-for-userid.json.
+  EOT
+  type        = string
+  default     = "arn:aws:iam::*:role/__no_principal_may_mint_tokens_by_userid__"
+}
+
 # ── Controls: Gateway configuration SCPs (control plane) ──
 variable "enable_gateway_scps" {
   description = "Create and attach the AgentCore Gateway configuration hardening SCPs."

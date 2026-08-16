@@ -42,6 +42,7 @@ silently does nothing.
 | 4 | **Resource-based policy: Memory in-account-only** | `enable_resource_policies`, `org_id` | `memory_stack.py` ← `control-library/resource-policies/` | enforce |
 | 5+6 | **Bedrock Guardrails + egress Lambda interceptor** | `enable_egress_filter` | `gateway_stack.py`, `tools/egress_interceptor/` ← `control-library/guardrails/` | **masking**, not blocking (see below) |
 | 7 | **Observability: SNS + EventBridge alerting** | `enable_traceability` | `observability_stack.py` | off |
+| 8 | **AgentCore Identity: deny unverified-userId workload tokens**, plus a scoped credential-provider IAM reference policy | `enable_scp_identity_deny_token_for_userid` (Terraform var) | `terraform/org-guardrails/identity.tf` ← `control-library/scp/identity/`, `control-library/iam/` | enforce (denies everyone) |
 
 ## Feature flags
 
@@ -114,6 +115,58 @@ What that means in practice, before you describe this as a default-deny gateway:
 2. Load it in a stack via `policy_loader.load_control[_json|_text]` behind a feature flag,
    or reference it from a Terraform module with `replace()`.
 3. `make validate-controls && make test-controls` — then add a synth check to `TESTING.md`.
+
+## AgentCore Identity controls (item 8)
+
+Two controls covering the token path into the credential vault.
+
+**SCP: deny `GetWorkloadAccessTokenForUserId`.** That API takes the user identifier as an
+unverified string. Any principal holding the action can mint a workload access token for any
+user and read that user's stored credentials out of the token vault — no JWT, no proof of
+identity anywhere in the call. Agents behind Runtime or Gateway inbound auth never need it:
+the caller's verified token arrives with the request, and `GetWorkloadAccessTokenForJWT` is
+the path that checks it.
+
+The exemption parameter defaults to a role ARN that cannot exist, so the control denies
+everyone until an operator supplies a real pattern. Narrow it only for a genuine break-glass
+or migration path, and prefer removing the need over widening the pattern:
+
+```bash
+cd terraform/org-guardrails && terraform apply \
+  -var 'target_ids=["ou-example-11111111"]' \
+  -var 'identity_approved_principal_arn_pattern=arn:aws:iam::111122223333:role/break-glass'
+```
+
+If you need the userId path for a specific service and want something narrower than an ARN
+exemption, the action also supports the `bedrock-agentcore:userid` condition key, so the deny
+can be scoped by user identifier instead. The blanket form is the safer default.
+
+Quota note: this is a standalone SCP, bringing the module to 3 attachments per target against
+4 usable slots (the 5-per-target limit minus `FullAWSAccess`). A fourth standalone SCP is the
+last one that fits — beyond that, merge statements the way `gateway.tf` does.
+
+**IAM: `iam.identity-credential-provider-scoped`.** A reference policy for an agent's own
+execution role. AgentCore [does not enforce any binding][scope-cp] between a workload identity
+and the credential providers it may read, so IAM is the only fence: one workload identity and
+one role per trust boundary, each naming exactly one provider. A shared execution role hands
+every agent every provider's credentials.
+
+Note each `Allow` lists the parent resources as well as the leaf. `GetResourceOauth2Token` and
+the `GetWorkloadAccessToken*` actions declare several **required** resource types — the
+directory and the token vault as well as the workload identity and the provider — so a
+statement naming only the provider ARN authorises nothing. The resulting `AccessDenied` is
+easy to "fix" by widening `Resource` to `"*"`, which defeats the control entirely. `Deny`
+statements need only the specific ARN they target.
+
+Like `iam.runtime-execution-least-privilege`, this is a template —
+`infra_utils/agentcore_role.py` does not read AgentCore Identity today, so nothing deploys it
+automatically.
+
+Retrieving a token is also not the same as retrieving credentials: what a workload gets back
+is scoped to the user identity in its workload access token, and for OAuth2 3LO providers the
+end user must have completed authorization before any credentials exist to return.
+
+[scope-cp]: https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/scope-credential-provider-access.html
 
 ## Gateway configuration hardening (control-plane SCPs)
 

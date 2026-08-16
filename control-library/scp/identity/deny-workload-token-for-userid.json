@@ -1,0 +1,16 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyWorkloadTokenForUserId",
+      "Effect": "Deny",
+      "Action": "bedrock-agentcore:GetWorkloadAccessTokenForUserId",
+      "Resource": "*",
+      "Condition": {
+        "ArnNotLike": {
+          "aws:PrincipalArn": "<<approved_principal_arn_pattern>>"
+        }
+      }
+    }
+  ]
+}
