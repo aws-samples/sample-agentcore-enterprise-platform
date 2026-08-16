@@ -61,6 +61,16 @@ enable_security = (
 enable_a2a = (
     app.node.try_get_context("enable_a2a") or os.environ.get("ENABLE_A2A", "true")
 ) == "true"
+
+# Web Search built-in gateway connector: on by default where the connector
+# exists, off elsewhere (creating the target in an unsupported region fails the
+# deploy). Override either way with enable_web_search=true|false.
+WEB_SEARCH_REGIONS = {"us-east-1", "eu-west-1", "ap-northeast-1"}
+enable_web_search = (
+    app.node.try_get_context("enable_web_search")
+    or os.environ.get("ENABLE_WEB_SEARCH", "")
+    or ("true" if region in WEB_SEARCH_REGIONS else "false")
+) == "true"
 idp_type = app.node.try_get_context("idp_type") or os.environ.get("IDP_TYPE", "cognito")
 
 
@@ -265,6 +275,7 @@ gateway_stack = GatewayStack(
     environment=env_name,
     cognito_issuer_url=auth_stack.issuer_url,
     cognito_allowed_clients=[auth_stack.app_client_id, auth_stack.m2m_client_id],
+    enable_web_search=enable_web_search,
     tool_configs={
         "sample-tool": {
             "source_dir": "tools/sample_tool",

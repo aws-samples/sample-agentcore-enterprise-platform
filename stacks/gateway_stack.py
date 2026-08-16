@@ -32,6 +32,7 @@ class GatewayStack(cdk.Stack):
         cognito_issuer_url: str,
         cognito_allowed_clients: list[str],
         tool_configs: dict | None = None,
+        enable_web_search: bool = False,
         enable_egress_filter: bool = False,
         enable_cedar: bool = False,
         cedar_mode: str = "LOG_ONLY",
@@ -57,6 +58,28 @@ class GatewayStack(cdk.Stack):
                 ],
             )
         )
+        if enable_web_search:
+            # The Web Search built-in connector authorizes per request against a
+            # service-owned tool ARN (account id is literally "aws"). Both actions
+            # are documented requirements for the gateway service role.
+            gw_role.add_to_policy(
+                iam.PolicyStatement(
+                    sid="InvokeGateway",
+                    actions=["bedrock-agentcore:InvokeGateway"],
+                    resources=[
+                        f"arn:aws:bedrock-agentcore:{self.region}:{self.account}:gateway/*"
+                    ],
+                )
+            )
+            gw_role.add_to_policy(
+                iam.PolicyStatement(
+                    sid="InvokeWebSearch",
+                    actions=["bedrock-agentcore:InvokeWebSearch"],
+                    resources=[
+                        f"arn:aws:bedrock-agentcore:{self.region}:aws:tool/web-search.v1"
+                    ],
+                )
+            )
 
         # ── Optional: egress Lambda interceptor + Bedrock Guardrail (control-library) ──
         # Applies a Bedrock Guardrail to Gateway REQUEST/RESPONSE for PII masking and
@@ -251,6 +274,33 @@ class GatewayStack(cdk.Stack):
                     "ToolSchema": {
                         "InlinePayload": config.get("tool_schema", []),
                     },
+                },
+            )
+
+        # Web Search built-in connector target: Amazon-operated search index
+        # exposed as a standard MCP tool. No Lambda, no API key, and queries
+        # never leave AWS. Region-gated in app.py (us-east-1 / eu-west-1 /
+        # ap-northeast-1 at launch).
+        if enable_web_search:
+            web_search = agentcore.CfnGatewayTarget(
+                self,
+                "Target-web-search",
+                name="web-search",
+                gateway_identifier=self._gateway.attr_gateway_identifier,
+                credential_provider_configurations=[
+                    {"credentialProviderType": "GATEWAY_IAM_ROLE"},
+                ],
+                target_configuration={"mcp": {}},
+            )
+            # Same override trick as the Lambda targets: the L1 property mapping
+            # predates the connector target type, so set it directly. No version
+            # pin — the connector's default version tracks Amazon's improvements
+            # (and dated pins rot; see the model-ID lesson).
+            web_search.add_property_override(
+                "TargetConfiguration.Mcp.Connector",
+                {
+                    "Source": {"ConnectorId": "web-search"},
+                    "Configurations": [{"Name": "WebSearch", "ParameterValues": {}}],
                 },
             )
 
