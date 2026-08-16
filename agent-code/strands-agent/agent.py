@@ -5,6 +5,7 @@ import logging
 import os
 
 from bedrock_agentcore.runtime import BedrockAgentCoreApp, RequestContext
+from shared.auth import extract_user_id_from_context
 from strands import Agent
 from strands.models import BedrockModel
 
@@ -78,15 +79,21 @@ async def invocations(payload, context: RequestContext):
         return
 
     try:
-        # Extract user ID from JWT context
-        user_id = "anonymous"
-        if hasattr(context, "identity") and context.identity:
-            user_id = getattr(context.identity, "sub", "anonymous")
+        # Identity comes from the verified JWT, never from the payload. This is
+        # the Memory actor_id below, so an unverified fallback would let every
+        # caller share one actor's conversation history.
+        user_id = extract_user_id_from_context(context)
 
         agent = _create_agent(user_id, session_id)
 
         async for event in agent.stream_async(user_query):
             yield json.loads(json.dumps(dict(event), default=str))
+
+    except ValueError as e:
+        # Token missing, malformed, or failed verification. Log the reason,
+        # return a generic rejection so the response leaks no auth detail.
+        logger.warning("Rejected unverified caller: %s", e)
+        yield {"status": "error", "error": "Unauthorized"}
 
     except Exception as e:
         logger.exception("Agent run failed")

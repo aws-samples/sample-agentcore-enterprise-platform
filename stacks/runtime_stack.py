@@ -271,9 +271,11 @@ class RuntimeStack(cdk.Stack):
             "environment_variables": env_vars,
             # Forward Authorization to the container so agents can read JWT claims
             # (agent-code/shared/auth.py). Without this, context.request_headers is
-            # empty and every JWT-consuming pattern fails at invoke time. Runtime
-            # has already validated the token via the authorizer below, so the agent
-            # decodes without re-verifying the signature. Docs: "Propagate a JWT
+            # empty and every JWT-consuming pattern fails at invoke time. The agent
+            # re-verifies the signature itself rather than trusting the authorizer
+            # below: this allowlist is unconditional, so a runtime deployed without
+            # an authorizer (A2A, or any runtime built without an issuer) forwards
+            # whatever Authorization header it is handed. Docs: "Propagate a JWT
             # token to AgentCore Runtime" (runtime-oauth) + runtime-header-allowlist.
             "request_header_configuration": {
                 "requestHeaderAllowlist": ["Authorization"],
