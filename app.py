@@ -355,9 +355,8 @@ if networking_stack:
     runtime_orchestrator.add_dependency(networking_stack)
 # The orchestrator fetches Gateway tokens through the identity stack's M2M
 # credential provider, so the provider must exist before the runtime starts.
-# code-agent / research-agent runtimes don't get GATEWAY_CREDENTIAL_PROVIDER_NAME:
-# their agent code has no gateway tools (only the orchestrator patterns under
-# agent-code/ use tools/gateway.py).
+# code-agent has no gateway tools; research-agent does (web search), so it
+# gets the same gateway env vars and dependencies below.
 runtime_orchestrator.add_dependency(identity_stack)
 
 # ── A2A Agent Runtimes (optional) ──
@@ -384,22 +383,31 @@ if enable_a2a:
     if networking_stack:
         runtime_code_agent.add_dependency(networking_stack)
 
-    # Research Agent (A2A protocol)
+    # Research Agent (A2A protocol). Unlike code-agent it has gateway tools
+    # (web search), so its build context is agent-code/ (its Dockerfile copies
+    # shared/) and it gets the gateway env vars + identity/gateway dependencies.
     runtime_research_agent = RuntimeStack(
         app,
         f"{prefix}-runtime-research-agent",
         project_name=project,
         environment=env_name,
         component_name="research-agent",
-        source_dir="agent-code/research-agent",
+        source_dir="agent-code",
+        dockerfile_pattern="research-agent",
         runtime_type="a2a_agent",
         cognito_issuer_url=auth_stack.issuer_url,
         cognito_allowed_clients=[auth_stack.app_client_id, auth_stack.m2m_client_id],
-        extra_env_vars=model_env,
+        extra_env_vars={
+            "GATEWAY_URL": gateway_stack.gateway_url,
+            "GATEWAY_CREDENTIAL_PROVIDER_NAME": identity_stack.gateway_credential_provider_name,
+            **model_env,
+        },
         **runtime_network,
         env=cdk_env,
     )
     runtime_research_agent.add_dependency(auth_stack)
+    runtime_research_agent.add_dependency(gateway_stack)
+    runtime_research_agent.add_dependency(identity_stack)
     if networking_stack:
         runtime_research_agent.add_dependency(networking_stack)
 
