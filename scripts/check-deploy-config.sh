@@ -20,7 +20,7 @@ CFG="$TMP/workshop.env"
 [ "$CONFIG_FILE" = "$CFG" ] || fail "CONFIG_FILE extraction broken: $CONFIG_FILE"
 
 # (a) env var already set wins over the saved file; unset vars are filled in.
-printf 'AWS_REGION=eu-central-1\nIDP_TYPE=okta\n' > "$CFG"
+printf 'AWS_REGION=eu-central-1\nIDP_TYPE=okta\n' > "$CFG"  # pragma: allowlist secret
 AWS_REGION="us-west-2"
 load_config
 [ "$AWS_REGION" = "us-west-2" ] || fail "env var clobbered by saved config"
@@ -28,7 +28,7 @@ load_config
 echo "PASS: env var wins over workshop.env; unset keys are loaded"
 
 # (b) secrets in the environment never reach the file.
-IDP_CLIENT_SECRET="supersecret" TAVILY_API_KEY="tv-key-123" save_config
+IDP_CLIENT_SECRET="supersecret" TAVILY_API_KEY="tv-key-123" save_config  # pragma: allowlist secret — test input proving secrets are never persisted
 [ -f "$CFG" ] || fail "save_config wrote nothing"
 ! grep -v '^#' "$CFG" | grep -qiE 'secret|api_key|tv-key' || fail "secret leaked: $(cat "$CFG")"
 grep -q '^AWS_REGION=us-west-2$' "$CFG" || fail "answer not persisted"
@@ -135,5 +135,35 @@ echo "PASS: destroy --all still cascades"
 
 PATH="$STUB2:$PATH" destroy_stacks boom >/dev/null 2>&1 && fail "refused destroy reported success"
 echo "PASS: a refused destroy is not swallowed"
+
+# (i) platform.yaml participates with the right precedence:
+# explicit env > platform.yaml > workshop.env.
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+eval "$(sed -n '/^PLATFORM_CONFIG=/p; /^apply_platform_config()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
+[ -n "$PLATFORM_CONFIG" ] || fail "apply_platform_config extraction broken"
+# The sandbox PROJECT_DIR has no venv/infra_utils — point the loader at the repo.
+PROJECT_DIR="$REPO_ROOT"
+PLATFORM_CONFIG="$TMP/platform.yaml"
+cat > "$PLATFORM_CONFIG" <<'YAML'
+project: from-yaml
+region: eu-west-1
+agents:
+  pattern: langgraph-agent
+YAML
+printf 'AGENT_PATTERN=strands-agent\nAWS_REGION=eu-central-1\n' > "$CFG"  # pragma: allowlist secret
+unset PROJECT_NAME AGENT_PATTERN AWS_REGION 2>/dev/null || true
+AWS_REGION="us-west-2"            # explicit env: must survive everything
+apply_platform_config
+load_config
+[ "$AWS_REGION" = "us-west-2" ]        || fail "env var lost to platform.yaml: $AWS_REGION"
+[ "$PROJECT_NAME" = "from-yaml" ]      || fail "platform.yaml value not applied: ${PROJECT_NAME:-unset}"
+[ "$AGENT_PATTERN" = "langgraph-agent" ] || fail "workshop.env beat platform.yaml: $AGENT_PATTERN"
+echo "PASS: env > platform.yaml > workshop.env precedence"
+
+# (j) an invalid platform.yaml stops the run instead of deploying defaults.
+printf 'agents:\n  pattern: skynet\n' > "$PLATFORM_CONFIG"
+( apply_platform_config ) >/dev/null 2>&1 && fail "invalid platform.yaml was accepted"
+echo "PASS: invalid platform.yaml refuses to continue"
+rm -f "$PLATFORM_CONFIG"
 
 echo "OK: all deploy-config checks passed"

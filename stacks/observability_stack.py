@@ -84,6 +84,16 @@ class ObservabilityStack(cdk.Stack):
                     physical_resource_id=cr.PhysicalResourceId.of(
                         f"{prefix}-trace-destination"
                     ),
+                    # The API refuses a no-op with InvalidRequestException
+                    # ("The destination is already set to CloudWatchLogs") —
+                    # hit live deploying into an account that already had
+                    # Transaction Search on. Ignoring the CODE is broader than
+                    # the message (the SDK matcher only sees codes), so a
+                    # genuinely failed set could slip through here —
+                    # check_observability.py check 1 (GetTraceSegmentDestination
+                    # is CloudWatchLogs and ACTIVE) is the backstop, and it runs
+                    # in MODULE_VERIFY[9].
+                    ignore_error_codes_matching="InvalidRequestException",
                 ),
                 # UpdateTraceSegmentDestination also provisions the span log
                 # groups and starts Application Signals discovery, so the caller

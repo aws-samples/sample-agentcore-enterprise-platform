@@ -1,0 +1,31 @@
+# Platform team: the full build — every module, distributed-ready.
+# Modules: 3 4 5 A 6 7 8 9 C E
+# Distributed strategy: each workload team deploys its own copy of this file
+# into its own account; org-guardrails (terraform/) apply org-wide once.
+project: agentcore-workshop
+environment: dev
+region: us-east-1
+
+deployment:
+  strategy: distributed
+
+identity:
+  idp: cognito
+
+agents:
+  pattern: orchestrator
+  a2a: true
+  memory:
+    long_term: true
+
+gateway:
+  web_search: auto
+  tools: [sample-tool]
+
+security:
+  networking: true            # VPC mode
+  cloudtrail_alerting: true
+  traceability: true
+
+observability:
+  transaction_search: true

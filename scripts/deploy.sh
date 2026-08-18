@@ -86,6 +86,43 @@ load_config() {
     n=$(grep -c '=' "$CONFIG_FILE" || true)
     log_info "Loaded saved config from workshop.env ($n values; env vars override)"
 }
+# ── platform.yaml (declarative config) ──
+# Precedence: explicit env vars > platform.yaml > workshop.env (wizard answers)
+# > interactive prompts. A user-authored file beats remembered answers, so it
+# is applied BEFORE load_config (which only fills still-unset keys). Fail-soft
+# here: this runs before setup_venv, so pydantic may not exist yet — app.py
+# hard-validates the same file at synth time either way.
+PLATFORM_CONFIG="${PLATFORM_CONFIG:-$PROJECT_DIR/platform.yaml}"
+apply_platform_config() {
+    [ -f "$PLATFORM_CONFIG" ] || return 0
+    local py="$PROJECT_DIR/.venv/bin/python"
+    [ -x "$py" ] || py="python3"
+    local exports key value
+    # cd: infra_utils must be importable; this runs before the main-flow cd.
+    if ! exports=$(cd "$PROJECT_DIR" && "$py" -m infra_utils.platform_config --export "$PLATFORM_CONFIG" 2>&1); then
+        log_warn "platform.yaml present but not loadable yet (missing venv?) — continuing without it."
+        log_warn "Validate it with: python -m infra_utils.platform_config $PLATFORM_CONFIG"
+        # A malformed file must not silently deploy defaults: hard-stop when the
+        # parse failed for a reason other than missing dependencies.
+        if ! echo "$exports" | grep -q "ModuleNotFoundError"; then
+            log_error "platform.yaml is invalid:"
+            echo "$exports" >&2
+            exit 1
+        fi
+        return 0
+    fi
+    local applied=0
+    while IFS='=' read -r key value; do
+        [ -z "$key" ] && continue
+        if [ -z "${!key:-}" ]; then
+            printf -v "$key" '%s' "$value"
+            export "${key?}"
+            applied=$((applied + 1))
+        fi
+    done <<< "$exports"
+    log_info "Applied $applied value(s) from $PLATFORM_CONFIG (env vars override)"
+}
+apply_platform_config
 load_config
 
 # ── Configuration ──
@@ -674,9 +711,18 @@ if [ "$ACTION" = "config" ]; then
     if [ "${1:-}" = "--reset" ]; then
         rm -f "$CONFIG_FILE"
         log_info "Removed workshop.env"
-    elif [ -f "$CONFIG_FILE" ]; then
+        exit 0
+    fi
+    if [ -f "$PLATFORM_CONFIG" ]; then
+        echo "# platform.yaml → effective values (env vars override):"
+        py="$PROJECT_DIR/.venv/bin/python"; [ -x "$py" ] || py="python3"
+        "$py" -m infra_utils.platform_config --export "$PLATFORM_CONFIG" || exit 1
+        echo ""
+    fi
+    if [ -f "$CONFIG_FILE" ]; then
+        echo "# workshop.env (wizard answers; platform.yaml overrides):"
         cat "$CONFIG_FILE"
-    else
+    elif [ ! -f "$PLATFORM_CONFIG" ]; then
         echo "none"
     fi
     exit 0
