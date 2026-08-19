@@ -1,10 +1,11 @@
 # Dependabot: visible PRs only, never auto-merged.
 #
-# This repo's GitHub presence (aws-samples) is a publish target; GitLab is the
-# source of truth. Dependency bumps are folded into GitLab deliberately —
-# container-import and live-invoke checks live there, GitHub Actions runs
-# neither — and reach GitHub through the next export. The auto-merge workflow
-# this replaces would have merged untested bumps into the sample.
+# CI here runs no container builds and no agent invocations, so a green check
+# on a dependency PR says very little. Agent-framework bumps are verified by
+# hand — arm64 container build, `import agent` inside the image, and a live
+# invoke against a deployed runtime — before merging. Reviewers: split large
+# grouped batches by risk rather than merging them whole (see PRs #21–#23,
+# which replaced one uninstallable 25-package batch).
 version: 2
 updates:
   - package-ecosystem: "pip"
@@ -17,6 +18,16 @@ updates:
       python-deps:
         patterns: ["*"]
     open-pull-requests-limit: 5
+    ignore:
+      # mcp 2.x is held back deliberately, not neglected: strands-agents,
+      # claude-agent-sdk and langchain-mcp-adapters all still declare
+      # mcp<2.0.0, so any 2.x bump makes the tree uninstallable
+      # (pip: ResolutionImpossible). Without this, dependabot re-proposes it
+      # every week and drags a whole grouped batch down with it. Remove this
+      # entry once those three publish 2.x-compatible releases — check with:
+      #   pip install --dry-run strands-agents mcp==2.0.0
+      - dependency-name: "mcp"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
