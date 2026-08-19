@@ -201,4 +201,43 @@ IDP_CLIENT_SECRET=$'\n  \n'
 unset -f aws
 echo "PASS: IdP client secret is trimmed (and empty-after-trim refused)"
 
+# (l) a secret the operator already owns is used, not duplicated under our name.
+# Configuring identity.client_secret_name (platform.yaml) or IDP_CLIENT_SECRET_NAME
+# used to be ignored: deploy.sh probed only <prefix>-idp-client-secret, asked for
+# the value anyway, and stored a second copy.
+eval "$(sed -n '/^prompt_idp()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
+# shellcheck disable=SC2034,SC2329  # read by the eval'd functions, not statically
+NON_INTERACTIVE=0
+IDP_CLIENT_SECRET_NAME="my-corp/entra-secret"
+IDP_TYPE="entra_id"
+unset IDP_CLIENT_SECRET
+
+# The stub answers "exists" only for the operator's secret, so probing the
+# prefixed name instead would fall through to the secret prompt.
+# shellcheck disable=SC2329
+aws() { printf '%s\n' "$*" >> "$TMP/aws.args"; [[ "$*" == *my-corp/entra-secret* ]]; }
+: > "$TMP/aws.args"
+# Two blank lines: "keep saved IdP? [Y/n]" → yes, plus a spare for the secret
+# prompt the old behaviour reached — so this check fails with its own message
+# rather than dying on `read` at EOF.
+prompt_idp >/dev/null 2>&1 <<< $'\n'
+grep -q -- "describe-secret --secret-id my-corp/entra-secret" "$TMP/aws.args" \
+    || fail "configured secret name not probed: $(cat "$TMP/aws.args")"
+[ "$IDP_CLIENT_SECRET_NAME" = "my-corp/entra-secret" ] \
+    || fail "configured secret name overwritten: $IDP_CLIENT_SECRET_NAME"
+
+# Rotating a value in must land in the operator's secret, not a fork of it.
+# shellcheck disable=SC2329
+aws() { printf '%s\n' "$*" >> "$TMP/aws.args"; return 0; }
+: > "$TMP/aws.args"
+# shellcheck disable=SC2034  # read by the eval'd upsert_idp_secret
+IDP_CLIENT_SECRET="rotated-value"
+upsert_idp_secret >/dev/null 2>&1 || true
+grep -q -- "put-secret-value --secret-id my-corp/entra-secret" "$TMP/aws.args" \
+    || fail "rotation did not target the configured secret: $(cat "$TMP/aws.args")"
+! grep -q -- "$PREFIX-idp-client-secret" "$TMP/aws.args" \
+    || fail "secret duplicated under our own name: $(cat "$TMP/aws.args")"
+unset -f aws prompt_idp
+echo "PASS: a configured IdP secret name is reused, not duplicated"
+
 echo "OK: all deploy-config checks passed"

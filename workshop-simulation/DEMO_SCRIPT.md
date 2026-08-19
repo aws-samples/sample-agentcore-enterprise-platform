@@ -55,12 +55,20 @@ export IDP_CLIENT_SECRET='<entra-actor-app-secret>'  # From Azure portal or Secr
 
 **Deploy:**
 ```bash
+# The secret goes to Secrets Manager first — CDK only ever receives its NAME.
+aws secretsmanager create-secret --name agentcore-workshop-dev-idp-client-secret \
+  --secret-string "$IDP_CLIENT_SECRET"
+
 cdk deploy agentcore-workshop-dev-auth \
   -c idp_type=entra_id \
   -c idp_tenant_id=$IDP_TENANT_ID \
   -c idp_client_id=$IDP_CLIENT_ID \
-  -c idp_client_secret=$IDP_CLIENT_SECRET
+  -c idp_client_secret_name=agentcore-workshop-dev-idp-client-secret
 ```
+
+`run-workshop.sh` does both steps for you. Passing the secret itself as
+`-c idp_client_secret=...` is rejected by the stack: context values land in
+`cdk.context.json`, process listings, and the synthesized template.
 
 **Verify:**
 - Open Cognito console → User Pool → Sign-in experience → show EntraID provider
