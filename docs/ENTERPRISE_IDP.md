@@ -88,6 +88,18 @@ aws secretsmanager get-secret-value --secret-id agentcore/entra-client-secret \
 Do not use `--output text` for this check — the CLI appends its own newline and
 you will chase a bug that is not there.
 
+**Already have the secret in Secrets Manager?** Name it and the deploy will use
+it as-is — no prompt, no copy:
+
+```yaml
+identity:
+  client_secret_name: my-corp/entra-client-secret   # any name you already own
+```
+
+`./scripts/deploy.sh` checks that secret exists and passes the name through. If
+you also supply `IDP_CLIENT_SECRET` (rotating the value), it writes into that
+same secret rather than creating one of its own.
+
 ### 4. Deploy with federation on
 
 ```bash
