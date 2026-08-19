@@ -142,6 +142,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 eval "$(sed -n '/^PLATFORM_CONFIG=/p; /^apply_platform_config()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
 [ -n "$PLATFORM_CONFIG" ] || fail "apply_platform_config extraction broken"
 # The sandbox PROJECT_DIR has no venv/infra_utils — point the loader at the repo.
+# shellcheck disable=SC2034  # read by the eval'd apply_platform_config
 PROJECT_DIR="$REPO_ROOT"
 PLATFORM_CONFIG="$TMP/platform.yaml"
 cat > "$PLATFORM_CONFIG" <<'YAML'
@@ -165,5 +166,39 @@ printf 'agents:\n  pattern: skynet\n' > "$PLATFORM_CONFIG"
 ( apply_platform_config ) >/dev/null 2>&1 && fail "invalid platform.yaml was accepted"
 echo "PASS: invalid platform.yaml refuses to continue"
 rm -f "$PLATFORM_CONFIG"
+
+# (k) the IdP client secret is trimmed before it reaches Secrets Manager.
+# A trailing newline (pasted, or piped from `az ... -o tsv`) is stored verbatim,
+# Cognito forwards it to the IdP token endpoint, and the exchange fails with
+# invalid_client mentioning nothing about whitespace.
+eval "$(sed -n '/^upsert_idp_secret()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
+# The function unsets the plaintext when it is done (deliberate hygiene), so
+# assert on what it PASSED to the CLI rather than on the variable afterwards.
+# SC2034/SC2329: PREFIX, AWS_REGION and IDP_CLIENT_SECRET are read by the
+# eval'd function, and the aws stub is invoked from inside it — both invisible
+# to shellcheck's static view.
+# shellcheck disable=SC2034,SC2329
+aws() { printf '%s\n' "$*" >> "$TMP/aws.args"; return 0; }
+# shellcheck disable=SC2034
+PREFIX="check-prefix"; AWS_REGION="us-east-1"
+
+: > "$TMP/aws.args"
+IDP_CLIENT_SECRET=$'sekret-value\n'          # trailing newline, as pasted/piped
+upsert_idp_secret >/dev/null 2>&1 || true
+grep -q -- "--secret-string sekret-value " "$TMP/aws.args" \
+    || fail "newline not stripped before Secrets Manager: $(cat "$TMP/aws.args")"
+
+: > "$TMP/aws.args"
+IDP_CLIENT_SECRET="  padded  "
+upsert_idp_secret >/dev/null 2>&1 || true
+grep -q -- "--secret-string padded " "$TMP/aws.args" \
+    || fail "surrounding spaces not stripped: $(cat "$TMP/aws.args")"
+
+# All-whitespace must stop the run rather than store an empty secret.
+# shellcheck disable=SC2034
+IDP_CLIENT_SECRET=$'\n  \n'
+( upsert_idp_secret ) >/dev/null 2>&1 && fail "whitespace-only secret was accepted"
+unset -f aws
+echo "PASS: IdP client secret is trimmed (and empty-after-trim refused)"
 
 echo "OK: all deploy-config checks passed"
