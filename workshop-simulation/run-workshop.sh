@@ -68,6 +68,15 @@ fi
 
 log_step "PRE-FLIGHT CHECKS"
 
+# Trim the client secret before validating it. A value pasted from the Entra
+# portal, or piped in from `az ad app credential reset -o tsv`, carries a
+# trailing newline; Cognito forwards it verbatim to the IdP and the token
+# exchange fails with invalid_client, naming nothing about whitespace (see
+# docs/ENTERPRISE_IDP.md). A whitespace-only value trims to empty and is caught
+# by the missing-vars check below.
+IDP_CLIENT_SECRET="$(printf '%s' "${IDP_CLIENT_SECRET:-}" | tr -d '\n\r' \
+    | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
 MISSING_IDP_VARS=()
 [[ -z "${IDP_TENANT_ID:-}" ]] && MISSING_IDP_VARS+=("IDP_TENANT_ID")
 [[ -z "${IDP_CLIENT_ID:-}" ]] && MISSING_IDP_VARS+=("IDP_CLIENT_ID")
