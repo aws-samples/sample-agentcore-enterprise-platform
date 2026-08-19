@@ -118,7 +118,7 @@ real runs — the long ones are container builds in CodeBuild, not hangs.
 | **5** | Gateway & Registry | AgentCore MCP Gateway, Lambda tool target, JWT auth against Cognito | `test_gateway.py` — real `tools/list` + `tools/call` | ~3 min |
 | **A** | Memory | Managed Memory, user-preference strategy (semantic extraction only with long-term memory on) | `test_memory.py` | ~2 min |
 | **6** | Agent Deployment | The orchestrator agent: CodeBuild builds the container, Runtime runs it | `invoke.py` — the agent answers | **~7–8 min** |
-| **7** | Gateway Integration | New tool targets, picked up without redeploying the agent | `test_gateway.py` shows the new tool | ~3 min |
+| **7** | Gateway Integration | New tool targets, picked up without redeploying the agent — walkthrough: [`GATEWAY_TARGETS.md`](GATEWAY_TARGETS.md) | `test_gateway.py` shows the new tool | ~3 min |
 | **8** | Agent-to-Agent | code + research sub-agents on their own runtimes, serving the A2A JSON-RPC contract | `invoke.py --a2a code-agent` — a real A2A invoke | ~8 min |
 | **9** | Observability | Vended log delivery, X-Ray tracing, Transaction Search | `check_observability.py` | ~3 min |
 | **B** | Code Interpreter | *(no guided narration or verify — not in any profile sequence; redeploys the orchestrator)* | — | — |
@@ -255,6 +255,7 @@ account-level setting other workloads may now rely on.
 |---|---|
 | How does it fit together? | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
 | How is the caller authenticated? | [`IDENTITY.md`](IDENTITY.md) |
+| How do I add my own tool to the gateway? | [`GATEWAY_TARGETS.md`](GATEWAY_TARGETS.md) |
 | What security controls exist, and what do they really enforce? | [`SECURITY_CONTROLS.md`](SECURITY_CONTROLS.md) |
 | One account or many? | [`MULTI_ACCOUNT.md`](MULTI_ACCOUNT.md) |
 | Why don't I see traces? | [`TRACING.md`](TRACING.md) |
