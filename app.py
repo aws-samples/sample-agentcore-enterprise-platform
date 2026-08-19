@@ -448,7 +448,10 @@ if enable_a2a and not is_fed_platform:
         project_name=project,
         environment=env_name,
         component_name="code-agent",
-        source_dir="agent-code/code-agent",
+        # Build context is agent-code/ (not the pattern dir): the A2A serving
+        # helper lives in shared/, so the Dockerfile has to copy it.
+        source_dir="agent-code",
+        dockerfile_pattern="code-agent",
         runtime_type="a2a_agent",
         cognito_issuer_url=issuer_url,
         cognito_allowed_clients=allowed_clients,

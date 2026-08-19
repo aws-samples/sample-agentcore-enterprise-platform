@@ -231,12 +231,20 @@ expiry, issuer and client) rather than trusting that the runtime authorizer ran
 
 ### Invoke returns HTTP 424
 
-The container is not serving the protocol the runtime expects. Known case:
-the **A2A sub-agents** (`code-agent`, `research-agent`) are built on the HTTP
-contract (`/invocations` on port 8080) while the A2A protocol requires a
-JSON-RPC server on port 9000 with an agent card — so they deploy fine and 424
-on every invoke. Tracked as a known issue; the orchestrator patterns are
-unaffected.
+The container is not serving the protocol the runtime expects. The usual cause
+is invoking an **A2A sub-agent** (`code-agent`, `research-agent`) with the HTTP
+payload shape: they speak JSON-RPC 2.0 on port 9000, so `{"prompt": ...}` gets
+you a 424. Use the A2A path, which sends a `message/send` envelope:
+
+```bash
+python scripts/invoke.py --a2a code-agent "Reply with exactly: A2A OK"
+python scripts/invoke.py --a2a research-agent "…"
+```
+
+If a sub-agent you wrote yourself 424s, check it serves the contract: `/` POST
+(JSON-RPC), `/.well-known/agent-card.json` GET, and `/ping` GET returning
+`{"status": "Healthy"}`, all on **0.0.0.0:9000**. `agent-code/shared/a2a_serve.py`
+does this for the shipped sub-agents.
 
 Otherwise check the runtime's protocol against what its code serves:
 
@@ -252,9 +260,17 @@ AG-UI's typed SSE events on the same endpoint.
 
 ### `Authorization method mismatch` on invoke
 
-A runtime with a JWT authorizer rejects SigV4 calls. Use the data-plane
-endpoint with a bearer token — which is what `scripts/invoke.py` does, so
-prefer it over hand-rolled `aws bedrock-agentcore invoke-agent-runtime`.
+The runtime's inbound auth and your request disagree, and it cuts **both** ways:
+
+| Runtime | Auth it expects | How to call it |
+|---|---|---|
+| orchestrator (`HTTP`/`AGUI`/`MCP`) | Bearer JWT — it has a CUSTOM_JWT authorizer | `invoke.py` / `invoke.py --agui` |
+| A2A sub-agents (`A2A`) | **SigV4** — no authorizer; guarded by IAM `InvokeAgentRuntime` | `invoke.py --a2a <component>` |
+
+A2A is not a client-facing protocol, so those runtimes deliberately get no JWT
+authorizer (`infra_utils/runtime_protocol.py`) — sending a bearer token to one
+is rejected exactly like sending SigV4 to the orchestrator. Prefer
+`scripts/invoke.py`, which picks the right mechanism per target.
 
 ### The agent reports no tools, or only the code interpreter
 

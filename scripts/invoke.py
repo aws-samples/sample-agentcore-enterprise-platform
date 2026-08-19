@@ -33,8 +33,8 @@ def new_session_id() -> str:
     return f"session-{uuid.uuid4().hex}"  # 8 + 32 = 40 chars
 
 
-def _runtime_url() -> str:
-    runtime_arn = get_ssm_param("runtimes/orchestrator/arn")
+def _runtime_url(component: str = "orchestrator") -> str:
+    runtime_arn = get_ssm_param(f"runtimes/{component}/arn")
     return (
         f"https://bedrock-agentcore.{REGION}.amazonaws.com/runtimes/"
         f"{urllib.parse.quote(runtime_arn, safe='')}/invocations?qualifier=DEFAULT"
@@ -104,6 +104,55 @@ def invoke_agui(prompt: str, session_id: str) -> str:
     return "\n".join(out) or body
 
 
+def invoke_a2a(prompt: str, session_id: str, component: str) -> str:
+    """Invoke an A2A sub-agent runtime (code-agent / research-agent).
+
+    Two things differ from invoking the orchestrator, and getting either wrong
+    produces an error that looks like a broken agent:
+
+    * **Payload**: A2A runtimes speak JSON-RPC 2.0 (`message/send`), not
+      `{"prompt": ...}`. A mismatch surfaces as HTTP 424.
+    * **Auth**: A2A is not a client-facing protocol, so these runtimes get no
+      inbound JWT authorizer and are guarded by IAM instead — they need SigV4,
+      and a Bearer token is rejected with "Authorization method mismatch".
+      (See infra_utils/runtime_protocol.py and docs/IDENTITY.md.)
+
+    This is what module 8's verify runs, so the contract cannot silently rot.
+    """
+    import boto3  # local import: only this path needs it
+
+    envelope = {
+        "jsonrpc": "2.0",
+        "id": str(uuid.uuid4()),
+        "method": "message/send",
+        "params": {
+            "message": {
+                "role": "user",
+                "parts": [{"kind": "text", "text": prompt}],
+                "messageId": str(uuid.uuid4()),
+            }
+        },
+    }
+    client = boto3.client("bedrock-agentcore", region_name=REGION)
+    response = client.invoke_agent_runtime(
+        agentRuntimeArn=get_ssm_param(f"runtimes/{component}/arn"),
+        runtimeSessionId=session_id,
+        qualifier="DEFAULT",
+        payload=json.dumps(envelope).encode(),
+    )
+    body = response["response"].read().decode()
+    try:
+        result = json.loads(body).get("result", {})
+    except json.JSONDecodeError:
+        return body
+    for artifact in result.get("artifacts") or []:
+        for part in artifact.get("parts") or []:
+            if part.get("kind") == "text":
+                return "AGENT TEXT: " + part["text"]
+    # A task without artifacts still proves the contract; show the status.
+    return f"A2A RESULT (no artifact): {json.dumps(result)[:400]}"
+
+
 def list_tools() -> str:
     """POST MCP tools/list to the gateway with a Bearer M2M token."""
     token = get_m2m_token()
@@ -140,6 +189,14 @@ def main():
         action="store_true",
         help="Use the AG-UI protocol (required for the agui-* agent patterns)",
     )
+    parser.add_argument(
+        "--a2a",
+        metavar="COMPONENT",
+        nargs="?",
+        const="code-agent",
+        default=None,
+        help="Invoke an A2A sub-agent over JSON-RPC (code-agent|research-agent)",
+    )
     args = parser.parse_args()
     if not args.tools and not args.prompt:
         parser.error("prompt is required unless --tools is given")
@@ -150,8 +207,11 @@ def main():
         else:
             session_id = args.session or new_session_id()
             print(f"Session: {session_id}")
-            invoke = invoke_agui if args.agui else invoke_agent
-            print(invoke(args.prompt, session_id))
+            if args.a2a:
+                print(invoke_a2a(args.prompt, session_id, args.a2a))
+            else:
+                invoke = invoke_agui if args.agui else invoke_agent
+                print(invoke(args.prompt, session_id))
     except urllib.error.HTTPError as e:
         # Surface the real error — users need the status and body to debug
         print(f"HTTP {e.code}: {e.read().decode()}", file=sys.stderr)

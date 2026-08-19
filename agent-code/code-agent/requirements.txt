@@ -1,2 +1,2 @@
-strands-agents>=1.52.0
+strands-agents[a2a]>=1.52.0
 bedrock-agentcore>=1.21.0
