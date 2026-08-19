@@ -131,7 +131,8 @@ aws cognito-idp describe-user-pool-client \
   --query 'UserPoolClient.SupportedIdentityProviders'
 # expect: ["COGNITO", "EntraID"]
 
-# c) Entra accepts the client_id + redirect_uri (no AADSTS error = registration is right)
+# c) Entra accepts the client_id + redirect_uri (a sign-in page means both are registered;
+#    it does NOT prove the app is fully sign-in ready — that only shows up in step 6)
 curl -s -o /dev/null -D - \
   "$DOMAIN/oauth2/authorize?identity_provider=EntraID&client_id=<app-client-id>&response_type=code&scope=openid+email+profile&redirect_uri=<url-encoded-callback>" \
   | grep -i '^location:'
@@ -149,27 +150,85 @@ Check (d) is the one worth knowing about: it proves the credential works
 *without* completing a login, which separates "my secret is wrong" from "my
 user cannot sign in".
 
-### 6. The last mile needs a human
+### 6. Sign in for real
 
-The token exchange and attribute mapping only run when a real user signs in, so
-finish in a browser:
+The token exchange and the attribute mapping only run when a human actually
+signs in, so finish in a browser:
 
 ```bash
 open "$DOMAIN/oauth2/authorize?identity_provider=EntraID&client_id=<app-client-id>&response_type=code&scope=openid+email+profile&redirect_uri=<url-encoded-callback>"
 ```
 
 Sign in with a tenant user. The browser lands on your callback URL with
-`?code=…` (a connection error there is expected if nothing is listening on
-localhost — the code in the URL is the success signal). Then confirm Cognito
-created the federated user:
+`?code=…` — a connection error there is expected if nothing is listening on
+localhost, the code in the URL is the success signal.
+
+Confirm Cognito created the federated user:
 
 ```bash
 aws cognito-idp list-users --user-pool-id <pool-id> \
-  --query 'Users[].{sub:Username,status:UserStatus,email:Attributes[?Name==`email`].Value|[0]}'
+  --query 'Users[].{u:Username,status:UserStatus,email:Attributes[?Name==`email`].Value|[0]}'
+# [{"u": "EntraID_<opaque-id>", "status": "EXTERNAL_PROVIDER", "email": "you@corp.example"}]
 ```
 
-A user whose `Username` is a provider-prefixed id (`entraid_…`) is the proof:
-the exchange succeeded and the attribute mapping populated the profile.
+`EXTERNAL_PROVIDER` with a populated `email` is the proof: the exchange
+succeeded and the attribute mapping ran. Note the username carries the provider
+name exactly as Cognito registered it — `EntraID_…`, not lowercased.
+
+To see what the agent will receive, exchange the code for tokens (within five
+minutes, single use) and read the claims:
+
+```bash
+curl -s -X POST "$DOMAIN/oauth2/token" \
+  -u "<app-client-id>:<app-client-secret>" \
+  -d grant_type=authorization_code -d "code=<the code>" \
+  --data-urlencode "redirect_uri=<the same callback>"
+```
+
+The `id_token` is issued by **Cognito**, not by Entra:
+
+```json
+{
+  "iss": "https://cognito-idp.<region>.amazonaws.com/<pool-id>",
+  "identities": [{ "providerName": "EntraID", "providerType": "OIDC", "primary": "true" }],
+  "cognito:username": "EntraID_<opaque-id>",
+  "email": "you@corp.example",
+  "name": "Your Name"
+}
+```
+
+That is the whole point of keeping Cognito in the path: the agent verifies a
+token it already knows how to verify, and the federation is invisible to it.
+
+### 7. Invoke an agent as that user
+
+The runtime's JWT authorizer trusts the Cognito pool and a list of client ids
+(`allowedClients`), which includes the app client — so the token you just
+obtained works against the data plane with no further wiring:
+
+```bash
+curl -s -X POST \
+  "https://bedrock-agentcore.<region>.amazonaws.com/runtimes/<url-encoded-runtime-arn>/invocations?qualifier=DEFAULT" \
+  -H "Authorization: Bearer <access_token from step 6>" \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"who am I to you?","runtimeSessionId":"<33+ chars>"}'
+```
+
+Worth knowing what this does and does not check: the authorizer validates the
+signature, the issuer, and the **client id** — not the scopes. A user token
+carrying only `openid profile email` (no `agentcore/invoke`) is accepted. If you
+need scope-level authorization, enforce it in the agent, not here.
+
+### Turning it back off
+
+Redeploying with `IDP_TYPE=cognito` removes the identity provider and drops it
+from the app clients. It does **not** remove the users it created — they stay in
+the pool as `EXTERNAL_PROVIDER` accounts with no provider behind them, and
+nobody can sign in as them. Clean up if you care:
+
+```bash
+aws cognito-idp admin-delete-user --user-pool-id <pool-id> --username EntraID_<id>
+```
 
 ---
 
@@ -206,9 +265,11 @@ Against a live Entra ID tenant, 2026-08-19:
 | Cognito → Entra handoff | redirects with our `client_id`; Entra serves the sign-in page, no AADSTS error |
 | The secret Cognito holds | Entra issued a token for it (`client_credentials`) |
 | Switching `IDP_TYPE` back and forth (`cognito` → `entra_id`) | provider removed and recreated cleanly |
-
-Not verified programmatically: the interactive login itself (step 6), which
-needs a human at a browser.
+| **Interactive sign-in** in a browser | completed; Cognito returned an authorization code |
+| Federated user in Cognito | `EntraID_<id>`, `EXTERNAL_PROVIDER`, `email` and `name` mapped from Entra |
+| Code → token exchange | Cognito minted `id_token` / `access_token` / `refresh_token`, `iss` = the Cognito pool |
+| Agent invoke with that user's token | `200`, the orchestrator answered |
+| Service principal | **not needed as a separate step** — Entra created it during the first sign-in (checked by deleting it and signing in again) |
 
 ---
 
@@ -220,6 +281,7 @@ needs a human at a browser.
 | `AADSTS50011` from Microsoft | the `…/oauth2/idpresponse` URI is not registered on the Entra app |
 | `AADSTS700016` | wrong `IDP_CLIENT_ID`, or the app is in a different tenant |
 | `invalid_client` at token exchange | the secret is wrong, expired, or has trailing whitespace (see step 3) |
+| `invalid_client_secret` from **Cognito's** `/oauth2/token` | you sent another client's secret — the app client and the M2M client each have their own; read it with `describe-user-pool-client` for the client id you are authenticating as |
 | Login succeeds, then fails returning to Cognito | `--enable-id-token-issuance` was not set on the Entra app |
 | No `EntraID` button in the hosted UI | `IDP_TYPE` was not `entra_id` at deploy time — check `./scripts/deploy.sh config` |
 
