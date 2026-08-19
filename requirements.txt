@@ -10,4 +10,4 @@ botocore>=1.43.72
 requests>=2.34.2
 colorama>=0.4.6
 pytest>=9.1.1
-pydantic>=2.7,<3
+pydantic>=2.13.4,<3
