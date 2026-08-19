@@ -23,6 +23,11 @@ Use this five-step path to get from a starting point to a working deployment.
 | 4 | Invoke the sample agent and check the gateway | [Verify the deployment](#test-the-deployment) |
 | 5 | Follow rollout status while you work | [View deployed resources](#dashboard) |
 
+> **Doing this as a workshop?** [`docs/PARTICIPANT_GUIDE.md`](docs/PARTICIPANT_GUIDE.md)
+> walks the modules in order with expected timings and what proves each one worked.
+> When something breaks, [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) is
+> organised by symptom.
+
 
 ## Choose Your Starting Point
 
@@ -44,7 +49,7 @@ Pick the profile that looks most like your job today. It is a starting point, yo
 Before you deploy:
 
 - **AWS credentials:** permission to create IAM, Cognito, ECR, CodeBuild, Amazon Bedrock and Bedrock AgentCore resources. The deploy script validates them before making changes.
-- **Local tooling:** Docker, Python 3.13, Node.js/npm, and the AWS CLI. The script checks these and installs the AWS CDK CLI if it is missing.
+- **Local tooling:** Python 3.13 (as `python3.13`), Node.js/npm, the AWS CLI, and bash 4+ (macOS ships 3.2 — `brew install bash`). The script checks these and installs the AWS CDK CLI if it is missing. A container runtime is **not** required: agent images are built remotely in AWS CodeBuild, and it is only useful for testing an image locally.
 - **Region:** pick a Region where AgentCore and your chosen Bedrock model are available. The default is `us-east-1`.
 - **Cost awareness:** networking profiles create a NAT gateway and VPC endpoints with hourly billing. Enabling Transaction Search changes account-level span pricing. Tear down resources when you finish testing.
 
