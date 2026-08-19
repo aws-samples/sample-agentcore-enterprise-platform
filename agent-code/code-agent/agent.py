@@ -1,12 +1,17 @@
-"""Code Agent — A2A sub-agent for code generation and analysis."""
+"""Code Agent — A2A sub-agent for code generation and analysis.
 
+Serves the AgentCore A2A protocol contract (JSON-RPC on port 9000), not the
+HTTP `/invocations` contract — see shared/a2a_serve.py for why that matters.
+"""
+
+import logging
 import os
 
-from bedrock_agentcore.runtime import BedrockAgentCoreApp
+from shared.a2a_serve import serve_a2a
 from strands import Agent
 from strands.models import BedrockModel
 
-app = BedrockAgentCoreApp()
+logging.basicConfig(level=logging.INFO)
 
 # Cross-region inference profile — current (not Legacy-flagged). Override per
 # deployment via the MODEL_ID environment variable (see app.py / deploy.sh).
@@ -20,14 +25,15 @@ SYSTEM_PROMPT = """You are a code generation and analysis agent. You help with:
 - Generating infrastructure-as-code templates"""
 
 
-@app.entrypoint
-async def invoke(payload=None):
-    query = payload.get("prompt", "Hello!") if payload else "Hello!"
-    model = BedrockModel(model_id=MODEL_ID)
-    agent = Agent(system_prompt=SYSTEM_PROMPT, model=model)
-    response = agent(query)
-    return {"status": "success", "response": response.message["content"][0]["text"]}
+def build_agent() -> Agent:
+    """The agent advertised on the A2A agent card and invoked by callers."""
+    return Agent(
+        name="code_agent",
+        description="Generates, reviews, and explains code, including IaC templates.",
+        system_prompt=SYSTEM_PROMPT,
+        model=BedrockModel(model_id=MODEL_ID),
+    )
 
 
 if __name__ == "__main__":
-    app.run()
+    serve_a2a(build_agent())
