@@ -464,6 +464,16 @@ prompt_api_keys() {
 # {{resolve:secretsmanager:...}} CloudFormation dynamic reference.
 upsert_idp_secret() {
     if [ -z "${IDP_CLIENT_SECRET:-}" ]; then return 0; fi
+    # Strip surrounding whitespace. A secret pasted from a console, or piped in
+    # from `az ad app credential reset -o tsv`, arrives with a trailing newline;
+    # Cognito forwards it verbatim to the IdP's token endpoint and the exchange
+    # fails with invalid_client, naming nothing about whitespace. Cost an hour
+    # to find live — see docs/ENTERPRISE_IDP.md.
+    IDP_CLIENT_SECRET="$(printf '%s' "$IDP_CLIENT_SECRET" | tr -d '\n\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    if [ -z "$IDP_CLIENT_SECRET" ]; then
+        log_error "IDP_CLIENT_SECRET is only whitespace — nothing to store."
+        exit 1
+    fi
     IDP_CLIENT_SECRET_NAME="${PREFIX}-idp-client-secret"
     if aws secretsmanager describe-secret --secret-id "$IDP_CLIENT_SECRET_NAME" \
         --region "$AWS_REGION" &>/dev/null; then
