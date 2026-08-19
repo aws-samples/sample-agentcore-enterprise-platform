@@ -1,12 +1,12 @@
 # Adapted from fullstack-solution-template-for-agentcore
 # Claude Agent SDK dependencies
-claude-agent-sdk==0.1.48
+claude-agent-sdk==0.2.139
 mcp==1.29.0
 bedrock-agentcore
 bedrock-agentcore-starter-toolkit
 botocore
 boto3
-aws-opentelemetry-distro>=0.10.1
-requests>=2.31.0
-pydantic>=2.5.0
-PyJWT[crypto]>=2.10.1
+aws-opentelemetry-distro>=0.19.0
+requests>=2.34.2
+pydantic>=2.13.4
+PyJWT[crypto]>=2.13.0
