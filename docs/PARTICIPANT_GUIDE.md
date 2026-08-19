@@ -114,7 +114,7 @@ real runs — the long ones are container builds in CodeBuild, not hangs.
 | # | Module | What lands | Proof it worked | Time |
 |---|---|---|---|---|
 | **3** | Infrastructure Blueprint | Cognito user pool, OAuth clients (app/web/m2m), SSM discovery parameters | issuer URL readable from SSM | ~2 min |
-| **4** | Identity Integration | The M2M credential provider agents use to reach the gateway. IdP federation and 3LO providers are **opt-in** (see note) | credential provider name in SSM | ~2 min |
+| **4** | Identity Integration | The M2M credential provider agents use to reach the gateway. IdP federation and 3LO providers are **opt-in** — walkthrough: [`ENTERPRISE_IDP.md`](ENTERPRISE_IDP.md) | credential provider name in SSM | ~2 min |
 | **5** | Gateway & Registry | AgentCore MCP Gateway, Lambda tool target, JWT auth against Cognito | `test_gateway.py` — real `tools/list` + `tools/call` | ~3 min |
 | **A** | Memory | Managed Memory, user-preference strategy (semantic extraction only with long-term memory on) | `test_memory.py` | ~2 min |
 | **6** | Agent Deployment | The orchestrator agent: CodeBuild builds the container, Runtime runs it | `invoke.py` — the agent answers | **~7–8 min** |
@@ -256,6 +256,7 @@ account-level setting other workloads may now rely on.
 | How does it fit together? | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
 | How is the caller authenticated? | [`IDENTITY.md`](IDENTITY.md) |
 | How do I add my own tool to the gateway? | [`GATEWAY_TARGETS.md`](GATEWAY_TARGETS.md) |
+| How do I use our corporate logins (Entra ID / Okta / Ping)? | [`ENTERPRISE_IDP.md`](ENTERPRISE_IDP.md) |
 | What security controls exist, and what do they really enforce? | [`SECURITY_CONTROLS.md`](SECURITY_CONTROLS.md) |
 | One account or many? | [`MULTI_ACCOUNT.md`](MULTI_ACCOUNT.md) |
 | Why don't I see traces? | [`TRACING.md`](TRACING.md) |
