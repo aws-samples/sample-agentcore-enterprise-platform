@@ -18,12 +18,16 @@ jobs:
 
       # Repo-wide rather than changed-files-only: these scripts are the workshop's
       # front door, and a merge can break a file the PR never touched.
+      # --severity=warning, like the hadolint job's --failure-threshold: info
+      # findings differ between shellcheck releases (0.9 on the runner flags
+      # SC2317 on our CLI stubs, 0.11 does not), and a toolchain bump should not
+      # turn this gate red on its own. Warnings and errors still fail.
       - name: Run shellcheck
         run: |
           shellcheck --version
           mapfile -t files < <(git ls-files '*.sh')
           printf 'linting %d shell file(s)\n' "${#files[@]}"
-          shellcheck "${files[@]}"
+          shellcheck --severity=warning "${files[@]}"
 
       # The self-checks exercise the platform.yaml precedence rules through
       # infra_utils.platform_config. deploy.sh fails soft when it cannot import
