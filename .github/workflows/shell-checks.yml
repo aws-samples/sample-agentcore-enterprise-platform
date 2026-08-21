@@ -1,0 +1,46 @@
+name: Shell Code Quality
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  shell-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      # Repo-wide rather than changed-files-only: these scripts are the workshop's
+      # front door, and a merge can break a file the PR never touched.
+      - name: Run shellcheck
+        run: |
+          shellcheck --version
+          mapfile -t files < <(git ls-files '*.sh')
+          printf 'linting %d shell file(s)\n' "${#files[@]}"
+          shellcheck "${files[@]}"
+
+      # The self-checks exercise the platform.yaml precedence rules through
+      # infra_utils.platform_config. deploy.sh fails soft when it cannot import
+      # it (deliberate: a participant may not have the venv yet), so without
+      # these two the check reports "platform.yaml value not applied" here.
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Install the config dependencies
+        run: pip install "pydantic>=2.13.4,<3" "pyyaml>=6.0.3"
+
+      # No AWS, no network: both scripts stub the CLI and run deploy.sh's
+      # functions in a sandbox.
+      - name: deploy.sh config, destroy and IdP-secret behaviour
+        run: bash scripts/check-deploy-config.sh
+
+      - name: Workshop module flow (maps, explains, verifies, ordering)
+        run: bash scripts/check-workshop-flow.sh
