@@ -391,11 +391,17 @@ prompt_idp() {
             # The client secret is never persisted: reuse the one already in
             # Secrets Manager if present, otherwise re-prompt for it.
             if [ "$IDP_TYPE" != "cognito" ] && [ -z "${IDP_CLIENT_SECRET:-}" ]; then
+                # Bring-your-own secret: if IDP_CLIENT_SECRET_NAME is configured
+                # (platform.yaml or env), look for THAT secret and keep its name.
+                # Probing only the prefixed name would ignore the secret the
+                # operator already owns, prompt for the value anyway, and create
+                # a duplicate under our name.
+                local secret_name="${IDP_CLIENT_SECRET_NAME:-${PREFIX}-idp-client-secret}"
                 if aws secretsmanager describe-secret \
-                    --secret-id "${PREFIX}-idp-client-secret" \
+                    --secret-id "$secret_name" \
                     --region "${AWS_REGION:-us-east-1}" &>/dev/null; then
-                    IDP_CLIENT_SECRET_NAME="${PREFIX}-idp-client-secret"
-                    log_info "✓ IdP client secret: reusing existing Secrets Manager secret"
+                    IDP_CLIENT_SECRET_NAME="$secret_name"
+                    log_info "✓ IdP client secret: reusing existing Secrets Manager secret ($secret_name)"
                 else
                     read -rsp "  ${IDP_TYPE} Client Secret: " IDP_CLIENT_SECRET; echo ""
                 fi
@@ -474,7 +480,10 @@ upsert_idp_secret() {
         log_error "IDP_CLIENT_SECRET is only whitespace — nothing to store."
         exit 1
     fi
-    IDP_CLIENT_SECRET_NAME="${PREFIX}-idp-client-secret"
+    # Write to the operator's secret when they named one (platform.yaml / env),
+    # otherwise to our own. Rotating into a bring-your-own secret must not
+    # silently fork a second copy under the prefixed name.
+    IDP_CLIENT_SECRET_NAME="${IDP_CLIENT_SECRET_NAME:-${PREFIX}-idp-client-secret}"
     if aws secretsmanager describe-secret --secret-id "$IDP_CLIENT_SECRET_NAME" \
         --region "$AWS_REGION" &>/dev/null; then
         # Secret already exists — update the value (IdP secrets rotate).
