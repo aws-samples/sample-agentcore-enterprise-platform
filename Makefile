@@ -60,4 +60,14 @@ validate-controls:
 test-controls:
 	python -m pytest tests/ -q
 
-.PHONY: all lint ruff-lint format lint-cicd deploy synth test-agent test-gateway test-memory validate-controls test-controls
+# The same shell gate CI runs (.github/workflows/shell-checks.yml). The self-checks
+# need bash 4+ for associative arrays and macOS ships 3.2 as /bin/bash, so prefer
+# Homebrew's when it is there. Override with: make check-shell BASH=/path/to/bash
+BASH ?= $(shell command -v /opt/homebrew/bin/bash 2>/dev/null || command -v bash)
+
+check-shell:
+	shellcheck --severity=warning $$(git ls-files '*.sh')
+	$(BASH) scripts/check-deploy-config.sh
+	$(BASH) scripts/check-workshop-flow.sh
+
+.PHONY: all lint ruff-lint format lint-cicd deploy synth test-agent test-gateway test-memory validate-controls test-controls check-shell
