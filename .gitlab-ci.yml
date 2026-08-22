@@ -60,6 +60,23 @@ ruff:
   variables:
     GIT_DEPTH: "0"
 
+shell:
+  stage: lint
+  <<: *pip-cache
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq git shellcheck > /dev/null
+    # deploy.sh fails soft when it cannot import infra_utils.platform_config, so
+    # without these the precedence check reports "platform.yaml value not applied".
+    - pip install -q pydantic pyyaml
+  script:
+    # Repo-wide, not changed-files: these scripts are the workshop's front door
+    # and a merge can break a file the MR never touched. --severity=warning
+    # because info findings vary between shellcheck releases.
+    - shellcheck --severity=warning $(git ls-files '*.sh')
+    # No AWS, no network — both stub the CLI and run deploy.sh's functions.
+    - bash scripts/check-deploy-config.sh
+    - bash scripts/check-workshop-flow.sh
+
 control-library:
   stage: validate
   <<: *pip-cache

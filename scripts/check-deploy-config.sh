@@ -157,7 +157,9 @@ AWS_REGION="us-west-2"            # explicit env: must survive everything
 apply_platform_config
 load_config
 [ "$AWS_REGION" = "us-west-2" ]        || fail "env var lost to platform.yaml: $AWS_REGION"
-[ "$PROJECT_NAME" = "from-yaml" ]      || fail "platform.yaml value not applied: ${PROJECT_NAME:-unset}"
+# Unset (not just wrong) when the loader could not run at all — keep the guard
+# tolerant of that so the message explains it instead of `set -u` aborting here.
+[ "${PROJECT_NAME:-}" = "from-yaml" ] || fail "platform.yaml value not applied: ${PROJECT_NAME:-unset} (is pydantic installed?)"
 [ "$AGENT_PATTERN" = "langgraph-agent" ] || fail "workshop.env beat platform.yaml: $AGENT_PATTERN"
 echo "PASS: env > platform.yaml > workshop.env precedence"
 
