@@ -173,7 +173,7 @@ rm -f "$PLATFORM_CONFIG"
 # A trailing newline (pasted, or piped from `az ... -o tsv`) is stored verbatim,
 # Cognito forwards it to the IdP token endpoint, and the exchange fails with
 # invalid_client mentioning nothing about whitespace.
-eval "$(sed -n '/^upsert_idp_secret()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
+eval "$(sed -n '/^upsert_oauth_secret()/,/^}/p; /^upsert_idp_secret()/,/^}/p; /^upsert_3lo_secrets()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
 # The function unsets the plaintext when it is done (deliberate hygiene), so
 # assert on what it PASSED to the CLI rather than on the variable afterwards.
 # SC2034/SC2329: PREFIX, AWS_REGION and IDP_CLIENT_SECRET are read by the
@@ -241,5 +241,33 @@ grep -q -- "put-secret-value --secret-id my-corp/entra-secret" "$TMP/aws.args" \
     || fail "secret duplicated under our own name: $(cat "$TMP/aws.args")"
 unset -f aws prompt_idp
 echo "PASS: a configured IdP secret name is reused, not duplicated"
+
+# (m) 3LO client secrets follow the same road: trimmed, stored under the
+# prefixed name (or a configured one), plaintext unset afterwards. These used
+# to be rendered verbatim into the synthesized template via cdk context.
+# shellcheck disable=SC2329
+aws() { printf '%s\n' "$*" >> "$TMP/aws.args"; return 0; }
+: > "$TMP/aws.args"
+# shellcheck disable=SC2034  # read via indirection in the eval'd functions
+GOOGLE_CLIENT_SECRET=$'g-sekret\n'
+# shellcheck disable=SC2034
+GITHUB_CLIENT_SECRET="  gh-sekret  "
+# shellcheck disable=SC2034
+NOTION_CLIENT_SECRET_NAME="my-corp/notion"   # bring-your-own name
+# shellcheck disable=SC2034
+NOTION_CLIENT_SECRET="n-sekret"
+upsert_3lo_secrets >/dev/null 2>&1 || true
+grep -q -- "--secret-string g-sekret " "$TMP/aws.args" \
+    || fail "google secret newline not stripped: $(cat "$TMP/aws.args")"
+grep -q -- "--secret-string gh-sekret " "$TMP/aws.args" \
+    || fail "github secret padding not stripped: $(cat "$TMP/aws.args")"
+grep -q -- "--secret-id my-corp/notion" "$TMP/aws.args" \
+    || fail "notion bring-your-own name ignored: $(cat "$TMP/aws.args")"
+[ "$GOOGLE_CLIENT_SECRET_NAME" = "check-prefix-google-oauth-secret" ] \
+    || fail "google secret name not defaulted: ${GOOGLE_CLIENT_SECRET_NAME:-unset}"
+[ -z "${GOOGLE_CLIENT_SECRET:-}${GITHUB_CLIENT_SECRET:-}${NOTION_CLIENT_SECRET:-}" ] \
+    || fail "a 3LO plaintext survived the upsert"
+unset -f aws
+echo "PASS: 3LO client secrets are trimmed, named, and never persisted"
 
 echo "OK: all deploy-config checks passed"
