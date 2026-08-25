@@ -28,6 +28,10 @@ Use this five-step path to get from a starting point to a working deployment.
 > When something breaks, [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) is
 > organised by symptom.
 
+> **Using Kiro?** This repository ships a [Kiro power](#drive-it-with-kiro) that
+> can walk any of these five steps with you — picking a profile, deploying and
+> verifying a module at a time, and diagnosing what failed.
+
 
 ## Choose Your Starting Point
 
@@ -133,6 +137,46 @@ python3 -m http.server 8888 -d dashboard/public
 ```
 
 ![AgentCore deployment dashboard monitor tab](docs/dashboard-monitor.png)
+
+## Drive It with Kiro
+
+[`kiro/agentcore-enterprise-platform/`](kiro/agentcore-enterprise-platform) is a
+[Kiro](https://kiro.dev) **power**: the operational knowledge about *this* repository,
+packaged so an agent can drive it rather than just describe it. Ask it which profile
+fits your situation, what a module actually deploys, why module 6 has been silent for
+seven minutes, what is billing right now, or hand it the deployment and approve one
+command at a time.
+
+Powers are added through the Kiro UI. **Powers panel → Add Custom Power → Local
+Directory**, then paste the path this prints — the power directory itself, not the
+repository root:
+
+```bash
+echo "$(git rev-parse --show-toplevel)/kiro/agentcore-enterprise-platform"
+```
+
+`POWER.md` routes; the detail sits in 14 `steering/` files that load only when the
+question calls for them. Six of those are **runbooks** — deploy the platform, deploy
+one module, verify, recover a failed deploy, audit cost, tear down — ordered
+procedures with a verify gate after each step and explicit halt conditions, for when
+you want the deployment run rather than explained. They spend real money in a real
+account, so anything that creates, changes, deletes, or bills is proposed one command
+at a time and waits for you.
+
+> **It is blunt about this repository on purpose.** Security controls are opt-in and
+> default off; a `-security` stack at `CREATE_COMPLETE` means the resources exist, not
+> that anything is enforced; `enable_networking=true` is not an air-gapped VPC; Cedar
+> ships in `LOG_ONLY`. The power says so, in the same terms as
+> [`docs/SECURITY_CONTROLS.md`](docs/SECURITY_CONTROLS.md), because a facilitator who
+> overstates the posture loses the room in the first security question.
+
+The power ships here rather than in a repository of its own so that its claims stay
+tied to the code: `scripts/check-kiro-power.sh` runs in CI and fails the build when a
+cited `file:line` no longer resolves, a restated profile sequence drifts from
+`PROFILE_MODULES` in `scripts/deploy.sh`, or a cited `--flag` does not exist in the
+script it is used with. A rename breaks the build instead of quietly breaking
+someone's session. [`kiro/README.md`](kiro/README.md) covers the layout and how to
+change it.
 
 ## Clean Up
 

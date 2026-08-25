@@ -48,3 +48,12 @@ jobs:
 
       - name: Workshop module flow (maps, explains, verifies, ordering)
         run: bash scripts/check-workshop-flow.sh
+
+      # The Kiro power in kiro/ documents this repo's commands, flags and module
+      # sequences. It ships here so that a rename breaks the build rather than
+      # quietly breaking someone's session: this gate resolves every file:line
+      # citation against the tree, and checks the profile sequences against
+      # PROFILE_MODULES and each cited --flag against the script it is used with.
+      # Stdlib only, no AWS, no network.
+      - name: Kiro power matches the source it documents
+        run: bash scripts/check-kiro-power.sh
