@@ -312,4 +312,74 @@ NON_INTERACTIVE=0
 unset -f npx
 echo "PASS: full-footprint gate honors --yes / NON_INTERACTIVE and aborts on n"
 
+# (p) --profile materializes its preset as platform.yaml — durable intent.
+# The old PROFILE_FLAGS env exports died with the run, so a later plain
+# deploy silently changed the footprint (A2A defaulted back on).
+eval "$(sed -n '/^MATERIALIZE_HEADER=/p; /^valid_profiles()/,/^}/p; /^materialize_preset()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
+log_error() { echo "$*"; }   # (o) muted it; (p) asserts on the messages
+# shellcheck disable=SC2034  # read by the eval'd materialize_preset
+PROJECT_DIR="$TMP"
+PLATFORM_CONFIG="$TMP/platform.yaml"
+mkdir -p "$TMP/presets"
+printf 'project: from-preset\nagents:\n  a2a: false\n' > "$TMP/presets/small.yaml"
+
+materialize_preset small >/dev/null 2>&1 || fail "materialize failed on a fresh tree"
+head -1 "$PLATFORM_CONFIG" | grep -q "Generated from presets/small" \
+    || fail "generated header missing: $(head -1 "$PLATFORM_CONFIG")"
+grep -q "project: from-preset" "$PLATFORM_CONFIG" || fail "preset content not copied"
+
+# Re-running the same profile regenerates without complaint.
+materialize_preset small >/dev/null 2>&1 || fail "regeneration of a generated file refused"
+
+# A hand-edited manifest (no header) is refused without --yes...
+printf 'project: hand-edited\n' > "$PLATFORM_CONFIG"
+( PRESCAN_YES=0 materialize_preset small ) >/dev/null 2>&1 \
+    && fail "hand-edited platform.yaml was clobbered"
+grep -q "hand-edited" "$PLATFORM_CONFIG" || fail "refusal still modified the file"
+# ...and overwritten with it.
+( PRESCAN_YES=1 materialize_preset small ) >/dev/null 2>&1 \
+    || fail "--yes did not allow the overwrite"
+
+# Unknown profile: non-zero, and the valid list names the real presets.
+out=$( (materialize_preset nope) 2>&1 ) && fail "unknown profile accepted"
+echo "$out" | grep -q "small" || fail "valid profiles not listed: $out"
+rm -f "$PLATFORM_CONFIG"
+echo "PASS: --profile materializes presets; hand-edits are protected"
+
+# (q) the post-destroy sweep finds what the config cannot see, and deletes
+# only when told to: --yes deletes, NON_INTERACTIVE without --yes only warns.
+eval "$(sed -n '/^sweep_leftovers()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
+# shellcheck disable=SC2329  # invoked from inside the eval'd function
+aws() {
+    printf '%s\n' "$*" >> "$TMP/aws.args"
+    case "$1 $2" in
+        "cloudformation list-stacks")   echo "check-prefix-networking" ;;
+        "secretsmanager describe-secret")
+            [[ "$*" == *check-prefix-idp-client-secret* ]] ;;
+        *) return 0 ;;
+    esac
+}
+# shellcheck disable=SC2034
+AWS_REGION="us-east-1"
+
+: > "$TMP/aws.args"
+YES=1 NON_INTERACTIVE=0 sweep_leftovers >/dev/null 2>&1 || fail "sweep failed with --yes"
+grep -q "delete-stack --stack-name check-prefix-networking" "$TMP/aws.args" \
+    || fail "leftover stack not deleted with --yes: $(cat "$TMP/aws.args")"
+grep -q "delete-secret --secret-id check-prefix-idp-client-secret" "$TMP/aws.args" \
+    || fail "orphaned secret not deleted with --yes: $(cat "$TMP/aws.args")"
+
+: > "$TMP/aws.args"
+YES=0 NON_INTERACTIVE=1 sweep_leftovers >/dev/null 2>&1 || fail "sweep failed non-interactive"
+grep -q "delete-stack\|delete-secret" "$TMP/aws.args" \
+    && fail "NON_INTERACTIVE without --yes deleted things: $(cat "$TMP/aws.args")"
+unset -f aws
+echo "PASS: post-destroy sweep reports always, deletes only with --yes"
+
+# (r) PROFILE_FLAGS must stay dead — resurrecting the env-export table brings
+# back the drift this whole change removed.
+! grep -q "PROFILE_FLAGS\[" "$SCRIPT_DIR/deploy.sh" \
+    || fail "PROFILE_FLAGS table is back in deploy.sh"
+echo "PASS: profile intent lives only in presets"
+
 echo "OK: all deploy-config checks passed"

@@ -27,8 +27,11 @@ done
 echo "PASS: every sequenced module has MAP + EXPLAIN + VERIFY"
 
 # Sandboxed live runs: copy deploy.sh; a fake `aws` on PATH records any call.
+# presets/ rides along because a profile IS a preset file now — validation
+# and materialization both resolve --profile against that directory.
 mkdir -p "$TMP/scripts" "$TMP/bin"
 cp "$SCRIPT_DIR/deploy.sh" "$TMP/scripts/"
+cp -R "$SCRIPT_DIR/../presets" "$TMP/"
 printf '#!/bin/sh\ntouch "%s/aws-was-called"\nexit 1\n' "$TMP" > "$TMP/bin/aws"
 chmod +x "$TMP/bin/aws"
 run() { PATH="$TMP/bin:$PATH" "$BASH" "$TMP/scripts/deploy.sh" "$@" 2>&1; }
