@@ -112,6 +112,15 @@ def test_graph_never_invents_status_for_unpolled_accounts():
     assert "not observed" in GRAPH_JS.lower()
 
 
+def test_graph_shape_checks_the_status_payload():
+    # A truthiness guard let a malformed status.json through: `stacks` as a
+    # string passed `s && s.stacks`, then Object.keys() walked its CHARACTERS
+    # and the diagram grew one card per letter. update()'s try/catch could not
+    # help — nothing throws. Both blocks must be shape-checked.
+    assert "typeof s.stacks === 'object'" in GRAPH_JS
+    assert "typeof s.deployment === 'object'" in GRAPH_JS
+
+
 def test_architecture_tab_mounts_only_when_visible():
     # A display:none canvas has clientWidth 0 — mounting then sizes the graph
     # to its minimum floor and it never recovers until a resize.
