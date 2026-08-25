@@ -564,6 +564,35 @@ build_context_args() {
 }
 
 # ═══════════════════════════════════════════════════════════════
+# Full-footprint confirmation (deploy --all / destroy --all)
+# ═══════════════════════════════════════════════════════════════
+# A deploy or destroy with no target touches EVERYTHING the app synthesizes,
+# so it shows the account, the config source, and the exact stack list first.
+# --yes skips the prompt; NON_INTERACTIVE=1 implies --yes (CI compatibility).
+confirm_footprint() {
+    # $1 = verb ("deploy" | "destroy")
+    [ "$YES" = "1" ] && return 0
+    [ "${NON_INTERACTIVE:-0}" = "1" ] && return 0
+    echo ""
+    log_header "Plan — $1 the FULL footprint"
+    log_info "Account: ${ACCOUNT_ID:-unknown}   Region: ${AWS_REGION:-us-east-1}   Prefix: ${PREFIX}"
+    local src="built-in defaults"
+    [ -f "$CONFIG_FILE" ] && src="workshop.env"
+    [ -f "$PLATFORM_CONFIG" ] && src="platform.yaml"
+    log_info "Config source: $src"
+    log_info "Stacks:"
+    JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+        npx cdk ls "${CONTEXT_ARGS[@]}" 2>/dev/null | sed 's/^/    /' \
+        || log_warn "(could not synthesize the stack list)"
+    local ans
+    read -rp "Proceed to $1 ALL of the above? [y/N]: " ans
+    case "$ans" in
+        [Yy]*) : ;;
+        *) log_error "Aborted before any change. Re-run with --yes to skip this prompt."; exit 1 ;;
+    esac
+}
+
+# ═══════════════════════════════════════════════════════════════
 # Stack Deploy Loop (shared by the deploy and workshop actions)
 # ═══════════════════════════════════════════════════════════════
 deploy_stacks() {
@@ -757,6 +786,7 @@ TEAM=""
 MODULE=""
 FROM_MODULE=""
 DRY_RUN=0
+YES=0
 require_flag_value() {
     # $1 = flag name, $2 = number of remaining args after the flag
     if [ "$2" -lt 2 ]; then
@@ -772,18 +802,46 @@ while [[ $# -gt 0 ]]; do
         --module)  require_flag_value "--module" "$#";  MODULE="$2"; shift 2 ;;
         --from)    require_flag_value "--from" "$#";    FROM_MODULE="$2"; shift 2 ;;
         --dry-run) DRY_RUN=1; shift ;;
-        *)         shift ;;
+        --yes)     YES=1; shift ;;
+        *)
+            # Fail closed: `--stakc identity` or `--stack=identity` used to be
+            # silently discarded here, leaving no target and escalating to
+            # `cdk deploy --all`. A typo must never deploy more than asked.
+            log_error "Unknown option or argument: '$1'"
+            log_error "Valid options: --stack --profile --team --module --from --dry-run --yes"
+            log_error "(values are space-separated: --stack NAME, not --stack=NAME)"
+            exit 1
+            ;;
     esac
 done
 
-# Workshop action: default and validate the profile against the guided sequences.
-if [ "$ACTION" = "workshop" ]; then
-    PROFILE="${PROFILE:-greenfield}"
-    if [ -z "${PROFILE_MODULES[$PROFILE]:-}" ]; then
-        log_error "Unknown profile: '$PROFILE'. Valid profiles: ${!PROFILE_MODULES[*]}"
-        exit 1
-    fi
+# Workshop action: default the profile.
+[ "$ACTION" = "workshop" ] && PROFILE="${PROFILE:-greenfield}"
+
+# ── Fail closed on VALUES, for every action ──
+# A misspelled --profile used to be validated only for the workshop action:
+# on plain deploy it skipped its feature flags without a word and fell
+# through to `cdk deploy --all` — a typo produced a LARGER deployment.
+if [ -n "$PROFILE" ] && [ -z "${PROFILE_FLAGS[$PROFILE]:-}" ]; then
+    log_error "Unknown profile: '$PROFILE'. Valid profiles: ${!PROFILE_FLAGS[*]}"
+    exit 1
 fi
+if [ -n "$TEAM" ] && [ -z "${TEAM_MAP[$TEAM]:-}" ]; then
+    log_error "Unknown team: '$TEAM'. Valid teams: ${!TEAM_MAP[*]}"
+    exit 1
+fi
+# --stack takes full stack names; a short name like 'identity' would only
+# fail deep inside cdk ("No stacks match") after bootstrap has already run.
+for _s in ${STACK_FILTER:-}; do
+    case "$_s" in
+        "$PREFIX"-*) : ;;
+        *)
+            log_error "Unknown stack: '$_s' — stacks are full names like ${PREFIX}-identity."
+            log_error "List them with: $0 ls"
+            exit 1
+            ;;
+    esac
+done
 
 # Apply profile flags
 if [ -n "$PROFILE" ] && [ -n "${PROFILE_FLAGS[$PROFILE]:-}" ]; then
@@ -853,6 +911,7 @@ case "$ACTION" in
             # shellcheck disable=SC2086  # stack list is space-separated by design
             deploy_stacks $CDK_STACKS
         else
+            confirm_footprint deploy
             log_step "Deploying all stacks..."
             JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
                 npx cdk deploy --all --require-approval never "${CONTEXT_ARGS[@]}" 2>&1 || {
@@ -922,6 +981,7 @@ case "$ACTION" in
 
     destroy)
         log_header "Destroying"
+        [ -z "${CDK_STACKS:-}" ] && confirm_footprint destroy
         # No stacks selected means --all. Failures are no longer swallowed: a
         # refused destroy is the guard against cascading, so it has to be seen.
         # shellcheck disable=SC2086  # stack list is space-separated by design
@@ -962,6 +1022,7 @@ case "$ACTION" in
         echo "  --module N         Workshop module number (3|4|5|6|7|8|9|A|B|C|D|E)"
         echo "  --from MODULE      (workshop) Start at this module in the profile sequence"
         echo "  --dry-run          (workshop) Print each module's stacks + verify command; no AWS calls"
+        echo "  --yes              Skip the full-footprint confirmation (deploy/destroy with no target)"
         echo ""
         echo "Environment Variables:"
         echo "  NON_INTERACTIVE=1  Skip all prompts"

@@ -242,4 +242,46 @@ grep -q -- "put-secret-value --secret-id my-corp/entra-secret" "$TMP/aws.args" \
 unset -f aws prompt_idp
 echo "PASS: a configured IdP secret name is reused, not duplicated"
 
+# (n) invalid CLI input fails closed, before any AWS call. A typo'd option
+# used to be silently discarded; with no resolved target the run escalated to
+# `cdk deploy --all --require-approval never`. These invoke the REAL script:
+# every rejection below happens at parse/validation time, pre-credentials.
+run_deploy() { (cd "$REPO_ROOT" && "$BASH" scripts/deploy.sh "$@") }
+
+out=$(run_deploy deploy --bogus-flag 2>&1) && fail "unknown option was accepted"
+echo "$out" | grep -q -- "--bogus-flag" || fail "unknown option not named: $out"
+
+out=$(run_deploy deploy --stack=identity 2>&1) && fail "--stack=NAME form was accepted"
+
+out=$(run_deploy deploy --profile greenfied 2>&1) && fail "misspelled profile was accepted"
+echo "$out" | grep -q "greenfield" || fail "valid profiles not listed: $out"
+
+out=$(run_deploy deploy --team agents 2>&1) && fail "unknown team was accepted"
+
+out=$(run_deploy deploy --stack identity 2>&1) && fail "short stack name was accepted"
+echo "$out" | grep -q -- "-identity" || fail "full-name hint missing: $out"
+
+# --yes must parse as a flag (not hit the unknown-option arm): with it present
+# the run must get PAST parsing and die on the misspelled profile instead.
+out=$(run_deploy deploy --yes --profile greenfied 2>&1) && fail "--yes+bad profile accepted"
+echo "$out" | grep -q "Unknown profile" || fail "--yes not parsed as a flag: $out"
+echo "PASS: invalid CLI input fails closed before any AWS call"
+
+# (o) the full-footprint gate: --yes and NON_INTERACTIVE skip it; an answer
+# of anything but y aborts with a non-zero exit and no mutation.
+eval "$(sed -n '/^confirm_footprint()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
+log_header() { :; }; log_warn() { :; }; log_error() { :; }
+# shellcheck disable=SC2329  # invoked from inside the eval'd function
+npx() { echo "stack-a"; echo "stack-b"; }
+CONTEXT_ARGS=(); PLATFORM_CONFIG="$TMP/absent.yaml"
+# shellcheck disable=SC2034  # YES/NON_INTERACTIVE are read by the eval'd function
+YES=1                 && confirm_footprint deploy  || fail "--yes did not skip the gate"
+YES=0 NON_INTERACTIVE=1 confirm_footprint deploy   || fail "NON_INTERACTIVE did not imply --yes"
+# shellcheck disable=SC2034
+NON_INTERACTIVE=0
+( YES=0 confirm_footprint destroy <<< "n" ) >/dev/null 2>&1 && fail "answering n did not abort"
+( YES=0 confirm_footprint destroy <<< "y" ) >/dev/null 2>&1 || fail "answering y did not proceed"
+unset -f npx
+echo "PASS: full-footprint gate honors --yes / NON_INTERACTIVE and aborts on n"
+
 echo "OK: all deploy-config checks passed"
