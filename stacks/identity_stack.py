@@ -27,17 +27,46 @@ class IdentityStack(cdk.Stack):
         gateway_m2m_client_secret: cdk.SecretValue,
         cognito_discovery_url: str,
         google_client_id: str = "",
-        google_client_secret: str = "",
+        google_client_secret_name: str = "",
         github_client_id: str = "",
-        github_client_secret: str = "",
+        github_client_secret_name: str = "",
         notion_client_id: str = "",
-        notion_client_secret: str = "",
+        notion_client_secret_name: str = "",
         **kwargs,
     ):
         super().__init__(scope, id, **kwargs)
 
         prefix = f"{project_name}-{environment}"
         self._provider_arns: dict[str, str] = {}
+
+        # 3LO secrets arrive as Secrets Manager secret NAMES, never values —
+        # the plaintext used to be rendered verbatim into
+        # customOAuth2ProviderConfig.clientSecret in the synthesized template.
+        # Same fail-fast contract as the auth stack's IdP secret.
+        for vendor, cid, secret_name in (
+            ("google", google_client_id, google_client_secret_name),
+            ("github", github_client_id, github_client_secret_name),
+            ("notion", notion_client_id, notion_client_secret_name),
+        ):
+            if cid and not secret_name:
+                raise ValueError(
+                    f"{vendor}_client_id is set but '{vendor}_client_secret_name' is missing "
+                    "(the name of a Secrets Manager secret holding the OAuth client secret). "
+                    "Store the secret first, e.g.:\n"
+                    f"  aws secretsmanager create-secret --name {prefix}-{vendor}-oauth-secret "
+                    "--secret-string '<client-secret>'\n"
+                    f"then pass: -c {vendor}_client_secret_name={prefix}-{vendor}-oauth-secret\n"
+                    "(scripts/deploy.sh does both automatically when the secret is in the "
+                    f"environment). The plaintext '{vendor}_client_secret' key is no longer "
+                    "supported."
+                )
+
+        def _resolve(secret_name: str) -> str:
+            # Renders a {{resolve:secretsmanager:...}} dynamic-reference TOKEN
+            # into the template — not the value. CloudFormation resolves it at
+            # deploy time, so the secret never appears in cdk.out or the
+            # synthesized template. Same pattern as the auth stack.
+            return cdk.SecretValue.secrets_manager(secret_name).unsafe_unwrap()
 
         # ── Gateway M2M Provider (always created) ──
         # Agents fetch Gateway access tokens through this provider via
@@ -87,61 +116,72 @@ class IdentityStack(cdk.Stack):
             value=self._gateway_provider_name,
         )
 
-        # ── Google OAuth2 Provider ──
+        # ── 3LO Providers (Google / GitHub / Notion) ──
+        # Typed L1 property classes, deliberately: these blocks used to pass a
+        # raw dict whose top-level key spelled OAuth with a capital A (the
+        # model wants Oauth), and the L1 mapping silently dropped the ENTIRE
+        # config — the template carried
+        # Oauth2ProviderConfigInput: {}. Same hazard class as the web-search
+        # connector (docs/GATEWAY_TARGETS.md). The typed classes raise at synth
+        # on a wrong key instead. Scopes are not provider config: agents
+        # request them per token via @requires_access_token(scopes=[...]).
+        _P = agentcore.CfnOAuth2CredentialProvider
+
+        # Google and GitHub are vendor-known: the Token Vault knows their
+        # endpoints, so config is just the client pair.
         if google_client_id:
-            google_provider = agentcore.CfnOAuth2CredentialProvider(
+            google_provider = _P(
                 self,
                 "GoogleOAuth",
                 name=f"{prefix}-google-oauth",
                 credential_provider_vendor="GoogleOauth2",
-                oauth2_provider_config_input={
-                    "customOAuth2ProviderConfig": {
-                        "oauthDiscoveryUrl": "https://accounts.google.com/.well-known/openid-configuration",
-                        "clientId": google_client_id,
-                        "clientSecret": google_client_secret,
-                        "scopes": [
-                            "https://www.googleapis.com/auth/calendar",
-                            "https://www.googleapis.com/auth/gmail.readonly",
-                            "https://www.googleapis.com/auth/drive.readonly",
-                        ],
-                    },
-                },
+                oauth2_provider_config_input=_P.Oauth2ProviderConfigInputProperty(
+                    google_oauth2_provider_config=_P.GoogleOauth2ProviderConfigInputProperty(
+                        client_id=google_client_id,
+                        client_secret=_resolve(google_client_secret_name),
+                    ),
+                ),
             )
             self._provider_arns["google"] = google_provider.attr_credential_provider_arn
 
-        # ── GitHub OAuth2 Provider ──
         if github_client_id:
-            github_provider = agentcore.CfnOAuth2CredentialProvider(
+            github_provider = _P(
                 self,
                 "GitHubOAuth",
                 name=f"{prefix}-github-oauth",
                 credential_provider_vendor="GithubOauth2",
-                oauth2_provider_config_input={
-                    "customOAuth2ProviderConfig": {
-                        "oauthDiscoveryUrl": "https://github.com/.well-known/openid-configuration",
-                        "clientId": github_client_id,
-                        "clientSecret": github_client_secret,
-                        "scopes": ["repo", "read:user", "user:email"],
-                    },
-                },
+                oauth2_provider_config_input=_P.Oauth2ProviderConfigInputProperty(
+                    github_oauth2_provider_config=_P.GithubOauth2ProviderConfigInputProperty(
+                        client_id=github_client_id,
+                        client_secret=_resolve(github_client_secret_name),
+                    ),
+                ),
             )
             self._provider_arns["github"] = github_provider.attr_credential_provider_arn
 
-        # ── Notion OAuth2 Provider ──
+        # Notion has no vendor config — CustomOauth2 with explicit endpoints,
+        # the same shape as the (deployed and working) gateway M2M provider.
+        # Notion publishes no OIDC discovery document, so the endpoints are
+        # spelled out instead of discovered.
         if notion_client_id:
-            notion_provider = agentcore.CfnOAuth2CredentialProvider(
+            notion_provider = _P(
                 self,
                 "NotionOAuth",
                 name=f"{prefix}-notion-oauth",
-                credential_provider_vendor="Custom",
-                oauth2_provider_config_input={
-                    "customOAuth2ProviderConfig": {
-                        "oauthDiscoveryUrl": "https://api.notion.com/.well-known/openid-configuration",
-                        "clientId": notion_client_id,
-                        "clientSecret": notion_client_secret,
-                        "scopes": ["read_content", "read_user"],
-                    },
-                },
+                credential_provider_vendor="CustomOauth2",
+                oauth2_provider_config_input=_P.Oauth2ProviderConfigInputProperty(
+                    custom_oauth2_provider_config=_P.CustomOauth2ProviderConfigInputProperty(
+                        oauth_discovery=_P.Oauth2DiscoveryProperty(
+                            authorization_server_metadata=_P.Oauth2AuthorizationServerMetadataProperty(
+                                issuer="https://api.notion.com",
+                                authorization_endpoint="https://api.notion.com/v1/oauth/authorize",
+                                token_endpoint="https://api.notion.com/v1/oauth/token",
+                            ),
+                        ),
+                        client_id=notion_client_id,
+                        client_secret=_resolve(notion_client_secret_name),
+                    ),
+                ),
             )
             self._provider_arns["notion"] = notion_provider.attr_credential_provider_arn
 

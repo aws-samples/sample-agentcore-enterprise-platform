@@ -188,13 +188,11 @@ def test_to_env_omits_empty_values():
 def test_app_py_resolves_through_cfg():
     """Static guard: every legacy `try_get_context(...) or environ.get(...)`
     lookup in app.py must go through cfg() so platform.yaml participates.
-    OAuth provider secrets are the deliberate exception (secrets never live
-    in the config file)."""
+    The 3LO plaintext-secret rejection loop is the deliberate exception: it
+    probes keys that must NOT resolve (cfg would legitimize them)."""
     src = (REPO / "app.py").read_text()
     allowed = (
-        "google_client",
-        "github_client",
-        "notion_client",
+        "_vendor",  # the plaintext-rejection loop
         "platform_config",
         "region",  # region merges CDK_DEFAULT_REGION explicitly
         "CDK_DEFAULT_ACCOUNT",

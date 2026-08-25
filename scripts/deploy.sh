@@ -468,43 +468,72 @@ prompt_api_keys() {
 # template). Instead we upsert it into Secrets Manager and pass only the
 # secret NAME; the auth stack resolves the value at deploy time via a
 # {{resolve:secretsmanager:...}} CloudFormation dynamic reference.
-upsert_idp_secret() {
-    if [ -z "${IDP_CLIENT_SECRET:-}" ]; then return 0; fi
+#
+# upsert_oauth_secret VALUE_VAR NAME_VAR DEFAULT_NAME LABEL
+#   VALUE_VAR    name of the variable holding the plaintext (unset afterwards)
+#   NAME_VAR     name of the variable holding/receiving the secret's name
+#   DEFAULT_NAME secret name used when the operator did not configure one
+#   LABEL        human label for log messages
+upsert_oauth_secret() {
+    local value_var="$1" name_var="$2" default_name="$3" label="$4"
+    local value="${!value_var:-}"
+    if [ -z "$value" ]; then return 0; fi
     # Strip surrounding whitespace. A secret pasted from a console, or piped in
-    # from `az ad app credential reset -o tsv`, arrives with a trailing newline;
-    # Cognito forwards it verbatim to the IdP's token endpoint and the exchange
-    # fails with invalid_client, naming nothing about whitespace. Cost an hour
-    # to find live — see docs/ENTERPRISE_IDP.md.
-    IDP_CLIENT_SECRET="$(printf '%s' "$IDP_CLIENT_SECRET" | tr -d '\n\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-    if [ -z "$IDP_CLIENT_SECRET" ]; then
-        log_error "IDP_CLIENT_SECRET is only whitespace — nothing to store."
+    # from a CLI (`az ... -o tsv`), arrives with a trailing newline; it is
+    # stored and forwarded verbatim, and the provider's token endpoint rejects
+    # the exchange with invalid_client, naming nothing about whitespace. Cost
+    # an hour to find live — see docs/ENTERPRISE_IDP.md.
+    value="$(printf '%s' "$value" | tr -d '\n\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    if [ -z "$value" ]; then
+        log_error "$value_var is only whitespace — nothing to store."
         exit 1
     fi
     # Write to the operator's secret when they named one (platform.yaml / env),
     # otherwise to our own. Rotating into a bring-your-own secret must not
     # silently fork a second copy under the prefixed name.
-    IDP_CLIENT_SECRET_NAME="${IDP_CLIENT_SECRET_NAME:-${PREFIX}-idp-client-secret}"
-    if aws secretsmanager describe-secret --secret-id "$IDP_CLIENT_SECRET_NAME" \
+    local secret_name="${!name_var:-$default_name}"
+    # Exported, not just assigned: app.py must see the name even on CDK calls
+    # that carry no context args (the bootstrap probe synthesizes the app too).
+    printf -v "$name_var" '%s' "$secret_name"
+    export "${name_var?}"
+    if aws secretsmanager describe-secret --secret-id "$secret_name" \
         --region "$AWS_REGION" &>/dev/null; then
-        # Secret already exists — update the value (IdP secrets rotate).
-        if ! aws secretsmanager put-secret-value --secret-id "$IDP_CLIENT_SECRET_NAME" \
-            --secret-string "$IDP_CLIENT_SECRET" --region "$AWS_REGION" &>/dev/null; then
-            log_error "Failed to update Secrets Manager secret '$IDP_CLIENT_SECRET_NAME'."
+        # Secret already exists — update the value (client secrets rotate).
+        if ! aws secretsmanager put-secret-value --secret-id "$secret_name" \
+            --secret-string "$value" --region "$AWS_REGION" &>/dev/null; then
+            log_error "Failed to update Secrets Manager secret '$secret_name'."
             log_error "Check IAM permissions for secretsmanager:PutSecretValue and retry."
             exit 1
         fi
-        log_info "✓ IdP client secret: updated in Secrets Manager ($IDP_CLIENT_SECRET_NAME)"
+        log_info "✓ $label secret: updated in Secrets Manager ($secret_name)"
     else
-        if ! aws secretsmanager create-secret --name "$IDP_CLIENT_SECRET_NAME" \
-            --secret-string "$IDP_CLIENT_SECRET" --region "$AWS_REGION" &>/dev/null; then
-            log_error "Failed to create Secrets Manager secret '$IDP_CLIENT_SECRET_NAME'."
+        if ! aws secretsmanager create-secret --name "$secret_name" \
+            --secret-string "$value" --region "$AWS_REGION" &>/dev/null; then
+            log_error "Failed to create Secrets Manager secret '$secret_name'."
             log_error "Check IAM permissions for secretsmanager:CreateSecret and retry."
             exit 1
         fi
-        log_info "✓ IdP client secret: stored in Secrets Manager ($IDP_CLIENT_SECRET_NAME)"
+        log_info "✓ $label secret: stored in Secrets Manager ($secret_name)"
     fi
     # Plaintext is no longer needed — only the secret name is passed to CDK.
-    unset IDP_CLIENT_SECRET
+    unset "$value_var"
+}
+
+upsert_idp_secret() {
+    upsert_oauth_secret IDP_CLIENT_SECRET IDP_CLIENT_SECRET_NAME \
+        "${PREFIX}-idp-client-secret" "IdP client"
+}
+
+# 3LO providers (module 4): GOOGLE/GITHUB/NOTION_CLIENT_SECRET in the
+# environment is moved to Secrets Manager the same way — app.py refuses the
+# plaintext form outright.
+upsert_3lo_secrets() {
+    upsert_oauth_secret GOOGLE_CLIENT_SECRET GOOGLE_CLIENT_SECRET_NAME \
+        "${PREFIX}-google-oauth-secret" "Google OAuth"
+    upsert_oauth_secret GITHUB_CLIENT_SECRET GITHUB_CLIENT_SECRET_NAME \
+        "${PREFIX}-github-oauth-secret" "GitHub OAuth"
+    upsert_oauth_secret NOTION_CLIENT_SECRET NOTION_CLIENT_SECRET_NAME \
+        "${PREFIX}-notion-oauth-secret" "Notion OAuth"
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -540,6 +569,14 @@ build_context_args() {
     [ -n "${IDP_CLIENT_ID:-}" ]          && CONTEXT_ARGS+=(-c "idp_client_id=${IDP_CLIENT_ID}")
     [ -n "${IDP_CLIENT_SECRET_NAME:-}" ] && CONTEXT_ARGS+=(-c "idp_client_secret_name=${IDP_CLIENT_SECRET_NAME}")
     [ -n "${IDP_ISSUER_URL:-}" ]         && CONTEXT_ARGS+=(-c "idp_issuer_url=${IDP_ISSUER_URL}")
+
+    # 3LO provider config — same rule: secret NAMES only (upsert_3lo_secrets).
+    [ -n "${GOOGLE_CLIENT_ID:-}" ]          && CONTEXT_ARGS+=(-c "google_client_id=${GOOGLE_CLIENT_ID}")
+    [ -n "${GOOGLE_CLIENT_SECRET_NAME:-}" ] && CONTEXT_ARGS+=(-c "google_client_secret_name=${GOOGLE_CLIENT_SECRET_NAME}")
+    [ -n "${GITHUB_CLIENT_ID:-}" ]          && CONTEXT_ARGS+=(-c "github_client_id=${GITHUB_CLIENT_ID}")
+    [ -n "${GITHUB_CLIENT_SECRET_NAME:-}" ] && CONTEXT_ARGS+=(-c "github_client_secret_name=${GITHUB_CLIENT_SECRET_NAME}")
+    [ -n "${NOTION_CLIENT_ID:-}" ]          && CONTEXT_ARGS+=(-c "notion_client_id=${NOTION_CLIENT_ID}")
+    [ -n "${NOTION_CLIENT_SECRET_NAME:-}" ] && CONTEXT_ARGS+=(-c "notion_client_secret_name=${NOTION_CLIENT_SECRET_NAME}")
 
     # Feature flags from profile
     [ -n "${ENABLE_NETWORKING:-}" ] && CONTEXT_ARGS+=(-c "enable_networking=${ENABLE_NETWORKING}")
@@ -885,9 +922,13 @@ fi
 
 cd "$PROJECT_DIR"
 
-# If IDP_CLIENT_SECRET came from the environment, move it into Secrets Manager
-# before any context args are built (plaintext never reaches the CDK CLI).
-[ "$DRY_RUN" = "1" ] || upsert_idp_secret
+# If IDP_CLIENT_SECRET or a 3LO *_CLIENT_SECRET came from the environment, move
+# it into Secrets Manager before any context args are built (plaintext never
+# reaches the CDK CLI).
+if [ "$DRY_RUN" != "1" ]; then
+    upsert_idp_secret
+    upsert_3lo_secrets
+fi
 
 # Build CDK context args (populates the CONTEXT_ARGS array)
 build_context_args
