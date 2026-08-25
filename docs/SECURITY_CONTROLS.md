@@ -25,17 +25,17 @@ Every security control below is off by default. Turn them on with feature flags,
 
 Two unrelated flags elsewhere in `app.py` *do* default on — `enable_transaction_search`
 (an account- and region-level CloudWatch/X-Ray setting, on because tracing does not work
-without it) and `enable_a2a`. On the Terraform side both `enable_scp_memory_enforce_cmk` and
-`enable_gateway_scps` default to `true`, so `terraform apply` attaches both SCPs unless you
-opt out. Flags are matched against the exact lowercase string `"true"`; `-c enable_cedar=True`
-silently does nothing.
+without it) and `enable_a2a`. On the Terraform side, `enable_scp_memory_enforce_cmk` and
+`enable_gateway_scps` default to `false` — they deny operations the accelerator's own default
+configuration performs (see the compatibility preflight under Quick start). Flags are matched
+against the exact lowercase string `"true"`; `-c enable_cedar=True` silently does nothing.
 
 ## Controls
 
 | # | Control | Flag(s) | Where | Default |
 |---|---|---|---|---|
-| 1 | **SCP: CMK-for-Memory** | (Terraform vars) | `terraform/org-guardrails/` ← `control-library/scp/` | enforce |
-| 1b | **SCP: Gateway configuration hardening** (CMK, no-auth, policy-engine=ENFORCE, approved IdP, protocol, private-endpoint targets, credential-provider, target-type) | `enable_gateway_scps` + vars | `terraform/org-guardrails/gateway.tf` ← `control-library/scp/gateway/` | enforce |
+| 1 | **SCP: CMK-for-Memory** | `enable_scp_memory_enforce_cmk` + vars | `terraform/org-guardrails/` ← `control-library/scp/` | off (opt-in, see preflight) |
+| 1b | **SCP: Gateway configuration hardening** (CMK, no-auth, policy-engine=ENFORCE, approved IdP, protocol, private-endpoint targets, credential-provider, target-type) | `enable_gateway_scps` + vars | `terraform/org-guardrails/gateway.tf` ← `control-library/scp/gateway/` | off (opt-in, see preflight) |
 | 2 | **VPC endpoint policy** — action-scoped; org restriction covers **SigV4 callers only** (OAuth/JWT callers carry no IAM principal and pass via `Principal: "*"` per AWS docs). Requires `org_id`: without it the endpoint is created with **no policy at all** | `enable_networking`, `org_id` | `stacks/networking_stack.py` ← `control-library/vpce/` | org-scoped (SigV4) when `org_id` set |
 | 2b | **Least-privilege runtime IAM** — SSM reads are path-scoped in `infra_utils/agentcore_role.py`; `control-library/iam/runtime-execution-least-privilege.json` is a **reference policy, not deployed** by any stack (the live role still grants ECR/X-Ray/`PutMetricData` on `Resource: "*"`) | — | `infra_utils/agentcore_role.py` | partial |
 | 3 | **AgentCore Cedar policies** | `enable_cedar`, `cedar_mode` | `gateway_stack.py` ← `control-library/cedar/` | LOG_ONLY |
@@ -75,6 +75,22 @@ cdk deploy agentcore-workshop-dev-gateway -c enable_cedar=true
 # Org guardrails (from the Organizations management account):
 cd terraform/org-guardrails && terraform init && terraform apply -var 'target_ids=["ou-..."]'
 ```
+
+### Org SCP compatibility preflight
+
+The memory and gateway SCPs deny operations the accelerator's own default configuration
+performs, which is why they are opt-in (`default = false`). **Attaching them over a default
+deployment locks the platform out of its own control plane** — CreateMemory and gateway
+create/update calls start failing org-wide. Before flipping either variable on, the covered
+accounts must already run:
+
+| SCP | The accelerator must have enabled first |
+|---|---|
+| `enable_scp_memory_enforce_cmk` | `enable_security` (the KMS CMK stack) with the CMK on **every** covered account's memory — the default memory stack creates Memory with no CMK |
+| `enable_gateway_scps` | A gateway CMK plus Cedar in `ENFORCE` (`enable_cedar` + `cedar_mode=ENFORCE`) — the security-focused preset runs `LOG_ONLY`, which `require-policy-engine` denies |
+
+`enable_scp_identity_deny_token_for_userid` stays on by default: it denies an API path the
+accelerator never uses.
 
 ## Egress interceptor design (items 5+6)
 

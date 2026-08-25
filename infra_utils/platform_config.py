@@ -184,6 +184,22 @@ class SecurityConfig(BaseModel):
     traceability: bool = False
     org_id: str = ""
 
+    @field_validator("org_id")
+    @classmethod
+    def _org_id_shape(cls, v: str) -> str:
+        # Empty is fine — deploy.sh prompts for it. A placeholder is not:
+        # "o-REPLACEME" used to validate as a plain string and render into
+        # IAM policies against an organization that does not exist.
+        if v and (
+            re.search(r"replace|example|changeme", v, re.IGNORECASE)
+            or not re.fullmatch(r"o-[a-z0-9]{10,32}", v)
+        ):
+            raise ValueError(
+                f"not an AWS Organizations id: {v!r}. Find yours with: "
+                "aws organizations describe-organization --query Organization.Id"
+            )
+        return v
+
     @model_validator(mode="after")
     def _traceability_needs_trail(self) -> SecurityConfig:
         # The EventBridge alerting only fires if CloudTrail management events
