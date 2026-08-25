@@ -391,8 +391,10 @@ eval "$(sed -n '/^declare -A MODULE_FLAGS/p; /^MODULE_FLAGS\[/p;
                 /^apply_flags()/,/^}/p; /^apply_module_flags()/p;
                 /^apply_selection_flags()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
 [ -n "${MODULE_FLAGS[C]:-}" ] || fail "MODULE_FLAGS extraction broken"
-# shellcheck disable=SC2329  # invoked from inside the eval'd helper
-build_context_args() { :; }
+# Stub for the eval'd apply_flags. Defined via eval so shellcheck 0.9 does
+# not pair it with the earlier (also eval'd) real build_context_args call and
+# raise SC2218 "defined later".
+eval 'build_context_args() { :; }'
 
 unset ENABLE_NETWORKING ENABLE_SECURITY ENABLE_A2A 2>/dev/null || true
 # shellcheck disable=SC2034  # MODULE/TEAM are read by the eval'd apply_selection_flags
