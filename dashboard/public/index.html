@@ -150,6 +150,9 @@ a{color:var(--accent);text-decoration:none}
 .badge-in-progress{background:var(--amber);animation:pulse 2s infinite}
 .badge-failed{background:var(--red)}
 .badge-not-deployed{background:var(--gray);color:var(--text)}
+/* Out of scope for this configuration — dimmed, never counted as a problem. */
+.badge-not-applicable{background:transparent;color:var(--text3);border:1px dashed var(--gray)}
+.stack-card.not-applicable{opacity:.55}
 .stack-resources{font-size:.8rem;color:var(--text2);margin-bottom:.75rem}
 .stack-outputs{display:flex;flex-direction:column;gap:.35rem}
 .stack-output{display:flex;justify-content:space-between;gap:.5rem;font-size:.75rem;padding:.3rem .5rem;background:var(--bg3);border-radius:4px}
@@ -504,12 +507,19 @@ function truncate(str, len) {
   return str.length > len ? str.slice(0, len) + '…' : str;
 }
 
-function statusClass(s) {
+// Classification belongs to monitor.py, which emits `state` per stack; this
+// is the fallback for a status.json written before that field existed. The two
+// implementations disagreeing is exactly the bug this shape removes, so keep
+// the rules here identical to monitor.classify().
+function statusClass(stack) {
+  const s = typeof stack === 'string' ? stack : stack?.status;
+  if (typeof stack === 'object' && stack?.state) return stack.state;
   if (!s) return 'not-deployed';
   const l = s.toLowerCase().replace(/[_ ]/g, '-');
   // Order matters: NOT_DEPLOYED contains "deployed" and ROLLBACK_COMPLETE
   // contains "complete", so check the negative/failed states first.
   if (l === 'not-deployed' || l.includes('delete-complete')) return 'not-deployed';
+  if (l === 'not-applicable') return 'not-applicable';
   if (l.includes('fail') || l.includes('rollback') || l.includes('error')) return 'failed';
   if (l.includes('progress') || l.includes('pending')) return 'in-progress';
   if (l.includes('complete')) return 'deployed';
@@ -541,14 +551,17 @@ function render(data) {
   const stacks = data.stacks || {};
   const allNames = Object.keys(stacks);
   const bySuffix = short => stacks[allNames.find(n => n.endsWith('-' + short)) || short];
-  let counts = { deployed: 0, 'in-progress': 0, failed: 0, 'not-deployed': 0 };
-  const total = Math.max(allNames.length, 10);
 
+  // Denominator = what this configuration actually promises (the deployment
+  // contract, via monitor.py). It used to be Math.max(count, 10), so a healthy
+  // greenfield deployment read 6/10 and looked permanently incomplete.
+  const summary = data.summary || {};
+  const counts = { deployed: 0, 'in-progress': 0, failed: 0, 'not-deployed': 0, 'not-applicable': 0 };
   allNames.forEach(name => {
-    const cls = statusClass(stacks[name]?.status);
+    const cls = statusClass(stacks[name]);
     counts[cls] = (counts[cls] || 0) + 1;
   });
-  counts['not-deployed'] = Math.max(0, total - counts.deployed - counts['in-progress'] - counts.failed);
+  const total = summary.total_stacks ?? (allNames.length - counts['not-applicable']);
 
   document.getElementById('countDeployed').textContent = counts.deployed + '/' + total;
   document.getElementById('countInProgress').textContent = counts['in-progress'] + '/' + total;
@@ -567,8 +580,11 @@ function render(data) {
 
     layer.stacks.forEach(stackKey => {
       const s = bySuffix(stackKey) || {};
-      const cls = statusClass(s.status);
-      const meta = STACK_META[stackKey] || { module: '—', team: '—' };
+      const cls = statusClass(s);
+      // monitor.py carries the module/team labels (they are checked against
+      // deploy.sh's MODULE_MAP in CI); STACK_META here is only a fallback.
+      const meta = { module: s.module ? 'Module ' + s.module : '—', team: s.team || '—',
+                     ...(s.module ? {} : STACK_META[stackKey] || {}) };
       const outputs = s.outputs || {};
       const outputKeys = Object.keys(outputs);
       const resources = Array.isArray(s.resources) ? s.resources.length : (s.resourceCount ?? s.resources ?? '—');
@@ -582,14 +598,14 @@ function render(data) {
       }
 
       const card = document.createElement('div');
-      card.className = 'stack-card';
+      card.className = 'stack-card' + (cls === 'not-applicable' ? ' not-applicable' : '');
       card.style.animation = 'fadeIn .4s';
       card.innerHTML = `
         <div class="stack-header">
           <div><div class="stack-name">${stackKey}</div><div class="stack-module">${meta.module}</div></div>
           <div class="stack-badges">
             <span class="badge badge-team">${meta.team}</span>
-            <span class="badge badge-status badge-${cls}">${statusLabel(s.status)}</span>
+            <span class="badge badge-status badge-${cls}">${cls === 'not-applicable' ? 'Not In Scope' : statusLabel(s.status)}</span>
           </div>
         </div>
         <div class="stack-resources">${resources !== '—' ? resources + ' resources' : 'No resources yet'}</div>
