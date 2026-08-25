@@ -143,6 +143,10 @@ cdk-synth:
     # without AWS credentials. Docker asset bundling is not exercised.
     - CDK_DEFAULT_ACCOUNT=111111111111 CDK_DEFAULT_REGION=us-east-1
       npx --yes cdk synth --app ".venv/bin/python3 app.py" --quiet
+    # Preset ↔ synth parity: app.py and the deployment contract
+    # (expected_stacks) must agree on every preset's footprint.
+    - npm install -g aws-cdk > /dev/null
+    - PY=.venv/bin/python3 bash scripts/check-contract.sh
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
@@ -154,6 +158,8 @@ cdk-synth:
         - control-library/**/*
         - agent-code/**/*
         - tools/**/*
+        - presets/**/*
+        - scripts/check-contract.sh
         - .gitlab-ci.yml
     - if: $CI_COMMIT_BRANCH == "main"
 

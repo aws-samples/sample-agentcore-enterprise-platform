@@ -19,6 +19,7 @@ platform.yaml is optional — every existing flag keeps working without it.
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -223,6 +224,43 @@ class PlatformConfig(BaseModel):
             return self.region in WEB_SEARCH_REGIONS
         return self.gateway.web_search == "on"
 
+    def expected_stacks(self, account: str = "") -> list[str]:
+        """The exact stack names this config makes app.py synthesize.
+
+        This is the deployment contract: deploy plans, verification, the
+        dashboard, and destroy all consume this list instead of growing their
+        own opinion of the footprint. It deliberately duplicates app.py's
+        stack-existence logic — scripts/check-contract.sh synthesizes every
+        preset and fails CI when the two drift, which is what keeps the
+        duplication honest. If you add a stack to app.py, add it here and the
+        parity check goes green again.
+
+        `account` matters only for strategy 'federated', where the account
+        deployed into decides the role (platform: shared services, no agent
+        runtimes; workload: runtimes + own memory/identity, no auth/gateway).
+        """
+        role = self.federated_role(account)
+        prefix = f"{self.project}-{self.environment}"
+        stacks: list[str] = []
+        if self.security.networking:
+            stacks.append(f"{prefix}-networking")
+        if self.security.cloudtrail_alerting:
+            stacks.append(f"{prefix}-security")
+        if role != "workload":
+            stacks.append(f"{prefix}-auth")
+        stacks.append(f"{prefix}-identity")
+        if role != "platform":
+            stacks.append(f"{prefix}-memory")
+        if role != "workload":
+            stacks.append(f"{prefix}-gateway")
+        if role != "platform":
+            stacks.append(f"{prefix}-runtime-orchestrator")
+            if self.agents.a2a:
+                stacks.append(f"{prefix}-runtime-code-agent")
+                stacks.append(f"{prefix}-runtime-research-agent")
+        stacks.append(f"{prefix}-observability")
+        return stacks
+
     def federated_role(self, account: str) -> str | None:
         """Which side of a federated deployment this account is.
 
@@ -292,11 +330,12 @@ def to_env(config: PlatformConfig) -> dict[str, str]:
 
 
 def _main() -> int:
-    args = [a for a in sys.argv[1:] if a != "--export"]
-    export = "--export" in sys.argv[1:]
-    if len(args) != 1:
+    flags = {a for a in sys.argv[1:] if a.startswith("--")}
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if len(args) != 1 or not flags <= {"--export", "--stacks"}:
         print(
-            "usage: python -m infra_utils.platform_config [--export] <platform.yaml>",
+            "usage: python -m infra_utils.platform_config "
+            "[--export | --stacks] <platform.yaml>",
             file=sys.stderr,
         )
         return 2
@@ -305,9 +344,15 @@ def _main() -> int:
     except Exception as exc:  # noqa: BLE001 — the point is printing them all
         print(f"INVALID: {args[0]}\n{exc}", file=sys.stderr)
         return 1
-    if export:
+    if "--export" in flags:
         for key, value in to_env(config).items():
             print(f"{key}={value}")
+        return 0
+    if "--stacks" in flags:
+        # The contract's view of the footprint; CDK_DEFAULT_ACCOUNT selects
+        # the side of a federated deployment, same as app.py.
+        for name in config.expected_stacks(os.environ.get("CDK_DEFAULT_ACCOUNT", "")):
+            print(name)
         return 0
     print(f"OK: {args[0]}")
     print(config.model_dump_json(indent=2))
