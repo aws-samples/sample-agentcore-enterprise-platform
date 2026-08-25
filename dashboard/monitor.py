@@ -124,25 +124,53 @@ def classify(status: str) -> str:
     return "not-deployed"
 
 
-def expected_suffixes() -> list[str]:
-    """Stack suffixes this configuration promises, per the contract."""
+def load_config() -> PlatformConfig:
     path = os.environ.get("PLATFORM_CONFIG", "platform.yaml")
     try:
-        config = (
-            load_platform_config(path) if os.path.exists(path) else PlatformConfig()
-        )
+        return load_platform_config(path) if os.path.exists(path) else PlatformConfig()
     except Exception as exc:  # noqa: BLE001 — a bad manifest must not blind the dashboard
-        logger.warning("platform.yaml not usable (%s); showing every known stack", exc)
-        return list(STACK_META)
-    account = ""
+        logger.warning("platform.yaml not usable (%s); assuming defaults", exc)
+        return PlatformConfig()
+
+
+def caller_account() -> str:
     try:
-        account = boto3.client("sts", region_name=REGION).get_caller_identity()[
-            "Account"
-        ]
-    except Exception as exc:  # noqa: BLE001 — federation role only needs it when federated
+        return boto3.client("sts", region_name=REGION).get_caller_identity()["Account"]
+    except Exception as exc:  # noqa: BLE001 — only federation needs the account
         logger.debug("no caller identity yet: %s", exc)
+        return ""
+
+
+def expected_suffixes(config: PlatformConfig, account: str) -> list[str]:
+    """Stack suffixes this configuration promises, per the contract."""
     prefix = f"{config.project}-{config.environment}-"
-    return [s.removeprefix(prefix) for s in config.expected_stacks(account)]
+    try:
+        return [s.removeprefix(prefix) for s in config.expected_stacks(account)]
+    except Exception as exc:  # noqa: BLE001 — e.g. a federated file from an unlisted account
+        logger.warning("contract could not resolve a footprint (%s)", exc)
+        return list(STACK_META)
+
+
+def deployment_view(config: PlatformConfig, account: str) -> dict:
+    """Which accounts this deployment spans, and which one is being polled.
+
+    A dashboard only ever sees ONE account. In a federated deployment the
+    other side's stacks are not observable from here, so the architecture
+    graph draws them as "not observed" rather than inventing a status.
+    """
+    dep = config.deployment
+    role = None
+    try:
+        role = config.federated_role(account)
+    except Exception as exc:  # noqa: BLE001 — account in neither list; app.py reports that
+        logger.debug("federated role undetermined: %s", exc)
+    return {
+        "strategy": dep.strategy,
+        "role": role,  # platform | workload | None (centralized/distributed)
+        "polled_account": account,
+        "platform_account": dep.platform_account,
+        "workload_accounts": list(dep.workload_accounts),
+    }
 
 
 def get_stack_status(stack_name: str) -> dict:
@@ -187,7 +215,9 @@ def get_ssm_params() -> dict:
 
 
 def poll() -> dict:
-    in_scope = expected_suffixes()
+    config = load_config()
+    account = caller_account()
+    in_scope = expected_suffixes(config, account)
     stacks_status = {}
     for suffix, meta in STACK_META.items():
         name = f"{PREFIX}-{suffix}"
@@ -206,7 +236,8 @@ def poll() -> dict:
         "project": PROJECT,
         "environment": ENV,
         "region": REGION,
-        "account": boto3.client("sts").get_caller_identity()["Account"],
+        "account": account,
+        "deployment": deployment_view(config, account),
         "expected_stacks": [f"{PREFIX}-{s}" for s in in_scope],
         "summary": {
             "total_stacks": len(in_scope),

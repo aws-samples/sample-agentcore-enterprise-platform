@@ -1,0 +1,306 @@
+<!--
+PARKED: the dashboard's former "Approach" tab.
+
+Removed from dashboard/public/index.html on 2026-08-25 (it was the default tab,
+lines 197-410, with its own CSS at lines 36-108). Nothing here is loaded or
+served: this file sits in dashboard/, NOT dashboard/public/, so
+`python3 -m http.server -d dashboard/public` cannot reach it.
+
+To put it back: paste the <style> contents into index.html's <style> block, the
+markup after the </nav>, and re-add the nav button
+
+    <button class="nav-tab" onclick="switchTab('approach')">Approach</button>
+
+None of these classes are used by the Monitor or Architecture tabs, so the two
+blocks are self-contained.
+-->
+<style>
+/* APPROACH TAB */
+.hero{text-align:center;padding:5rem 2rem 4rem;background:radial-gradient(ellipse at 50% 0%,rgba(255,153,0,.08) 0%,transparent 60%)}
+.hero-badge{display:inline-block;background:rgba(255,153,0,.12);color:var(--accent);padding:.35rem 1rem;border-radius:20px;font-size:.8rem;font-weight:600;letter-spacing:.5px;margin-bottom:1.5rem;border:1px solid rgba(255,153,0,.2)}
+.hero h1{font-size:3rem;font-weight:800;line-height:1.15;margin-bottom:1rem;background:linear-gradient(135deg,#fff 0%,var(--accent) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.hero p{font-size:1.25rem;color:var(--text2);max-width:640px;margin:0 auto}
+
+.section{max-width:1200px;margin:0 auto;padding:4rem 2rem}
+.section-label{color:var(--accent);font-size:.75rem;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:.5rem}
+.section h2{font-size:2rem;font-weight:700;margin-bottom:1rem}
+.section p.desc{color:var(--text2);max-width:700px;margin-bottom:2rem;font-size:1.05rem}
+
+.problem-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1.5rem}
+.problem-card{background:var(--bg2);border:1px solid rgba(239,68,68,.15);border-radius:var(--radius);padding:1.75rem}
+.problem-card .icon{font-size:1.5rem;margin-bottom:.75rem}
+.problem-card h3{font-size:1.1rem;font-weight:600;margin-bottom:.5rem}
+.problem-card p{color:var(--text2);font-size:.9rem}
+
+.solution-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1.5rem}
+.solution-card{background:var(--bg2);border:1px solid rgba(34,197,94,.15);border-radius:var(--radius);padding:1.75rem}
+.solution-card .icon{font-size:1.5rem;margin-bottom:.75rem}
+.solution-card h3{font-size:1.1rem;font-weight:600;margin-bottom:.5rem}
+.solution-card p{color:var(--text2);font-size:.9rem}
+
+/* ARCHITECTURE DIAGRAM */
+.arch{display:flex;flex-direction:column;gap:1rem;max-width:900px;margin:0 auto}
+.arch-layer{display:flex;align-items:center;gap:1rem;background:var(--bg2);border-radius:var(--radius);padding:1.25rem 1.5rem;border-left:4px solid var(--accent);position:relative}
+.arch-layer::after{content:'';position:absolute;left:50%;bottom:-1rem;width:2px;height:1rem;background:var(--bg4)}
+.arch-layer:last-child::after{display:none}
+.arch-num{background:var(--accent);color:#000;width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.85rem;flex-shrink:0}
+.arch-info{flex:1}
+.arch-info h4{font-weight:600;font-size:1rem;margin-bottom:.2rem}
+.arch-info p{color:var(--text2);font-size:.85rem}
+.arch-stacks{display:flex;gap:.5rem;flex-wrap:wrap}
+.arch-stacks span{background:var(--bg4);padding:.25rem .6rem;border-radius:6px;font-size:.75rem;color:var(--text2);font-weight:500}
+
+/* WORKSHOP FLOW */
+.flow-days{display:grid;grid-template-columns:1fr 1fr;gap:2rem}
+@media(max-width:768px){.flow-days{grid-template-columns:1fr}}
+.flow-day{background:var(--bg2);border-radius:var(--radius);padding:2rem;border:1px solid var(--bg4)}
+.flow-day h3{font-size:1.25rem;font-weight:700;margin-bottom:.25rem}
+.flow-day .subtitle{color:var(--text2);font-size:.9rem;margin-bottom:1.5rem}
+.flow-module{display:flex;gap:1rem;padding:1rem 0;border-top:1px solid var(--bg4)}
+.flow-module:first-of-type{border-top:none}
+.flow-module .num{background:var(--bg4);color:var(--accent);width:28px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.8rem;flex-shrink:0}
+.flow-module h4{font-weight:600;font-size:.95rem;margin-bottom:.15rem}
+.flow-module p{color:var(--text2);font-size:.8rem}
+
+/* PROFILES */
+.profiles-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1.25rem}
+.profile-card{background:var(--bg2);border-radius:var(--radius);padding:1.5rem;border:1px solid var(--bg4);transition:border-color .25s}
+.profile-card:hover{border-color:var(--accent)}
+.profile-card .emoji{font-size:2rem;margin-bottom:.75rem}
+.profile-card h3{font-size:1rem;font-weight:600;margin-bottom:.5rem}
+.profile-card p{color:var(--text2);font-size:.8rem;margin-bottom:.75rem}
+.profile-modules{display:flex;flex-wrap:wrap;gap:.35rem}
+.profile-modules span{background:rgba(255,153,0,.1);color:var(--accent);padding:.15rem .5rem;border-radius:4px;font-size:.7rem;font-weight:500}
+
+/* TEAMS */
+.teams-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1.5rem}
+.team-card{background:var(--bg2);border-radius:var(--radius);padding:1.75rem;border:1px solid var(--bg4)}
+.team-card h3{font-size:1.1rem;font-weight:600;margin-bottom:.25rem}
+.team-card .role{color:var(--accent);font-size:.85rem;margin-bottom:1rem}
+.team-stacks{display:flex;flex-direction:column;gap:.5rem}
+.team-stack{display:flex;align-items:center;gap:.5rem;font-size:.85rem;color:var(--text2)}
+.team-stack .dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+
+/* TAKE HOME */
+.artifacts-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:1.25rem}
+.artifact{background:var(--bg2);border-radius:var(--radius);padding:1.5rem;border:1px solid var(--bg4)}
+.artifact .icon{font-size:1.5rem;margin-bottom:.75rem}
+.artifact h3{font-size:1rem;font-weight:600;margin-bottom:.35rem}
+.artifact p{color:var(--text2);font-size:.85rem}
+
+</style>
+
+<!-- ==================== APPROACH TAB ==================== -->
+<div id="tab-approach" class="tab-content active">
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="hero-badge">☁️ Amazon Bedrock AgentCore</div>
+    <h1>AgentCore Platform &amp;<br>Security Accelerator</h1>
+    <p>2-Day Hands-On Workshop — Go from architecture design to production-deployed AI agents with enterprise-grade security, identity, and observability.</p>
+  </section>
+
+  <!-- THE PROBLEM -->
+  <section class="section">
+    <div class="section-label">The Challenge</div>
+    <h2>The Problem</h2>
+    <p class="desc">Enterprises are stuck between prototype and production. AI agent PoCs sit idle for 3–6 months while teams navigate scattered security reviews, identity integration, and infrastructure decisions.</p>
+    <div class="problem-grid">
+      <div class="problem-card">
+        <div class="icon">⏳</div>
+        <h3>3–6 Month Delays</h3>
+        <p>Security reviews, compliance checks, and infrastructure decisions create months of back-and-forth before a single agent reaches production.</p>
+      </div>
+      <div class="problem-card">
+        <div class="icon">🔀</div>
+        <h3>Scattered Reviews</h3>
+        <p>Identity, networking, encryption, and observability are handled by different teams with no unified blueprint — leading to inconsistent implementations.</p>
+      </div>
+      <div class="problem-card">
+        <div class="icon">🚧</div>
+        <h3>Prototype Graveyard</h3>
+        <p>Promising agent PoCs never make it past the demo stage. Without a clear path to production, innovation stalls and momentum is lost.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- THE SOLUTION -->
+  <section class="section">
+    <div class="section-label">Our Approach</div>
+    <h2>The Solution</h2>
+    <p class="desc">A structured 2-day sprint with modular, progressive deployment. Every stack builds on the last, and every decision is made with production in mind from day one.</p>
+    <div class="solution-grid">
+      <div class="solution-card">
+        <div class="icon">🏗️</div>
+        <h3>Modular Architecture</h3>
+        <p>10 independent CDK stacks that compose into a complete platform. Deploy what you need, skip what you don't.</p>
+      </div>
+      <div class="solution-card">
+        <div class="icon">🔐</div>
+        <h3>Security-First</h3>
+        <p>KMS encryption, VPC endpoints, SCPs, and enterprise identity integration baked in from the foundation layer — not bolted on later.</p>
+      </div>
+      <div class="solution-card">
+        <div class="icon">⚡</div>
+        <h3>2 Days to Production</h3>
+        <p>From architecture whiteboard to deployed, observable, secure AI agents — with all the IaC, runbooks, and documentation to maintain it.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ARCHITECTURE DIAGRAM -->
+  <section class="section">
+    <div class="section-label">Architecture</div>
+    <h2>Progressive Deployment Layers</h2>
+    <p class="desc">Each layer builds on the one below. Deploy bottom-up for a complete platform, or pick the layers you need.</p>
+    <div class="arch">
+      <div class="arch-layer">
+        <div class="arch-num">5</div>
+        <div class="arch-info"><h4>Observability</h4><p>Tracing, monitoring, and alerting pipeline</p></div>
+        <div class="arch-stacks"><span>observability</span></div>
+      </div>
+      <div class="arch-layer">
+        <div class="arch-num">4</div>
+        <div class="arch-info"><h4>Runtime</h4><p>Agent execution, orchestration, and A2A connectivity</p></div>
+        <div class="arch-stacks"><span>runtime-orchestrator</span><span>runtime-code-agent</span><span>runtime-research-agent</span></div>
+      </div>
+      <div class="arch-layer">
+        <div class="arch-num">3</div>
+        <div class="arch-info"><h4>Service</h4><p>API gateway and managed memory for agents</p></div>
+        <div class="arch-stacks"><span>gateway</span><span>memory</span></div>
+      </div>
+      <div class="arch-layer">
+        <div class="arch-num">2</div>
+        <div class="arch-info"><h4>Identity</h4><p>Authentication, authorization, and enterprise SSO</p></div>
+        <div class="arch-stacks"><span>auth</span><span>identity</span></div>
+      </div>
+      <div class="arch-layer">
+        <div class="arch-num">1</div>
+        <div class="arch-info"><h4>Foundation</h4><p>Networking, security controls, and encryption</p></div>
+        <div class="arch-stacks"><span>networking</span><span>security</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- WORKSHOP FLOW -->
+  <section class="section">
+    <div class="section-label">Schedule</div>
+    <h2>Workshop Flow</h2>
+    <p class="desc">Two focused days that take you from design to deployment.</p>
+    <div class="flow-days">
+      <div class="flow-day">
+        <h3>Day 1 — Foundation &amp; Design</h3>
+        <p class="subtitle">Architecture decisions, identity integration, core infrastructure</p>
+        <div class="flow-module"><div class="num">1</div><div><h4>Platform Architecture</h4><p>Multi-account strategy, networking, security controls, KMS encryption</p></div></div>
+        <div class="flow-module"><div class="num">2</div><div><h4>Identity &amp; Auth</h4><p>Cognito setup, enterprise IdP integration (Entra ID / Okta), OAuth flows</p></div></div>
+        <div class="flow-module"><div class="num">3</div><div><h4>Gateway &amp; Memory</h4><p>MCP gateway with Lambda/OpenAPI targets, managed memory configuration</p></div></div>
+        <div class="flow-module"><div class="num">4</div><div><h4>Design Review</h4><p>Architecture review, threat modeling, deployment planning for Day 2</p></div></div>
+      </div>
+      <div class="flow-day">
+        <h3>Day 2 — Build &amp; Validate</h3>
+        <p class="subtitle">Agent deployment, A2A connectivity, observability, hardening</p>
+        <div class="flow-module"><div class="num">5</div><div><h4>Runtime Deployment</h4><p>Deploy orchestrator agent, code agent, and research agent to AgentCore Runtime</p></div></div>
+        <div class="flow-module"><div class="num">6</div><div><h4>Agent-to-Agent</h4><p>Configure A2A connectivity, multi-agent orchestration patterns</p></div></div>
+        <div class="flow-module"><div class="num">7</div><div><h4>Observability</h4><p>OpenTelemetry tracing, CloudWatch dashboards, alerting pipeline</p></div></div>
+        <div class="flow-module"><div class="num">8</div><div><h4>Security Hardening</h4><p>SCPs, VPC endpoints, PrivateLink, final security review and validation</p></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CUSTOMER PROFILES -->
+  <section class="section">
+    <div class="section-label">Customization</div>
+    <h2>Customer Profiles</h2>
+    <p class="desc">Every workshop is tailored. Select the profile that matches your starting point — we'll customize the module selection accordingly.</p>
+    <div class="profiles-grid">
+      <div class="profile-card">
+        <div class="emoji">🌱</div>
+        <h3>Greenfield</h3>
+        <p>Starting fresh with AI agents. Need the full platform from scratch.</p>
+        <div class="profile-modules"><span>networking</span><span>security</span><span>auth</span><span>identity</span><span>gateway</span><span>memory</span><span>runtime</span><span>observability</span></div>
+      </div>
+      <div class="profile-card">
+        <div class="emoji">🔄</div>
+        <h3>Migration</h3>
+        <p>Moving existing agents from Bedrock Agents or custom infra to AgentCore.</p>
+        <div class="profile-modules"><span>identity</span><span>gateway</span><span>memory</span><span>runtime</span><span>observability</span></div>
+      </div>
+      <div class="profile-card">
+        <div class="emoji">🤖</div>
+        <h3>Multi-Agent</h3>
+        <p>Building complex multi-agent systems with A2A orchestration.</p>
+        <div class="profile-modules"><span>auth</span><span>identity</span><span>gateway</span><span>runtime</span><span>observability</span></div>
+      </div>
+      <div class="profile-card">
+        <div class="emoji">🏢</div>
+        <h3>Platform Team</h3>
+        <p>Building a shared agent platform for multiple development teams.</p>
+        <div class="profile-modules"><span>networking</span><span>security</span><span>auth</span><span>identity</span><span>gateway</span><span>memory</span><span>observability</span></div>
+      </div>
+      <div class="profile-card">
+        <div class="emoji">🛡️</div>
+        <h3>Security-Focused</h3>
+        <p>Hardening an existing deployment with enterprise security controls.</p>
+        <div class="profile-modules"><span>networking</span><span>security</span><span>auth</span><span>identity</span><span>observability</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TEAM WORKSTREAMS -->
+  <section class="section">
+    <div class="section-label">Parallel Execution</div>
+    <h2>Team Workstreams</h2>
+    <p class="desc">Three teams work in parallel, each owning a set of stacks. Dependencies are managed through SSM parameters published by each stack.</p>
+    <div class="teams-grid">
+      <div class="team-card">
+        <h3>🏗️ Platform Team</h3>
+        <div class="role">Infrastructure &amp; Foundation</div>
+        <div class="team-stacks">
+          <div class="team-stack"><div class="dot"></div> networking — VPC, subnets, endpoints</div>
+          <div class="team-stack"><div class="dot"></div> security — KMS keys, SCPs, guardrails</div>
+          <div class="team-stack"><div class="dot"></div> auth — Cognito user pool, app clients</div>
+          <div class="team-stack"><div class="dot"></div> identity — AgentCore identity, IdP integration</div>
+          <div class="team-stack"><div class="dot"></div> observability — Tracing, dashboards, alerts</div>
+        </div>
+      </div>
+      <div class="team-card">
+        <h3>🤖 Agent Team</h3>
+        <div class="role">Agent Development &amp; Deployment</div>
+        <div class="team-stacks">
+          <div class="team-stack"><div class="dot"></div> gateway — MCP gateway, tool targets</div>
+          <div class="team-stack"><div class="dot"></div> memory — Semantic &amp; event memory</div>
+          <div class="team-stack"><div class="dot"></div> runtime-orchestrator — Main orchestrator agent</div>
+          <div class="team-stack"><div class="dot"></div> runtime-code-agent — Code execution agent</div>
+          <div class="team-stack"><div class="dot"></div> runtime-research-agent — Research agent</div>
+        </div>
+      </div>
+      <div class="team-card">
+        <h3>🛡️ Security Team</h3>
+        <div class="role">Security Review &amp; Hardening</div>
+        <div class="team-stacks">
+          <div class="team-stack"><div class="dot"></div> Review all stack outputs for compliance</div>
+          <div class="team-stack"><div class="dot"></div> Validate KMS encryption configuration</div>
+          <div class="team-stack"><div class="dot"></div> Verify VPC endpoint policies</div>
+          <div class="team-stack"><div class="dot"></div> Audit IAM roles and permissions</div>
+          <div class="team-stack"><div class="dot"></div> Threat model the agent architecture</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- WHAT YOU TAKE HOME -->
+  <section class="section">
+    <div class="section-label">Deliverables</div>
+    <h2>What You Take Home</h2>
+    <p class="desc">Everything you need to operate and evolve your agent platform after the workshop.</p>
+    <div class="artifacts-grid">
+      <div class="artifact"><div class="icon">📦</div><h3>Production IaC</h3><p>10 CDK stacks — fully parameterized, tested, and ready for your CI/CD pipeline.</p></div>
+      <div class="artifact"><div class="icon">🤖</div><h3>Deployed Agents</h3><p>Working orchestrator, code, and research agents on AgentCore Runtime with A2A connectivity.</p></div>
+      <div class="artifact"><div class="icon">🔐</div><h3>Security Baseline</h3><p>KMS encryption, VPC endpoints, SCPs, and enterprise identity integration — all configured.</p></div>
+      <div class="artifact"><div class="icon">📊</div><h3>Observability Pipeline</h3><p>OpenTelemetry tracing, CloudWatch dashboards, and alerting — ready for production traffic.</p></div>
+      <div class="artifact"><div class="icon">📋</div><h3>Architecture Decision Records</h3><p>Documented decisions, trade-offs, and rationale for every architectural choice made.</p></div>
+      <div class="artifact"><div class="icon">🗺️</div><h3>Expansion Roadmap</h3><p>Prioritized backlog for adding agents, integrations, and capabilities post-workshop.</p></div>
+    </div>
+  </section>
+
+</div><!-- end approach tab -->

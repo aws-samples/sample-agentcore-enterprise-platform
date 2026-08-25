@@ -1,0 +1,353 @@
+/* AgentCore Accelerator — architecture view (graph.js) styling, v4.
+ *
+ * Scoped entirely to .rf-* so it can be dropped into the dashboard without
+ * touching anything else.
+ *
+ * DELIBERATELY LIGHT. v3 inherited the page's dark --bg/--bg2/--bg4 and came out
+ * as a wiring schematic. v4 is a bright flow map sitting inside the dark shell,
+ * so the pane declares its OWN --rf-* variables and every rule below reads from
+ * those; the dark theme now stops at the pane's edge. The one thing still coming
+ * from the page is --accent (AWS orange), because that is the product's colour
+ * and the trust edge/VPC boundary should stay recognisably it.
+ *
+ * Everything that moves is here, not in JS: state pulses, marching edges and
+ * arrival flashes are @keyframes, and re-layout is a transform transition. That
+ * is what lets graph.js run without an animation loop, and it means one
+ * prefers-reduced-motion block at the bottom can switch all motion off.
+ */
+
+/* --------------------------------------------------------------- pane + grid */
+.rf-pane {
+  /* Own palette, not the shell's. Hex, not var(), on purpose: --bg is dark. */
+  --rf-bg: #fafafa;
+  --rf-dot: #e3e6ea;          /* the faint dot grid */
+  --rf-card: #ffffff;
+  --rf-line: #e6e8ec;         /* 1px card / panel borders */
+  --rf-line2: #d8dce2;        /* slightly stronger dividers */
+  --rf-ink: #1f2430;          /* primary text */
+  --rf-ink2: #5b6472;         /* secondary text */
+  --rf-ink3: #8b93a1;         /* captions, glyphs on pale tiles */
+  --rf-zone: #f2f3f5;         /* account container fill */
+  --rf-green: #16a34a;
+  --rf-amber: #d97706;
+  --rf-red: #dc2626;
+  --rf-idle: #cbd2da;         /* not deployed — light grey tile */
+  --rf-void: #e2e5ea;         /* not applicable / unobserved — paler still */
+  --rf-edge: #c9ced6;
+  --rf-shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 1px 3px rgba(16, 24, 40, .06);
+  --rf-shadow-up: 0 4px 10px rgba(16, 24, 40, .10), 0 1px 3px rgba(16, 24, 40, .06);
+
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+  border-radius: 10px;
+  background-color: var(--rf-bg);
+  /* One radial-gradient dot, tiled, at ~4% ink — present, never a texture. */
+  background-image: repeating-radial-gradient(circle at 0 0, var(--rf-dot) 0 1px, transparent 1px 100%);
+  background-size: 22px 22px;
+  cursor: grab;
+  user-select: none;
+  color: var(--rf-ink);
+  font-family: 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.rf-pane.is-panning { cursor: grabbing; }
+
+.rf-viewport {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+.rf-layer { position: absolute; left: 0; top: 0; }
+.rf-groups { z-index: 1; }
+.rf-nodes { z-index: 3; }
+
+/* ------------------------------------------------------------ account groups */
+/* Quiet zone, not a box with opinions: barely-there fill, hairline border, and
+   a small grey caption. The cards are the subject. */
+.rf-group {
+  position: absolute;
+  border: 1px solid var(--rf-line);
+  border-radius: 12px;
+  background: var(--rf-zone);
+  z-index: 1;
+}
+.rf-group--unobserved {
+  border-style: dashed;
+  border-color: var(--rf-line2);
+  background: transparent;
+}
+.rf-group-title {
+  position: absolute; left: 16px; top: 10px;
+  font-size: 11px; font-weight: 600; letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--rf-ink2);
+}
+.rf-group-caption {
+  position: absolute; left: 16px; top: 26px;
+  font-size: 10.5px; color: var(--rf-ink3);
+}
+.rf-group--unobserved .rf-group-caption { color: var(--rf-amber); }
+.rf-layer-labels { position: absolute; left: 0; right: 0; top: -16px; height: 13px; }
+.rf-layer-label {
+  position: absolute; top: 0;
+  font-size: 9.5px; font-weight: 500;
+  letter-spacing: .07em; text-transform: uppercase;
+  color: var(--rf-ink3);
+  text-align: center;
+}
+
+/* Out-of-scope tray: dashed, dim, structurally separate from the columns so a
+   card in here can never be mistaken for something that failed to deploy. */
+.rf-tray {
+  position: absolute;
+  border: 1px dashed var(--rf-line2);
+  border-radius: 10px;
+  z-index: 2;
+}
+.rf-tray-label {
+  position: absolute; left: 12px; top: 7px;
+  font-size: 9.5px; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--rf-ink3);
+}
+
+/* Drawn only when the networking stack is deployed (see renderVpc). */
+.rf-vpc {
+  position: absolute;
+  border: 1px dashed var(--accent, #FF9900);
+  border-radius: 12px;
+  opacity: .6;
+  z-index: 2;
+  pointer-events: none;
+}
+.rf-vpc-label {
+  position: absolute; left: 6px; top: -15px;
+  font-size: 9.5px; letter-spacing: .04em;
+  color: var(--accent, #FF9900);
+  white-space: nowrap;
+}
+
+/* -------------------------------------------------------------------- edges */
+.rf-edges {
+  position: absolute;
+  left: 0; top: 0;
+  overflow: visible;
+  pointer-events: none;   /* cards must stay clickable through the edge layer */
+  z-index: 2;
+}
+/* Thin, light, no opacity trickery: a hairline that reads at 100% is easier to
+   keep consistent than a heavier stroke faded to look thin. */
+.rf-edge { fill: none; stroke: var(--rf-edge); stroke-width: 1.2; stroke-linecap: round; }
+.rf-edge--live { stroke: #86c8a4; }
+.rf-edge--building {
+  stroke: var(--rf-amber);
+  stroke-dasharray: 5 5;
+  animation: rf-march 1s linear infinite;
+}
+.rf-edge--unobserved { stroke: var(--rf-void); stroke-dasharray: 5 5; }
+.rf-edge--trust {
+  stroke: var(--accent, #FF9900); stroke-width: 1.4;
+  stroke-dasharray: 7 5;
+}
+.rf-edge-label {
+  fill: #b06f00;                     /* AWS orange is unreadable as text on white */
+  font-size: 10px;
+  font-weight: 500;
+  text-anchor: middle;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+.rf-mk path { fill: var(--rf-edge); }
+.rf-mk--live path { fill: #86c8a4; }
+.rf-mk--building path { fill: var(--rf-amber); }
+.rf-mk--trust path { fill: var(--accent, #FF9900); }
+.rf-mk--unobserved path { fill: var(--rf-void); }
+
+/* --------------------------------------------------------------- node cards */
+/* A card is a small white tile: icon square, then two ellipsised lines. Quiet
+   is the whole point — it should look like a step in a flow, not like a box on
+   an architecture diagram. */
+.rf-node {
+  position: absolute;
+  left: 0; top: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px;
+  border: 1px solid var(--rf-line);
+  border-radius: 8px;
+  background: var(--rf-card);
+  box-shadow: var(--rf-shadow);
+  overflow: hidden;
+  cursor: grab;
+  /* Re-layout is a CSS transition, never a JS tween. */
+  transition: transform .25s ease-out, box-shadow .2s, border-color .2s;
+}
+.rf-node:hover { box-shadow: var(--rf-shadow-up); }
+.rf-node.is-dragging { transition: none; cursor: grabbing; z-index: 5; }
+.rf-node:focus-visible, .rf-node:focus {
+  outline: 2px solid var(--accent, #FF9900);
+  outline-offset: 2px;
+}
+
+/* The icon tile carries the state colour — one saturated square per card, so
+   the palette never has to fight the text for legibility. */
+.rf-tile {
+  flex: 0 0 28px;
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 7px;
+  background: var(--rf-idle);
+  color: #fff;                 /* the glyph paints with currentColor */
+}
+.rf-glyph { width: 15px; height: 15px; display: block; fill: currentColor; }
+.rf-node--deployed .rf-tile { background: var(--rf-green); }
+.rf-node--in-progress .rf-tile { background: var(--rf-amber); }
+.rf-node--failed .rf-tile { background: var(--rf-red); }
+.rf-node--not-deployed .rf-tile { background: var(--rf-idle); }
+.rf-node--not-applicable .rf-tile,
+.rf-node--unobserved .rf-tile { background: var(--rf-void); }
+/* White on a pale grey tile is invisible, so those two swap to grey ink. A
+   deliberate break from "the glyph is always white": contrast wins. */
+.rf-node--not-deployed .rf-tile,
+.rf-node--not-applicable .rf-tile,
+.rf-node--unobserved .rf-tile { color: var(--rf-ink3); }
+
+.rf-text { min-width: 0; flex: 1; }        /* min-width:0 is what lets it ellipsise */
+.rf-name {
+  font-size: 12px; font-weight: 600;
+  color: var(--rf-ink);
+  line-height: 1.3;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rf-sub {
+  font-size: 10.5px; font-weight: 400;
+  color: var(--rf-ink3);
+  line-height: 1.35;
+  padding-right: 11px;    /* keep the ellipsis clear of the delivery badge */
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.rf-node--not-deployed { border-style: dashed; }
+.rf-node--in-progress { animation: rf-pulse 1.6s ease-in-out infinite; }
+.rf-node--failed { border-color: #f3c4c4; }
+.rf-node--unobserved {
+  border-style: dashed;
+  background: #fcfcfd;
+  box-shadow: none;
+}
+.rf-node--unobserved .rf-name { color: var(--rf-ink2); font-weight: 500; }
+.rf-node--tray {
+  padding: 0 8px; gap: 7px;
+  background: #fbfbfc;
+  box-shadow: none;
+  border-style: dashed;
+}
+.rf-node--tray .rf-tile { flex-basis: 20px; width: 20px; height: 20px; border-radius: 5px; }
+.rf-node--tray .rf-glyph { width: 11px; height: 11px; }
+.rf-node--tray .rf-name { font-size: 11px; font-weight: 500; color: var(--rf-ink2); }
+.rf-node--tray .rf-sub { font-size: 9.5px; }
+.rf-node.is-selected {
+  border-color: var(--accent, #FF9900);
+  box-shadow: 0 0 0 3px rgba(255, 153, 0, .18), var(--rf-shadow-up);
+  z-index: 4;
+}
+.rf-node.is-pinned { border-color: var(--rf-line2); border-style: solid; }
+
+/* Delivery badge: a small dot in the corner, not a second colour system. */
+.rf-badge {
+  position: absolute; right: 7px; bottom: 5px;
+  color: #9aa3b0;
+  font-size: 8px;
+  line-height: 1;
+  cursor: help;
+}
+
+/* ------------------------------------------------------ overlays (screen space) */
+/* Small, grey, bottom-left, sitting to the right of the controls. */
+.rf-guidance {
+  position: absolute; left: 138px; bottom: 14px;
+  max-width: calc(100% - 160px);
+  font-size: 10.5px; color: var(--rf-ink3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  pointer-events: none;
+}
+/* No panel, no chrome: four bare glyph buttons in a row. */
+.rf-controls {
+  position: absolute; left: 12px; bottom: 10px;
+  display: flex; gap: 2px;
+  z-index: 6;
+}
+.rf-btn {
+  width: 26px; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--rf-ink3);
+  font-size: 13px; line-height: 1;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.rf-btn:hover { background: rgba(31, 36, 48, .06); color: var(--rf-ink); }
+.rf-btn:focus-visible { outline: 2px solid var(--accent, #FF9900); outline-offset: 1px; }
+
+.rf-details {
+  position: absolute; right: 12px; top: 12px;
+  width: 262px;
+  max-height: calc(100% - 140px);
+  overflow: auto;
+  padding: 10px 12px 4px;
+  border: 1px solid var(--rf-line);
+  border-radius: 10px;
+  background: var(--rf-card);
+  box-shadow: var(--rf-shadow-up);
+  z-index: 6;
+  user-select: text;   /* the point of the panel: copy an ARN out of it */
+}
+.rf-details-title {
+  font-size: 11.5px; font-weight: 600; color: var(--rf-ink);
+  word-break: break-all;
+  margin-bottom: 7px;
+}
+.rf-row {
+  display: flex; gap: 10px;
+  font-size: 10.5px;
+  padding: 4px 0;
+  border-top: 1px solid var(--rf-line);
+}
+.rf-row-k { flex: 0 0 76px; color: var(--rf-ink3); word-break: break-all; }
+.rf-row-v { flex: 1; color: var(--rf-ink2); word-break: break-all; }
+
+/* ---------------------------------------------------------------- animations */
+@keyframes rf-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(217, 119, 6, .28), var(--rf-shadow); }
+  50% { box-shadow: 0 0 0 5px rgba(217, 119, 6, .10), var(--rf-shadow); }
+}
+@keyframes rf-march { to { stroke-dashoffset: -10; } }
+@keyframes rf-ok {
+  0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, .40); }
+  100% { box-shadow: 0 0 0 14px rgba(22, 163, 74, 0); }
+}
+@keyframes rf-bad {
+  0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, .40); border-color: var(--rf-red); }
+  100% { box-shadow: 0 0 0 14px rgba(220, 38, 38, 0); border-color: var(--rf-line); }
+}
+/* One-shot, added on a state transition and removed on animationend. Neither
+   flash animates `transform`: the card's transform IS its layout position, so a
+   keyframe touching it would yank the card to the viewport origin mid-flash.
+   They do not touch `background` either — a white card flashing solid red
+   erased the text it was reporting on. */
+.rf-flash-ok { animation: rf-ok .9s ease-out 1; }
+.rf-flash-bad { animation: rf-bad .9s ease-out 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rf-node, .rf-node--in-progress, .rf-edge--building,
+  .rf-flash-ok, .rf-flash-bad, .rf-btn {
+    animation: none !important;
+    transition: none !important;
+  }
+}
