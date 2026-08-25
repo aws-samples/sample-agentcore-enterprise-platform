@@ -200,6 +200,55 @@ class ObservabilityConfig(BaseModel):
     transaction_search: bool = True
 
 
+# ── Use cases ──
+# A use case is a self-contained product integration under use-cases/<name>/:
+# a manifest (this model), a CDK stack, a verify script, and a walkthrough.
+# It consumes the platform through its published interface (the SSM parameter
+# namespace + Cognito tokens — docs/PLATFORM_INTERFACE.md), never through core
+# stack internals, so contributors and the core can evolve independently.
+# Nothing deploys unless platform.yaml names the use case under `use_cases:`.
+USE_CASES_DIR = Path(__file__).resolve().parents[1] / "use-cases"
+
+
+class UseCaseManifest(BaseModel):
+    name: str = Field(pattern=r"^[a-z][a-z0-9-]{2,40}$")
+    owner: str  # alias or team — who reviews changes to this folder
+    summary: str
+    # Core stack suffixes this use case needs in the footprint (e.g. gateway).
+    requires: list[str] = Field(default_factory=list)
+    # Stack suffixes this use case adds. Namespaced so a contribution can
+    # never collide with (or masquerade as) a core stack.
+    stacks: list[str] = Field(min_length=1)
+    entry: str = "stack.py"  # module exposing build(app, platform_ctx, config)
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("stacks")
+    @classmethod
+    def _stacks_are_namespaced(cls, v: list[str]) -> list[str]:
+        bad = [s for s in v if not s.startswith("uc-")]
+        if bad:
+            raise ValueError(f"use-case stack suffixes must start with 'uc-': {bad}")
+        return v
+
+
+def discover_use_cases(root: Path = USE_CASES_DIR) -> dict[str, UseCaseManifest]:
+    """Load every use-cases/<name>/manifest.yaml. A broken manifest is a hard
+    error naming the file — a contribution must not half-load."""
+    found: dict[str, UseCaseManifest] = {}
+    if not root.is_dir():
+        return found
+    for mf in sorted(root.glob("*/manifest.yaml")):
+        manifest = UseCaseManifest.model_validate(yaml.safe_load(mf.read_text()))
+        if manifest.name != mf.parent.name:
+            raise ValueError(
+                f"{mf}: manifest name {manifest.name!r} must match its "
+                f"directory {mf.parent.name!r}"
+            )
+        found[manifest.name] = manifest
+    return found
+
+
 class PlatformConfig(BaseModel):
     """The root model — `platform.yaml` parses into exactly this."""
 
@@ -214,8 +263,26 @@ class PlatformConfig(BaseModel):
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
+    # Opt-in use cases: name → that use case's own config block (passed to its
+    # build() untouched; {} to enable with defaults). Names must exist under
+    # use-cases/ — validated below so a typo cannot silently deploy nothing.
+    use_cases: dict[str, dict] = Field(default_factory=dict)
 
     model_config = {"extra": "forbid"}  # a typo'd key is an error, not a no-op
+
+    @field_validator("use_cases")
+    @classmethod
+    def _use_cases_exist(cls, v: dict[str, dict]) -> dict[str, dict]:
+        if not v:
+            return v
+        available = discover_use_cases()
+        unknown = sorted(set(v) - set(available))
+        if unknown:
+            raise ValueError(
+                f"unknown use case(s) {unknown}; available: {sorted(available)} "
+                "(a use case is a directory under use-cases/ with a manifest.yaml)"
+            )
+        return v
 
     @property
     def web_search_enabled(self) -> bool:
@@ -259,6 +326,25 @@ class PlatformConfig(BaseModel):
                 stacks.append(f"{prefix}-runtime-code-agent")
                 stacks.append(f"{prefix}-runtime-research-agent")
         stacks.append(f"{prefix}-observability")
+
+        # Enabled use cases ride at the end. Their `requires` are core stack
+        # suffixes that must be in THIS footprint — checked here because the
+        # footprint is role-dependent (a federated workload account has no
+        # local gateway, so a gateway-requiring use case belongs platform-side).
+        if self.use_cases:
+            manifests = discover_use_cases()
+            suffixes = {s.removeprefix(f"{prefix}-") for s in stacks}
+            for name in sorted(self.use_cases):
+                missing = sorted(set(manifests[name].requires) - suffixes)
+                if missing:
+                    raise ValueError(
+                        f"use case {name!r} requires {missing}, absent from this "
+                        f"footprint (strategy={self.deployment.strategy}"
+                        f"{', role=' + role if role else ''}). Enable the "
+                        "prerequisites, or deploy the use case on the side of "
+                        "the federation that runs them."
+                    )
+                stacks.extend(f"{prefix}-{s}" for s in manifests[name].stacks)
         return stacks
 
     def federated_role(self, account: str) -> str | None:

@@ -40,8 +40,13 @@ printf '{ "availability-zones:account=%s:region=%s": ["%sa","%sb"] }\n' \
     "$CDK_DEFAULT_ACCOUNT" "$CDK_DEFAULT_REGION" \
     "$CDK_DEFAULT_REGION" "$CDK_DEFAULT_REGION" > cdk.context.json
 
+# Presets are the shipped profiles; tests/fixtures/contract/ holds extra
+# footprints worth pinning (e.g. a use case enabled), same parity rules.
+CONFIGS=(presets/*.yaml)
+[ -d tests/fixtures/contract ] && CONFIGS+=(tests/fixtures/contract/*.yaml)
+
 fail=0
-for preset in presets/*.yaml; do
+for preset in "${CONFIGS[@]}"; do
     name="$(basename "$preset" .yaml)"
     workdir="$(mktemp -d)"
 
