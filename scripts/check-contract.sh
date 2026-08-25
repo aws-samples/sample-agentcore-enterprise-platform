@@ -18,6 +18,11 @@ PY="${PY:-$REPO/.venv/bin/python}"
 
 export CDK_DEFAULT_ACCOUNT="${CDK_DEFAULT_ACCOUNT:-111111111111}"
 export CDK_DEFAULT_REGION="${CDK_DEFAULT_REGION:-us-east-1}"
+# security-focused ships org_id EMPTY (a placeholder must not validate, so it
+# cannot ship a real-looking one) but its memory stack hard-fails resource
+# policies without an org id. Env beats platform.yaml, so this satisfies the
+# synth; real deploys still prompt.
+export ORG_ID="${ORG_ID:-o-paritycheck123}"
 export JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1
 
 # The networking VPC's AZ lookup needs context to synth offline; CDK only

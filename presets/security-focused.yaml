@@ -28,7 +28,9 @@ security:
     enabled: true
     mode: LOG_ONLY
   traceability: true
-  org_id: "o-REPLACEME"       # your AWS Organizations id
+  # deploy.sh prompts for the org id, or export ORG_ID — find it with:
+  #   aws organizations describe-organization --query Organization.Id
+  org_id: ""
 
 observability:
   transaction_search: true

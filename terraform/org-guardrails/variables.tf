@@ -32,9 +32,14 @@ variable "target_ids" {
 
 # ── Control: scp.memory.enforce-cmk ──
 variable "enable_scp_memory_enforce_cmk" {
-  description = "Create and attach the 'deny CreateMemory without a CMK' SCP."
+  description = <<-EOT
+    Create and attach the 'deny CreateMemory without a CMK' SCP. Opt-in because the
+    accelerator's own default deployment creates Memory without a CMK — attaching this over
+    it denies the platform's own memory stack. Enable the security stack's KMS
+    (enable_security) on every covered account's memory first.
+  EOT
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "kms_key_arn_pattern" {
@@ -69,9 +74,15 @@ variable "identity_approved_principal_arn_pattern" {
 
 # ── Controls: Gateway configuration SCPs (control plane) ──
 variable "enable_gateway_scps" {
-  description = "Create and attach the AgentCore Gateway configuration hardening SCPs."
+  description = <<-EOT
+    Create and attach the AgentCore Gateway configuration hardening SCPs. Opt-in because
+    they deny gateway settings the accelerator's default deployment uses: no gateway CMK,
+    and Cedar in LOG_ONLY where the require-policy-engine SCP assumes ENFORCE. Set a
+    gateway KMS key and cedar_mode=ENFORCE first, or these guardrails deny the platform's
+    own gateway stack.
+  EOT
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "gateway_kms_key_arn_pattern" {

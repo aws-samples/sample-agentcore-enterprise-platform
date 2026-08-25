@@ -102,6 +102,27 @@ def test_traceability_requires_cloudtrail():
     assert "cloudtrail_alerting" in str(excinfo.value)
 
 
+def test_org_id_valid_and_empty_pass():
+    config = PlatformConfig.model_validate({"security": {"org_id": "o-abc123def456"}})
+    assert config.security.org_id == "o-abc123def456"
+    # Empty stays allowed — deploy.sh prompts for it.
+    assert PlatformConfig.model_validate({}).security.org_id == ""
+
+
+def test_org_id_placeholder_is_rejected_with_a_pointer():
+    """The shipped 'o-REPLACEME' used to validate and render into IAM policies
+    against an organization that does not exist."""
+    with pytest.raises(ValidationError) as excinfo:
+        PlatformConfig.model_validate({"security": {"org_id": "o-REPLACEME"}})
+    assert "describe-organization" in str(excinfo.value)
+
+
+def test_org_id_wrong_shape_is_rejected():
+    with pytest.raises(ValidationError) as excinfo:
+        PlatformConfig.model_validate({"security": {"org_id": "not-an-org-id"}})
+    assert "Organizations id" in str(excinfo.value)
+
+
 def test_non_cognito_idp_requires_secret_name():
     with pytest.raises(ValidationError) as excinfo:
         PlatformConfig.model_validate(
@@ -169,7 +190,7 @@ def test_to_env_maps_onto_the_names_deploy_already_uses():
     assert env["CEDAR_MODE"] == "LOG_ONLY"
     assert env["ENABLE_SECURITY"] == "true"  # schema name: cloudtrail_alerting
     assert env["AGENT_PATTERN"] == "orchestrator"
-    assert env["ORG_ID"] == "o-REPLACEME"
+    assert "ORG_ID" not in env  # empty in the preset — deploy.sh prompts for it
     # web_search auto in us-east-1 resolves to on
     assert env["ENABLE_WEB_SEARCH"] == "true"
 
