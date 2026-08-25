@@ -273,28 +273,8 @@ TEAM_FLAGS[agent]="ENABLE_A2A=true"
 TEAM_FLAGS[platform]="ENABLE_NETWORKING=true"
 TEAM_FLAGS[security]="ENABLE_SECURITY=true"
 
-# apply_flags "KEY=value ..." LABEL — export each pair unless the user already
-# set that variable (explicit env wins over selection flags), then rebuild
-# CONTEXT_ARGS so the -c flags reflect the change.
-apply_flags() {
-    local pair key changed=0
-    for pair in $1; do
-        key="${pair%%=*}"
-        [ -n "${!key:-}" ] && continue
-        printf -v "$key" '%s' "${pair#*=}"
-        export "${key?}"
-        log_info "$pair enabled by the $2 selection (set it in platform.yaml to make it permanent)"
-        changed=1
-    done
-    [ "$changed" = "1" ] && build_context_args
-    return 0
-}
-apply_module_flags() { apply_flags "${MODULE_FLAGS[$1]:-}" "module $1"; }
-apply_selection_flags() {
-    [ -n "${MODULE:-}" ] && apply_module_flags "$MODULE"
-    [ -n "${TEAM:-}" ]   && apply_flags "${TEAM_FLAGS[$TEAM]:-}" "team $TEAM"
-    return 0
-}
+# The apply_flags helper that consumes these tables lives after
+# build_context_args (it calls it, and shellcheck 0.9 flags forward calls).
 
 # Profile feature flags live in presets/*.yaml — --profile materializes the
 # preset as platform.yaml (see materialize_preset above). The old PROFILE_FLAGS
@@ -685,6 +665,30 @@ build_context_args() {
     # Agent framework pattern (validated above; always set)
     CONTEXT_ARGS+=(-c "agent_pattern=${AGENT_PATTERN}")
 
+    return 0
+}
+
+# apply_flags "KEY=value ..." LABEL — export each pair unless the user already
+# set that variable (explicit env wins over selection flags), then rebuild
+# CONTEXT_ARGS so the -c flags reflect the change. Tables: MODULE_FLAGS /
+# TEAM_FLAGS beside TEAM_MAP above.
+apply_flags() {
+    local pair key changed=0
+    for pair in $1; do
+        key="${pair%%=*}"
+        [ -n "${!key:-}" ] && continue
+        printf -v "$key" '%s' "${pair#*=}"
+        export "${key?}"
+        log_info "$pair enabled by the $2 selection (set it in platform.yaml to make it permanent)"
+        changed=1
+    done
+    [ "$changed" = "1" ] && build_context_args
+    return 0
+}
+apply_module_flags() { apply_flags "${MODULE_FLAGS[$1]:-}" "module $1"; }
+apply_selection_flags() {
+    [ -n "${MODULE:-}" ] && apply_module_flags "$MODULE"
+    [ -n "${TEAM:-}" ]   && apply_flags "${TEAM_FLAGS[$TEAM]:-}" "team $TEAM"
     return 0
 }
 
