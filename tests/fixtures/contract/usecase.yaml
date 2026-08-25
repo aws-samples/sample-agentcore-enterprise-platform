@@ -1,0 +1,9 @@
+# Parity fixture: a footprint with a use case enabled. check-contract.sh
+# synthesizes this like a preset — proving an enabled use case's stack really
+# builds and lands in the contract, not just in the schema.
+project: agentcore-workshop
+environment: dev
+
+use_cases:
+  hello-platform:
+    greeting: parity-check

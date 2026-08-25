@@ -1,0 +1,17 @@
+# The manifest is the only file the platform reads about your use case.
+# Everything here is validated at load time (infra_utils/platform_config.py).
+name: hello-platform            # must match this directory's name
+owner: robcata                  # who reviews changes to this folder
+summary: Reference use case — proves the extension point end to end and is the template to copy.
+
+# Core stack suffixes that must exist in the deployment's footprint. The
+# contract checks these per federation role, so a use case can never select
+# itself into an account that lacks its prerequisites.
+requires: [gateway]
+
+# Stack suffixes this use case adds (full name = <project>-<env>-<suffix>).
+# The uc- namespace is enforced: a contribution cannot collide with a core stack.
+stacks: [uc-hello-platform]
+
+# Module exposing build(app, platform_ctx, config). Default: stack.py
+entry: stack.py

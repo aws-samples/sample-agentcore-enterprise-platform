@@ -540,4 +540,37 @@ for _dep in (
     if _dep:
         obs_stack.add_dependency(_dep)
 
+# ═══════════════════════════════════════════════════════════════
+# USE CASES (opt-in product integrations)
+# ═══════════════════════════════════════════════════════════════
+# Each is a folder under use-cases/ (manifest + stack + verify + walkthrough)
+# enabled by naming it in platform.yaml's `use_cases:` block. Its build()
+# receives a small context and consumes the platform through the published
+# interface (SSM parameters + Cognito tokens — docs/PLATFORM_INTERFACE.md),
+# never core stack objects: that is the contract that lets contributions and
+# the core evolve independently.
+if platform_config and platform_config.use_cases:
+    import importlib.util
+
+    from infra_utils.platform_config import USE_CASES_DIR, discover_use_cases
+
+    _manifests = discover_use_cases()
+    _uc_ctx = {
+        "project": project,
+        "environment": env_name,
+        "prefix": prefix,
+        "ssm_prefix": f"/{project}/{env_name}",
+        "region": region,
+        "cdk_env": cdk_env,
+    }
+    for _uc_name in sorted(platform_config.use_cases):
+        _manifest = _manifests[_uc_name]
+        _entry = USE_CASES_DIR / _uc_name / _manifest.entry
+        _spec = importlib.util.spec_from_file_location(
+            f"use_case_{_uc_name.replace('-', '_')}", _entry
+        )
+        _mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        _mod.build(app, _uc_ctx, platform_config.use_cases[_uc_name] or {})
+
 app.synth()
