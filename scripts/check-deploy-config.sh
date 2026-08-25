@@ -382,4 +382,45 @@ echo "PASS: post-destroy sweep reports always, deletes only with --yes"
     || fail "PROFILE_FLAGS table is back in deploy.sh"
 echo "PASS: profile intent lives only in presets"
 
+# (s) selecting a module/team also enables the feature flags its stacks need.
+# `--module C` names ${PREFIX}-networking, but that stack only synthesizes
+# when ENABLE_NETWORKING=true — cdk used to fail with "No stacks match" after
+# bootstrap had already run. Explicit env must still win over the selection.
+eval "$(sed -n '/^declare -A MODULE_FLAGS/p; /^MODULE_FLAGS\[/p;
+                /^declare -A TEAM_FLAGS/p; /^TEAM_FLAGS\[/p;
+                /^apply_flags()/,/^}/p; /^apply_module_flags()/p;
+                /^apply_selection_flags()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
+[ -n "${MODULE_FLAGS[C]:-}" ] || fail "MODULE_FLAGS extraction broken"
+# Stub for the eval'd apply_flags. Defined via eval so shellcheck 0.9 does
+# not pair it with the earlier (also eval'd) real build_context_args call and
+# raise SC2218 "defined later".
+eval 'build_context_args() { :; }'
+
+unset ENABLE_NETWORKING ENABLE_SECURITY ENABLE_A2A 2>/dev/null || true
+# shellcheck disable=SC2034  # MODULE/TEAM are read by the eval'd apply_selection_flags
+declare MODULE="C" TEAM=""
+apply_selection_flags
+[ "${ENABLE_NETWORKING:-}" = "true" ] || fail "module C did not enable ENABLE_NETWORKING"
+
+unset ENABLE_NETWORKING
+ENABLE_NETWORKING="false"       # explicit env: must survive the selection
+apply_selection_flags
+[ "$ENABLE_NETWORKING" = "false" ] || fail "explicit ENABLE_NETWORKING=false lost to module C"
+
+unset ENABLE_A2A 2>/dev/null || true
+apply_module_flags 8            # as the workshop loop applies it, per module
+[ "${ENABLE_A2A:-}" = "true" ] || fail "module 8 did not enable ENABLE_A2A"
+
+unset ENABLE_A2A
+# shellcheck disable=SC2034
+declare MODULE="" TEAM="agent"
+apply_selection_flags
+[ "${ENABLE_A2A:-}" = "true" ] || fail "team agent did not enable ENABLE_A2A"
+
+unset ENABLE_NETWORKING ENABLE_SECURITY ENABLE_A2A 2>/dev/null || true
+apply_module_flags 3            # no MODULE_FLAGS entry: must export nothing
+[ -z "${ENABLE_NETWORKING:-}${ENABLE_SECURITY:-}${ENABLE_A2A:-}" ] \
+    || fail "module 3 exported flags it does not need"
+echo "PASS: module/team selection enables the flags its stacks need"
+
 echo "OK: all deploy-config checks passed"

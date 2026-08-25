@@ -257,6 +257,25 @@ TEAM_MAP[platform]="${PREFIX}-networking ${PREFIX}-auth ${PREFIX}-identity ${PRE
 TEAM_MAP[agent]="${PREFIX}-runtime-orchestrator ${PREFIX}-runtime-code-agent ${PREFIX}-runtime-research-agent ${PREFIX}-memory"
 TEAM_MAP[security]="${PREFIX}-security ${PREFIX}-observability"
 
+# ── Module/Team → required feature flags ──
+# A module/team definition owns BOTH its stack names and the feature flags
+# those stacks need: MODULE_MAP[C] names ${PREFIX}-networking, but that stack
+# only exists in the synthesized app when ENABLE_NETWORKING=true — selecting
+# one without the other made cdk fail with "No stacks match" after bootstrap
+# had already run. Explicit env vars (and platform.yaml) still win: a flag is
+# only exported when it is currently unset (see apply_flags).
+declare -A MODULE_FLAGS
+MODULE_FLAGS[8]="ENABLE_A2A=true"
+MODULE_FLAGS[C]="ENABLE_NETWORKING=true"
+MODULE_FLAGS[E]="ENABLE_SECURITY=true"
+declare -A TEAM_FLAGS
+TEAM_FLAGS[agent]="ENABLE_A2A=true"
+TEAM_FLAGS[platform]="ENABLE_NETWORKING=true"
+TEAM_FLAGS[security]="ENABLE_SECURITY=true"
+
+# The apply_flags helper that consumes these tables lives after
+# build_context_args (it calls it, and shellcheck 0.9 flags forward calls).
+
 # Profile feature flags live in presets/*.yaml — --profile materializes the
 # preset as platform.yaml (see materialize_preset above). The old PROFILE_FLAGS
 # table here was the same intent written twice, and only the env-var copy
@@ -646,6 +665,30 @@ build_context_args() {
     # Agent framework pattern (validated above; always set)
     CONTEXT_ARGS+=(-c "agent_pattern=${AGENT_PATTERN}")
 
+    return 0
+}
+
+# apply_flags "KEY=value ..." LABEL — export each pair unless the user already
+# set that variable (explicit env wins over selection flags), then rebuild
+# CONTEXT_ARGS so the -c flags reflect the change. Tables: MODULE_FLAGS /
+# TEAM_FLAGS beside TEAM_MAP above.
+apply_flags() {
+    local pair key changed=0
+    for pair in $1; do
+        key="${pair%%=*}"
+        [ -n "${!key:-}" ] && continue
+        printf -v "$key" '%s' "${pair#*=}"
+        export "${key?}"
+        log_info "$pair enabled by the $2 selection (set it in platform.yaml to make it permanent)"
+        changed=1
+    done
+    [ "$changed" = "1" ] && build_context_args
+    return 0
+}
+apply_module_flags() { apply_flags "${MODULE_FLAGS[$1]:-}" "module $1"; }
+apply_selection_flags() {
+    [ -n "${MODULE:-}" ] && apply_module_flags "$MODULE"
+    [ -n "${TEAM:-}" ]   && apply_flags "${TEAM_FLAGS[$TEAM]:-}" "team $TEAM"
     return 0
 }
 
@@ -1048,6 +1091,9 @@ fi
 
 # Build CDK context args (populates the CONTEXT_ARGS array)
 build_context_args
+# The selected --module/--team may name stacks that only exist behind a
+# feature flag — enable those now (rebuilds CONTEXT_ARGS; env still wins).
+apply_selection_flags
 
 case "$ACTION" in
     deploy)
@@ -1113,8 +1159,8 @@ case "$ACTION" in
                 if [ "$m" = "$FROM_MODULE" ]; then SKIPPING=0
                 else log_info "Skipping module $m (--from $FROM_MODULE)"; continue; fi
             fi
-            # A2A sub-agent stacks only exist in the CDK app when enable_a2a=true.
-            if [ "$m" = "8" ]; then export ENABLE_A2A=true; build_context_args; fi
+            # Some modules' stacks only exist behind a feature flag — see MODULE_FLAGS.
+            apply_module_flags "$m"
 
             title="${MODULE_EXPLAIN[$m]%%$'\n'*}"
             log_header "Module $m — $title"
