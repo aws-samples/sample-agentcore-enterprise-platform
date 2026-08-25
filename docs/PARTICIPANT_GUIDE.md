@@ -152,7 +152,7 @@ Things that look wrong and are not:
 The guided run verifies each module for you. These are the same tools by hand:
 
 ```bash
-python scripts/test.py                       # platform health: token, invoke, resources
+./scripts/deploy.sh verify                   # every check this configuration promises; non-zero on failure
 python scripts/invoke.py "Reply with exactly: WORKSHOP OK"
 python scripts/invoke.py --tools             # tools registered on the GATEWAY (asks the gateway, not the agent)
 python scripts/invoke.py --agui "…"          # for agui-* patterns (typed SSE events)

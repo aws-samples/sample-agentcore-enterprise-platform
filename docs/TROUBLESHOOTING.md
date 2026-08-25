@@ -403,5 +403,5 @@ anyone will have:
 aws sts get-caller-identity                       # account and identity
 aws cloudformation describe-stacks \
   --query "Stacks[?starts_with(StackName,'<prefix>')].{n:StackName,s:StackStatus}" --output table
-python scripts/test.py                            # platform health
+./scripts/deploy.sh verify                        # platform health (non-zero on any failed claim)
 ```
