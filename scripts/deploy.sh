@@ -93,6 +93,58 @@ load_config() {
 # here: this runs before setup_venv, so pydantic may not exist yet — app.py
 # hard-validates the same file at synth time either way.
 PLATFORM_CONFIG="${PLATFORM_CONFIG:-$PROJECT_DIR/platform.yaml}"
+
+# ── Profile → preset materialization ──
+# A profile IS a preset: --profile X writes presets/X.yaml to platform.yaml
+# (the durable manifest) instead of exporting one-shot env flags. That is what
+# makes intent survive the run — the next plain `deploy` reads the same file,
+# so a redeploy can no longer silently change the footprint (A2A used to
+# default back on, and destroy could not see stacks an old profile created).
+MATERIALIZE_HEADER="# Generated from presets/"
+valid_profiles() {
+    (cd "$PROJECT_DIR/presets" && ls -- *.yaml | sed 's/\.yaml$//' | tr '\n' ' ')
+}
+materialize_preset() {
+    local profile="$1" src dst="$PLATFORM_CONFIG"
+    src="$PROJECT_DIR/presets/$profile.yaml"
+    if [ ! -f "$src" ]; then
+        log_error "Unknown profile: '$profile'. Valid profiles: $(valid_profiles)"
+        exit 1
+    fi
+    if [ -f "$dst" ] && ! head -1 "$dst" | grep -q "^$MATERIALIZE_HEADER"; then
+        if [ "${PRESCAN_YES:-0}" != "1" ]; then
+            log_error "platform.yaml exists and was not generated from a preset."
+            log_error "Refusing to overwrite a hand-edited manifest with --profile $profile."
+            log_error "Drop --profile (the file already IS the config), or re-run with --yes."
+            exit 1
+        fi
+        log_warn "Overwriting hand-edited platform.yaml with preset '$profile' (--yes)."
+    fi
+    {
+        echo "${MATERIALIZE_HEADER}${profile}.yaml by deploy.sh. Safe to edit — this header"
+        echo "# only marks that --profile may regenerate the file. Remove it to protect edits."
+        cat "$src"
+    } > "$dst"
+    log_info "Profile '$profile' materialized as platform.yaml (the deployment manifest)"
+}
+
+# Pre-scan argv: materialization must precede apply_platform_config below so
+# the manifest it writes participates with the right precedence. Skipped for
+# the config action and for --dry-run (a dry run must not mutate config).
+PRESCAN_PROFILE=""; PRESCAN_YES=0; PRESCAN_DRY=0
+_prev=""
+for _a in "$@"; do
+    [ "$_prev" = "--profile" ] && PRESCAN_PROFILE="$_a"
+    case "$_a" in
+        --yes)     PRESCAN_YES=1 ;;
+        --dry-run) PRESCAN_DRY=1 ;;
+    esac
+    _prev="$_a"
+done
+if [ -n "$PRESCAN_PROFILE" ] && [ "${1:-}" != "config" ] && [ "$PRESCAN_DRY" != "1" ]; then
+    materialize_preset "$PRESCAN_PROFILE"
+fi
+
 apply_platform_config() {
     [ -f "$PLATFORM_CONFIG" ] || return 0
     local py="$PROJECT_DIR/.venv/bin/python"
@@ -205,13 +257,10 @@ TEAM_MAP[platform]="${PREFIX}-networking ${PREFIX}-auth ${PREFIX}-identity ${PRE
 TEAM_MAP[agent]="${PREFIX}-runtime-orchestrator ${PREFIX}-runtime-code-agent ${PREFIX}-runtime-research-agent ${PREFIX}-memory"
 TEAM_MAP[security]="${PREFIX}-security ${PREFIX}-observability"
 
-# ── Profile → Feature Flags (Requirement 13) ──
-declare -A PROFILE_FLAGS
-PROFILE_FLAGS[greenfield]="enable_networking=false enable_security=false enable_a2a=false"
-PROFILE_FLAGS[migration]="enable_networking=false enable_security=false enable_a2a=false"
-PROFILE_FLAGS[multi-agent]="enable_networking=false enable_security=false enable_a2a=true"
-PROFILE_FLAGS[platform-team]="enable_networking=true enable_security=true enable_a2a=true"
-PROFILE_FLAGS[security-focused]="enable_networking=true enable_security=true enable_a2a=false enable_resource_policies=true enable_egress_filter=true enable_cedar=true enable_traceability=true"
+# Profile feature flags live in presets/*.yaml — --profile materializes the
+# preset as platform.yaml (see materialize_preset above). The old PROFILE_FLAGS
+# table here was the same intent written twice, and only the env-var copy
+# applied; it died with the run, so a later plain deploy changed the footprint.
 
 # ── Profile → Guided Workshop Module Sequence (workshop action) ──
 # Which modules each customer profile walks through, in order (README facilitator guide).
@@ -630,6 +679,78 @@ confirm_footprint() {
 }
 
 # ═══════════════════════════════════════════════════════════════
+# Post-destroy sweep (full destroy only)
+# ═══════════════════════════════════════════════════════════════
+# `cdk destroy --all` can only see stacks the CURRENT config synthesizes. A
+# profile switch leaves live stacks invisible to it — the billable-NAT case:
+# deploy with networking on, destroy with it off, and the VPC stays. The
+# API-key/IdP secrets are created outside CloudFormation entirely, so no
+# destroy ever touched them. Discovery asks CloudFormation what actually
+# exists under the prefix instead of trusting the synth.
+#
+# Deletion policy: interactive → ask per category; --yes → delete;
+# NON_INTERACTIVE without --yes → report and leave (CI must not remove things
+# the config does not declare without being told explicitly).
+sweep_leftovers() {
+    local confirm="ask" ans s
+    [ "${YES:-0}" = "1" ] && confirm="yes"
+    [ "$confirm" = "ask" ] && [ "${NON_INTERACTIVE:-0}" = "1" ] && confirm="no"
+
+    local leftovers
+    leftovers=$(aws cloudformation list-stacks \
+        --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE ROLLBACK_COMPLETE UPDATE_ROLLBACK_COMPLETE \
+        --query "StackSummaries[?starts_with(StackName,'${PREFIX}-')].StackName" \
+        --output text --region "$AWS_REGION" 2>/dev/null | tr '\t' '\n' | grep . || true)
+    if [ -n "$leftovers" ]; then
+        log_warn "Still live after destroy (invisible to the current config):"
+        echo "$leftovers" | sed 's/^/    /'
+        ans="n"
+        case "$confirm" in
+            yes) ans="y" ;;
+            ask) read -rp "Delete these stacks too? [y/N]: " ans ;;
+            no)  log_warn "Leaving them (NON_INTERACTIVE without --yes). They may bill hourly." ;;
+        esac
+        if [[ "$ans" =~ ^[Yy] ]]; then
+            while IFS= read -r s; do
+                aws cloudformation delete-stack --stack-name "$s" --region "$AWS_REGION" \
+                    && log_info "Deletion started: $s" \
+                    || log_error "Could not start deletion of $s"
+            done <<< "$leftovers"
+            log_info "Deletions run in the background — check the CloudFormation console."
+        fi
+    fi
+
+    # Secrets this script creates outside CloudFormation, under OUR prefix
+    # only — a bring-your-own secret name is the operator's, never swept.
+    local orphaned=()
+    for s in idp-client-secret google-oauth-secret github-oauth-secret \
+             notion-oauth-secret tavily-api-key google-search-api-key \
+             google-maps-api-key; do
+        aws secretsmanager describe-secret --secret-id "${PREFIX}-${s}" \
+            --region "$AWS_REGION" &>/dev/null && orphaned+=("${PREFIX}-${s}")
+    done
+    if [ "${#orphaned[@]}" -gt 0 ]; then
+        log_warn "Secrets created outside CloudFormation:"
+        printf '    %s\n' "${orphaned[@]}"
+        ans="n"
+        case "$confirm" in
+            yes) ans="y" ;;
+            ask) read -rp "Delete these secrets (no recovery window)? [y/N]: " ans ;;
+            no)  log_warn "Leaving them (NON_INTERACTIVE without --yes)." ;;
+        esac
+        if [[ "$ans" =~ ^[Yy] ]]; then
+            for s in "${orphaned[@]}"; do
+                aws secretsmanager delete-secret --secret-id "$s" \
+                    --force-delete-without-recovery --region "$AWS_REGION" >/dev/null \
+                    && log_info "Deleted secret: $s" \
+                    || log_error "Could not delete secret $s"
+            done
+        fi
+    fi
+    return 0
+}
+
+# ═══════════════════════════════════════════════════════════════
 # Stack Deploy Loop (shared by the deploy and workshop actions)
 # ═══════════════════════════════════════════════════════════════
 deploy_stacks() {
@@ -859,8 +980,10 @@ done
 # A misspelled --profile used to be validated only for the workshop action:
 # on plain deploy it skipped its feature flags without a word and fell
 # through to `cdk deploy --all` — a typo produced a LARGER deployment.
-if [ -n "$PROFILE" ] && [ -z "${PROFILE_FLAGS[$PROFILE]:-}" ]; then
-    log_error "Unknown profile: '$PROFILE'. Valid profiles: ${!PROFILE_FLAGS[*]}"
+if [ -n "$PROFILE" ] && [ ! -f "$PROJECT_DIR/presets/$PROFILE.yaml" ]; then
+    # Normally already caught by materialize_preset in the pre-scan; this
+    # covers the paths that skip materialization (--dry-run).
+    log_error "Unknown profile: '$PROFILE'. Valid profiles: $(valid_profiles)"
     exit 1
 fi
 if [ -n "$TEAM" ] && [ -z "${TEAM_MAP[$TEAM]:-}" ]; then
@@ -880,15 +1003,8 @@ for _s in ${STACK_FILTER:-}; do
     esac
 done
 
-# Apply profile flags
-if [ -n "$PROFILE" ] && [ -n "${PROFILE_FLAGS[$PROFILE]:-}" ]; then
-    log_info "Profile: $PROFILE"
-    for flag in ${PROFILE_FLAGS[$PROFILE]}; do
-        key="${flag%%=*}"
-        val="${flag##*=}"
-        export "$(echo "$key" | tr '[:lower:]' '[:upper:]')=$val"
-    done
-fi
+# Profile flags arrive via the materialized platform.yaml (pre-scan above),
+# not per-run env exports — that is what makes them survive to the NEXT run.
 
 # Fail fast on missing ORG_ID before any CDK command runs
 check_org_id
@@ -1027,6 +1143,8 @@ case "$ACTION" in
         # refused destroy is the guard against cascading, so it has to be seen.
         # shellcheck disable=SC2086  # stack list is space-separated by design
         destroy_stacks ${CDK_STACKS:-} || exit 1
+        # Full destroy: also find what the current config could not see.
+        [ -z "${CDK_STACKS:-}" ] && sweep_leftovers
         ;;
 
     synth)
