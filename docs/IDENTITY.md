@@ -109,6 +109,8 @@ intentionally do not receive it.
 
 ## Testing note
 
-`scripts/test.py` sends the bearer token as `X-Authorization` when invoking through boto3. The
-runtime allowlist forwards only `Authorization`, so an agent calling the helper on that path
-raises "No Authorization header found." Use `scripts/invoke.py` to exercise real JWT auth.
+Invoking a CUSTOM_JWT runtime through boto3 requires smuggling the bearer token as
+`X-Authorization`, but the runtime allowlist forwards only `Authorization` — the agent then
+raises "No Authorization header found." `scripts/invoke.py` (and `deploy.sh verify`, which
+composes it) calls the `/invocations` HTTPS endpoint with a real `Authorization: Bearer`
+header instead, exercising the same JWT path production clients use.

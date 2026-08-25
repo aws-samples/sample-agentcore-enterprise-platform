@@ -97,8 +97,9 @@ After deployment, run a few checks. They make it easier to spot a missing permis
 export AWS_PROFILE=<your-profile>   # Skip if you use default credentials
 export AWS_REGION=us-east-1
 
-# Health check: token, invocation, and resource status
-python scripts/test.py
+# Health check: runs every check your configuration promises (gateway, memory,
+# observability, live agent invokes, ...) and exits non-zero on any failure.
+./scripts/deploy.sh verify
 
 # Invoke the deployed agent. Add --session <id> to continue a conversation.
 python scripts/invoke.py "What tools do you have?"

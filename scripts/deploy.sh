@@ -1147,6 +1147,13 @@ case "$ACTION" in
         [ -z "${CDK_STACKS:-}" ] && sweep_leftovers
         ;;
 
+    verify)
+        # One configuration-aware health check: asks the deployment contract
+        # what this config promises and runs the matching tools; non-zero if
+        # any claim fails. Details: scripts/verify.py
+        "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/scripts/verify.py"
+        ;;
+
     synth)
         JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
             npx cdk synth "${CONTEXT_ARGS[@]}" ${CDK_STACKS:+$CDK_STACKS} 2>&1
@@ -1171,6 +1178,7 @@ case "$ACTION" in
         echo ""
         echo "Actions:"
         echo "  workshop           Guided module-by-module deploy: explain → deploy → verify → pause"
+        echo "  verify             Run every check this configuration promises; non-zero on failure"
         echo "  config             Show saved answers (workshop.env)"
         echo "  config --reset     Delete saved answers and start fresh"
         echo ""
