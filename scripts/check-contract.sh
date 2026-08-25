@@ -26,8 +26,13 @@ export JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1
 [ -f cdk.context.json ] && mv cdk.context.json cdk.context.json.check-contract-bak
 restore_context() {
     rm -f cdk.context.json
-    [ -f cdk.context.json.check-contract-bak ] \
-        && mv cdk.context.json.check-contract-bak cdk.context.json
+    # Plain `[ -f ] && mv` would end the trap with status 1 when no backup
+    # exists (fresh checkout, CI) and set -e turns that into the script's
+    # exit code — every preset PASSed and the job still failed. If/fi is the
+    # always-zero form.
+    if [ -f cdk.context.json.check-contract-bak ]; then
+        mv cdk.context.json.check-contract-bak cdk.context.json
+    fi
 }
 # PIPE included: `check-contract.sh | head` must not skip the restore.
 trap restore_context EXIT INT TERM PIPE
