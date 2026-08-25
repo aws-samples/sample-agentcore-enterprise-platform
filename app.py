@@ -157,25 +157,34 @@ idp_config = {
     "issuer_url": cfg("idp_issuer_url", "IDP_ISSUER_URL", ""),
 }
 
-# OAuth provider credentials
-google_client_id = app.node.try_get_context("google_client_id") or os.environ.get(
-    "GOOGLE_CLIENT_ID", ""
+# OAuth provider credentials (3LO). Secrets travel as Secrets Manager secret
+# NAMES only — a plaintext *_client_secret context key or env var is rejected,
+# because context values land in `ps` output, cdk.context.json, and (previously)
+# verbatim in the synthesized template. deploy.sh upserts the secret and passes
+# the name; see the identity stack for the dynamic-reference rendering.
+for _vendor in ("google", "github", "notion"):
+    if app.node.try_get_context(f"{_vendor}_client_secret") or os.environ.get(
+        f"{_vendor.upper()}_CLIENT_SECRET", ""
+    ):
+        raise ValueError(
+            f"Plaintext '{_vendor}_client_secret' / {_vendor.upper()}_CLIENT_SECRET is "
+            f"no longer supported — store it in Secrets Manager and pass "
+            f"'{_vendor}_client_secret_name' instead (scripts/deploy.sh does this "
+            "automatically when the secret is in the environment)."
+        )
+
+google_client_id = cfg("google_client_id", "GOOGLE_CLIENT_ID", "")
+google_client_secret_name = cfg(
+    "google_client_secret_name", "GOOGLE_CLIENT_SECRET_NAME", ""
 )
-google_client_secret = app.node.try_get_context(
-    "google_client_secret"
-) or os.environ.get("GOOGLE_CLIENT_SECRET", "")
-github_client_id = app.node.try_get_context("github_client_id") or os.environ.get(
-    "GITHUB_CLIENT_ID", ""
+github_client_id = cfg("github_client_id", "GITHUB_CLIENT_ID", "")
+github_client_secret_name = cfg(
+    "github_client_secret_name", "GITHUB_CLIENT_SECRET_NAME", ""
 )
-github_client_secret = app.node.try_get_context(
-    "github_client_secret"
-) or os.environ.get("GITHUB_CLIENT_SECRET", "")
-notion_client_id = app.node.try_get_context("notion_client_id") or os.environ.get(
-    "NOTION_CLIENT_ID", ""
+notion_client_id = cfg("notion_client_id", "NOTION_CLIENT_ID", "")
+notion_client_secret_name = cfg(
+    "notion_client_secret_name", "NOTION_CLIENT_SECRET_NAME", ""
 )
-notion_client_secret = app.node.try_get_context(
-    "notion_client_secret"
-) or os.environ.get("NOTION_CLIENT_SECRET", "")
 
 # ── Global Tags ──
 cdk.Tags.of(app).add("Project", project)
@@ -279,11 +288,11 @@ identity_stack = IdentityStack(
     gateway_m2m_client_secret=m2m_client_secret,
     cognito_discovery_url=discovery_url,
     google_client_id=google_client_id,
-    google_client_secret=google_client_secret,
+    google_client_secret_name=google_client_secret_name,
     github_client_id=github_client_id,
-    github_client_secret=github_client_secret,
+    github_client_secret_name=github_client_secret_name,
     notion_client_id=notion_client_id,
-    notion_client_secret=notion_client_secret,
+    notion_client_secret_name=notion_client_secret_name,
     env=cdk_env,
 )
 if auth_stack:
