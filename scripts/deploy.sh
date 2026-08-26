@@ -513,7 +513,8 @@ prompt_api_keys() {
 
     for key_name in tavily google-search google-maps; do
         local secret_name="${PREFIX}-${key_name}-api-key"
-        if aws secretsmanager describe-secret --secret-id "$secret_name" &>/dev/null 2>&1; then
+        if aws secretsmanager describe-secret --secret-id "$secret_name" \
+            --region "$AWS_REGION" &>/dev/null; then
             log_info "✓ ${key_name}: already configured"
         else
             read -rp "  ${key_name} API key (Enter to skip): " api_key
@@ -1085,6 +1086,12 @@ cd "$PROJECT_DIR"
 # it into Secrets Manager before any context args are built (plaintext never
 # reaches the CDK CLI).
 if [ "$DRY_RUN" != "1" ]; then
+    # The region must be FINAL before this first region-scoped AWS write: the
+    # upserts store the secret in $AWS_REGION and unset the plaintext, so
+    # prompting for the region afterwards (as deploy/workshop used to) could
+    # strand the secret in the provisional region with no value left to
+    # re-store (usability review, finding 7).
+    case "$ACTION" in deploy | workshop) prompt_region ;; esac
     upsert_idp_secret
     upsert_3lo_secrets
 fi
@@ -1098,7 +1105,6 @@ apply_selection_flags
 case "$ACTION" in
     deploy)
         if [ "${NON_INTERACTIVE:-0}" != "1" ]; then
-            prompt_region
             prompt_agent_pattern
             prompt_idp
             prompt_api_keys
@@ -1141,7 +1147,6 @@ case "$ACTION" in
         [ "$DRY_RUN" = "1" ] && log_info "DRY RUN — nothing will be deployed"
 
         if [ "$DRY_RUN" != "1" ] && [ "${NON_INTERACTIVE:-0}" != "1" ]; then
-            prompt_region
             prompt_agent_pattern
             prompt_idp
             prompt_api_keys

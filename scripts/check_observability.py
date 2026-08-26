@@ -39,12 +39,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from utils import get_ssm_prefix
 
+from infra_utils.platform_config import resolve_region
 from infra_utils.transaction_search import (
     SPAN_LOG_GROUPS,
     TRACE_DESTINATION,
 )
 
-REGION = os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
+REGION = resolve_region()
 PROJECT = os.environ.get("PROJECT_NAME", "agentcore-workshop")
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
 

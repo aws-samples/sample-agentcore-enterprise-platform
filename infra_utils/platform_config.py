@@ -431,6 +431,37 @@ def to_env(config: PlatformConfig) -> dict[str, str]:
     return {k: v for k, v in pairs.items() if v != ""}
 
 
+def resolve_region(root: Path | None = None) -> str:
+    """Resolve the deployment region the way deploy.sh does, so every tool
+    (verify, invoke, monitor, check_*) reports on the region the deploy
+    actually used instead of silently defaulting to us-east-1:
+
+        env AWS_REGION/AWS_DEFAULT_REGION > platform.yaml > workshop.env
+        > AWS profile > us-east-1
+
+    `root` overrides the repository root (tests); PLATFORM_CONFIG overrides
+    the manifest path, mirroring deploy.sh.
+    """
+    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+    if region:
+        return region
+    root = root or Path(__file__).resolve().parents[1]
+    manifest = Path(os.environ.get("PLATFORM_CONFIG") or root / "platform.yaml")
+    if manifest.exists():
+        try:
+            return load_platform_config(manifest).region
+        except Exception:  # noqa: BLE001, S110 — deploy fails loudly on a bad
+            pass  # manifest; a read-only tool just falls through the chain.
+    saved = root / "workshop.env"
+    if saved.exists():
+        match = re.search(r"^AWS_REGION=([a-z0-9-]+)$", saved.read_text(), re.MULTILINE)
+        if match:
+            return match.group(1)
+    import boto3  # lazy: only the fallback needs it
+
+    return boto3.Session().region_name or "us-east-1"
+
+
 def _main() -> int:
     flags = {a for a in sys.argv[1:] if a.startswith("--")}
     args = [a for a in sys.argv[1:] if not a.startswith("--")]

@@ -14,9 +14,14 @@ import sys
 import urllib.parse
 import urllib.request
 import uuid
+from pathlib import Path
 
 import boto3
 from colorama import Fore, Style, init
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from infra_utils.platform_config import resolve_region
 
 init(autoreset=True)
 
@@ -33,7 +38,7 @@ def get_ssm_prefix(project: str | None = None, env: str | None = None) -> str:
 
 def get_ssm_param(name: str, project: str | None = None, env: str | None = None) -> str:
     """Fetch a single SSM parameter under /{project}/{env}/{name}."""
-    ssm = boto3.client("ssm")
+    ssm = boto3.client("ssm", region_name=resolve_region())
     full_name = f"{get_ssm_prefix(project, env)}/{name}"
     try:
         return ssm.get_parameter(Name=full_name)["Parameter"]["Value"]
@@ -57,9 +62,7 @@ def get_workshop_config(project: str | None = None, env: str | None = None) -> d
     """
     project = project or os.environ.get("PROJECT_NAME", DEFAULT_PROJECT)
     env = env or os.environ.get("ENVIRONMENT", DEFAULT_ENV)
-    region = os.environ.get(
-        "AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
-    )
+    region = resolve_region()
 
     return {
         "project": project,
@@ -81,9 +84,7 @@ def get_m2m_token(
     """
     project = project or os.environ.get("PROJECT_NAME", DEFAULT_PROJECT)
     env = env or os.environ.get("ENVIRONMENT", DEFAULT_ENV)
-    region = region or os.environ.get(
-        "AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
-    )
+    region = region or resolve_region()
 
     pool_id = get_ssm_param("auth/user-pool-id", project, env)
     client_id = get_ssm_param("auth/m2m-client-id", project, env)
@@ -133,7 +134,7 @@ def authenticate_cognito(
     Handles app clients with or without a client secret.
     """
     print("\nAuthenticating...")
-    cognito = boto3.client("cognito-idp")
+    cognito = boto3.client("cognito-idp", region_name=resolve_region())
 
     try:
         try:

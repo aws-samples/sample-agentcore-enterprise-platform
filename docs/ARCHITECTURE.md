@@ -5,8 +5,13 @@ layer: governance (org SCPs from the control library), identity (Cognito +
 AgentCore Identity Token Vault), platform services (gateway, memory, SSM
 registry), agent workloads (runtimes + Bedrock), the deploy golden path,
 observability, and the opt-in network layer. Solid arrows are the live request
-flow verified end to end by `scripts/test.py` and `scripts/invoke.py`; dotted
+flow verified end to end by `scripts/verify.py` and `scripts/invoke.py`; dotted
 arrows are opt-in features or control-plane relationships.
+
+An editable draw.io version of the same diagram (AWS icons, for slides and
+whiteboarding) lives at [`architecture.drawio`](architecture.drawio) — open it
+at [app.diagrams.net](https://app.diagrams.net) or with the VS Code draw.io
+extension. Keep the two in sync: this mermaid block is the source of truth.
 
 ```mermaid
 flowchart TB
@@ -76,7 +81,7 @@ deployment:
 1. **User JWT invoke** — a caller gets a JWT from Cognito (OIDC login or M2M
    `client_credentials` with the `agentcore/invoke` scope) and POSTs the prompt
    to the orchestrator runtime's data-plane endpoint as a Bearer token
-   (`scripts/test.py`, `scripts/invoke.py`).
+   (`scripts/verify.py`, `scripts/invoke.py`).
 2. **Agent M2M token via Token Vault → gateway MCP** — the runtime requests an
    M2M token from the AgentCore Identity `gateway-m2m` credential provider
    (Token Vault), which runs `client_credentials` against Cognito and hands the
