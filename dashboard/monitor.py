@@ -26,13 +26,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from infra_utils.platform_config import (
     PlatformConfig,
     load_platform_config,
+    resolve_region,
 )
 
 logger = logging.getLogger("monitor")
 
 PROJECT = os.environ.get("PROJECT_NAME", "agentcore-workshop")
 ENV = os.environ.get("ENVIRONMENT", "dev")
-REGION = os.environ.get("AWS_REGION", "us-east-1")
+REGION = resolve_region()
 PREFIX = f"{PROJECT}-{ENV}"
 OUTPUT = os.path.join(os.path.dirname(__file__), "public", "status.json")
 

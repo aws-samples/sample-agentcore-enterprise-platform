@@ -35,6 +35,7 @@ sys.path.insert(0, str(REPO))
 from infra_utils.platform_config import (
     PlatformConfig,
     load_platform_config,
+    resolve_region,
     to_env,
 )
 
@@ -46,6 +47,10 @@ def load_config() -> PlatformConfig:
     child tools see the same values through the environment (env wins)."""
     path = Path(os.environ.get("PLATFORM_CONFIG", REPO / "platform.yaml"))
     config = load_platform_config(path) if path.exists() else PlatformConfig()
+    # Without a manifest, to_env() would pin the schema default (us-east-1)
+    # into the child tools' environment even when workshop.env or the AWS
+    # profile says otherwise — resolve the region for real first.
+    os.environ.setdefault("AWS_REGION", resolve_region())
     for key, value in to_env(config).items():
         os.environ.setdefault(key, value)
     return config

@@ -20,7 +20,6 @@ Usage:
 """
 
 import argparse
-import os
 import sys
 from pathlib import Path
 
@@ -30,9 +29,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from utils import get_ssm_param, get_ssm_prefix
 
+from infra_utils.platform_config import resolve_region
 from infra_utils.runtime_network import SUPPORTED_ZONE_IDS, unsupported_zone_ids
 
-REGION = os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
+REGION = resolve_region()
 
 
 def fail(message: str) -> None:

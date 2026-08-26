@@ -15,6 +15,7 @@ from infra_utils.platform_config import (
     AGENT_PATTERNS,
     PlatformConfig,
     load_platform_config,
+    resolve_region,
 )
 
 REPO = Path(__file__).resolve().parents[1]
@@ -296,3 +297,49 @@ def test_app_gates_stacks_by_federated_role():
     assert "if not is_fed_workload:" in src
     # runtimes skipped in the platform account
     assert "if not is_fed_platform:" in src
+
+
+# ── resolve_region: every tool reports on the region the deploy used ──
+# Precedence mirrors deploy.sh: env > platform.yaml > workshop.env > profile
+# > us-east-1. The verification tools and monitor.py used to default straight
+# to us-east-1 (usability review, finding 7).
+
+
+@pytest.fixture()
+def region_sandbox(monkeypatch, tmp_path):
+    """No region in env, no AWS profile: only the files in tmp_path speak."""
+    for var in ("AWS_REGION", "AWS_DEFAULT_REGION", "AWS_PROFILE", "PLATFORM_CONFIG"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "no-aws-config"))
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "no-aws-creds"))
+    return tmp_path
+
+
+def test_resolve_region_env_wins(region_sandbox, monkeypatch):
+    (region_sandbox / "platform.yaml").write_text("region: eu-west-1\n")
+    (region_sandbox / "workshop.env").write_text("AWS_REGION=ap-southeast-1\n")
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    assert resolve_region(root=region_sandbox) == "us-west-2"
+
+
+def test_resolve_region_manifest_beats_workshop_env(region_sandbox):
+    (region_sandbox / "platform.yaml").write_text("region: eu-west-1\n")
+    (region_sandbox / "workshop.env").write_text("AWS_REGION=ap-southeast-1\n")
+    assert resolve_region(root=region_sandbox) == "eu-west-1"
+
+
+def test_resolve_region_reads_workshop_env(region_sandbox):
+    (region_sandbox / "workshop.env").write_text(
+        "# saved answers\nIDP_TYPE=okta\nAWS_REGION=eu-central-1\n"
+    )
+    assert resolve_region(root=region_sandbox) == "eu-central-1"
+
+
+def test_resolve_region_invalid_manifest_falls_through(region_sandbox):
+    (region_sandbox / "platform.yaml").write_text("agents:\n  pattern: skynet\n")
+    (region_sandbox / "workshop.env").write_text("AWS_REGION=eu-central-1\n")
+    assert resolve_region(root=region_sandbox) == "eu-central-1"
+
+
+def test_resolve_region_default_when_nothing_configured(region_sandbox):
+    assert resolve_region(root=region_sandbox) == "us-east-1"

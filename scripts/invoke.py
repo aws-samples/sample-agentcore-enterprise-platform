@@ -7,7 +7,7 @@ AgentCore Runtime data plane. With --tools, lists the gateway's MCP tools
 instead.
 
 Usage:
-    python scripts/invoke.py "What tools do you have?"
+    python scripts/invoke.py "Hello! What kinds of tasks can you help with?"
     python scripts/invoke.py "And my previous question?" --session <session-id>
     python scripts/invoke.py --tools
 
@@ -16,16 +16,15 @@ Respects AWS_REGION / PROJECT_NAME / ENVIRONMENT env vars.
 
 import argparse
 import json
-import os
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
 
-from utils import get_m2m_token, get_ssm_param
+from utils import get_m2m_token, get_ssm_param, resolve_region
 
-REGION = os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
+REGION = resolve_region()
 
 
 def new_session_id() -> str:

@@ -423,4 +423,22 @@ apply_module_flags 3            # no MODULE_FLAGS entry: must export nothing
     || fail "module 3 exported flags it does not need"
 echo "PASS: module/team selection enables the flags its stacks need"
 
+# (s) the region prompt precedes the first secret upsert in the main flow.
+# upsert_* stores the secret region-scoped and unsets the plaintext, so a
+# region prompt after it strands the secret in the provisional region with
+# no value left to re-store (usability review, finding 7). Source-order
+# assertion: the first CALL site of prompt_region must come before the first
+# CALL site of upsert_idp_secret.
+first_call_line() {  # $1: function name — first call site, definitions excluded
+    grep -nE "^[^#]*\b$1\b" "$SCRIPT_DIR/deploy.sh" \
+        | grep -v "$1()" | head -1 | cut -d: -f1
+}
+region_line=$(first_call_line prompt_region)
+upsert_line=$(first_call_line upsert_idp_secret)
+[ -n "$region_line" ] && [ -n "$upsert_line" ] \
+    || fail "could not locate prompt_region/upsert_idp_secret call sites"
+[ "$region_line" -lt "$upsert_line" ] \
+    || fail "prompt_region (line $region_line) runs after upsert_idp_secret (line $upsert_line): a region change would strand the secret"
+echo "PASS: region is final before the first secret upsert"
+
 echo "OK: all deploy-config checks passed"

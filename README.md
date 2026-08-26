@@ -33,13 +33,15 @@ Use this five-step path to get from a starting point to a working deployment.
 
 Pick the profile that looks most like your job today. It is a starting point, you can further customize your deployment later.
 
-| Profile | Good fit when you are... | Starting scope |
-|---------|--------------------------|----------------|
+| Profile | Good fit when you are... | Scope (guided modules) |
+|---------|--------------------------|------------------------|
 | `greenfield` | Building new agents from scratch | Identity, gateway, one agent runtime, and observability |
 | `migration` | Moving agents from EC2, ECS, or Lambda | Identity, runtime migration, gateway integration, and observability |
 | `multi-agent` | Building specialist agents that work together | Gateway, orchestrator, A2A runtimes, and observability |
 | `platform-team` | Setting up shared infrastructure for your organization | Full platform, including memory, A2A, networking, and security |
 | `security-focused` | Starting with compliance and hardening | One-agent platform, networking, security, policy, egress, and traceability controls |
+
+A profile is both a footprint and a lesson plan: `deploy --profile <name>` deploys the whole scope in one run, while `workshop --profile <name>` walks the same scope module by module. The exact stack list comes from the profile's preset ([`presets/`](presets/)); print it any time with `./scripts/deploy.sh ls`.
 
 
 ## Getting Started
@@ -49,6 +51,7 @@ Pick the profile that looks most like your job today. It is a starting point, yo
 Before you deploy:
 
 - **AWS credentials:** permission to create IAM, Cognito, ECR, CodeBuild, Amazon Bedrock and Bedrock AgentCore resources. The deploy script validates them before making changes.
+- **Bedrock model access:** enable access to the model your agents use (default: Anthropic Claude) in the Amazon Bedrock console, in the Region you deploy to. Deployment succeeds without it, but every agent invocation fails at runtime.
 - **Local tooling:** Python 3.13 (as `python3.13`), Node.js/npm, the AWS CLI, and bash 4+ (macOS ships 3.2 — `brew install bash`). The script checks these and installs the AWS CDK CLI if it is missing. A container runtime is **not** required: agent images are built remotely in AWS CodeBuild, and it is only useful for testing an image locally.
 - **Region:** pick a Region where AgentCore and your chosen Bedrock model are available. The default is `us-east-1`.
 - **Cost awareness:** networking profiles create a NAT gateway and VPC endpoints with hourly billing. Enabling Transaction Search changes account-level span pricing. Tear down resources when you finish testing.
@@ -58,6 +61,8 @@ Before you deploy:
 Want the full picture? Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the Mermaid diagram and request flows that the repository verifies end to end.
 
 ![Enterprise Agentic AI Platform architecture](docs/architecture.png)
+
+Editable draw.io versions: [`docs/architecture-overview.drawio`](docs/architecture-overview.drawio) for this high-level view, [`docs/architecture-landing-zone.drawio`](docs/architecture-landing-zone.drawio) for the landing-zone view (accounts, modules, and who owns them), and [`docs/architecture.drawio`](docs/architecture.drawio) for the detailed one.
 
 ### Deploy
 
@@ -95,17 +100,20 @@ After deployment, run a few checks. They make it easier to spot a missing permis
 
 ```bash
 export AWS_PROFILE=<your-profile>   # Skip if you use default credentials
-export AWS_REGION=us-east-1
+# AWS_REGION is optional: the tools read the region you deployed with
+# (platform.yaml or workshop.env). Set it only to override.
 
 # Health check: runs every check your configuration promises (gateway, memory,
 # observability, live agent invokes, ...) and exits non-zero on any failure.
 ./scripts/deploy.sh verify
 
 # Invoke the deployed agent. Add --session <id> to continue a conversation.
-python scripts/invoke.py "What tools do you have?"
+# (Ask the default orchestrator about its role, not its tools — it delegates
+# to sub-agents and deliberately has none of its own.)
+python scripts/invoke.py "Hello! What kinds of tasks can you help with?"
 
 # Use the AG-UI protocol for agui-* patterns.
-python scripts/invoke.py --agui "What tools do you have?"
+python scripts/invoke.py --agui "Hello! What kinds of tasks can you help with?"
 
 # List the gateway's MCP tools.
 python scripts/invoke.py --tools
@@ -126,7 +134,8 @@ Run both commands from the repository root. The dashboard is only available on l
 
 ```bash
 # Terminal 1: poller. Writes dashboard/public/status.json every 15 seconds.
-AWS_PROFILE=<your-profile> AWS_REGION=us-east-1 .venv/bin/python dashboard/monitor.py
+# Polls the region you deployed with; set AWS_REGION only to override.
+AWS_PROFILE=<your-profile> .venv/bin/python dashboard/monitor.py
 
 # Terminal 2: web server. Open http://localhost:8888.
 python3 -m http.server 8888 -d dashboard/public
@@ -169,7 +178,15 @@ Profiles select from these stack building blocks.
 
 ## Customize, Operate, and Extend
 
-Use these sections when you need to change how the platform is deployed, secured, monitored, or integrated.
+Use these sections when you need to change how the platform is deployed, secured, monitored, or integrated. The main entry points:
+
+| You want to... | Start here |
+|----------------|------------|
+| Configure the platform declaratively | [`platform.yaml`](#customize-a-deployment), starting from a preset in [`presets/`](presets/) |
+| Use your corporate IdP (Entra ID, Okta, Ping) | [`docs/ENTERPRISE_IDP.md`](docs/ENTERPRISE_IDP.md) |
+| Deploy across multiple accounts (federated) | [`docs/MULTI_ACCOUNT.md`](docs/MULTI_ACCOUNT.md) |
+| Add your own tools to the gateway | [`docs/GATEWAY_TARGETS.md`](docs/GATEWAY_TARGETS.md) |
+| Build a use case on top of the platform | [`CONTRIBUTING_USE_CASES.md`](CONTRIBUTING_USE_CASES.md) with [`docs/PLATFORM_INTERFACE.md`](docs/PLATFORM_INTERFACE.md) |
 
 ### Choose an Agent Framework
 Each runtime stack builds one agent from the `agent-code/` directory. Pick the framework you want here; the CDK infrastructure does not change.
@@ -216,7 +233,7 @@ Use these settings to change the platform's name, environment, identity provider
 |-------------|----------------------|---------|---------|
 | `project` | `PROJECT_NAME` | `agentcore-workshop` | Project identifier |
 | `environment` | `ENVIRONMENT` | `dev` | Environment name |
-| `region` | `CDK_DEFAULT_REGION` | `us-east-1` | AWS Region |
+| `region` | `AWS_REGION` | `us-east-1` | AWS Region |
 | `idp_type` | `IDP_TYPE` | `cognito` | IdP: cognito/entra_id/okta/ping |
 | `enable_networking` | `ENABLE_NETWORKING` | `false` | Create the VPC stack |
 | `enable_security` | `ENABLE_SECURITY` | `false` | Create the security stack |
@@ -225,7 +242,13 @@ Use these settings to change the platform's name, environment, identity provider
 | `agent_pattern` | `AGENT_PATTERN` | `orchestrator` | Pattern built for the runtime. See [Agent Pattern Selection](#choose-an-agent-framework). |
 | `enable_transaction_search` | `ENABLE_TRANSACTION_SEARCH` | `true` | Configure CloudWatch Transaction Search. This setting is account scoped. See [details](#search-agent-traces). |
 
-Interactive `./scripts/deploy.sh deploy` answers go into the gitignored `workshop.env` file and are used on later runs. Environment variables win over values in `workshop.env`, which win over defaults. Check the current values with `./scripts/deploy.sh config`. Start over with `./scripts/deploy.sh config --reset`.
+Prefer a file you can review and commit? `platform.yaml` is the declarative manifest for the same settings and more (multi-account strategy, gateway tools, security controls). Deploying with `--profile <name>` writes it for you from [`presets/`](presets/), or copy a preset yourself and validate it offline:
+
+```bash
+python -m infra_utils.platform_config platform.yaml
+```
+
+Interactive `./scripts/deploy.sh deploy` answers go into the gitignored `workshop.env` file and are used on later runs. Environment variables win over `platform.yaml`, which wins over `workshop.env`, which wins over defaults. Check the current values with `./scripts/deploy.sh config`. Start over with `./scripts/deploy.sh config --reset`.
 
 Secrets such as an IdP client secret or API keys are never written to `workshop.env`. They go to AWS Secrets Manager.
 
