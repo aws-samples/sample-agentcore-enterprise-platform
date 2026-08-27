@@ -60,9 +60,13 @@ Before you deploy:
 
 Want the full picture? Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the Mermaid diagram and request flows that the repository verifies end to end.
 
+![Enterprise Agentic AI Platform, accounts and trust boundaries](docs/architecture-accounts.png)
+
+Applications sign in once and carry a validated JWT. Agents run in workload accounts, one per use case, owned by the teams that build them. The platform account holds the shared services, and cross-account trust is OAuth token exchange, with no cross-account IAM on the data plane. Governance and security tooling sit in their own accounts and apply to all of them.
+
 ![Enterprise Agentic AI Platform architecture](docs/architecture.png)
 
-Editable draw.io versions: [`docs/architecture-overview.drawio`](docs/architecture-overview.drawio) for this high-level view, [`docs/architecture-landing-zone.drawio`](docs/architecture-landing-zone.drawio) for the landing-zone view (accounts, modules, and who owns them), and [`docs/architecture.drawio`](docs/architecture.drawio) for the detailed one.
+The Mermaid diagram in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) is the source of truth for the request flows, and it renders directly on GitHub.
 
 ### Deploy
 

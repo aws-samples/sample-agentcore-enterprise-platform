@@ -8,10 +8,9 @@ observability, and the opt-in network layer. Solid arrows are the live request
 flow verified end to end by `scripts/verify.py` and `scripts/invoke.py`; dotted
 arrows are opt-in features or control-plane relationships.
 
-An editable draw.io version of the same diagram (AWS icons, for slides and
-whiteboarding) lives at [`architecture.drawio`](architecture.drawio) — open it
-at [app.diagrams.net](https://app.diagrams.net) or with the VS Code draw.io
-extension. Keep the two in sync: this mermaid block is the source of truth.
+This mermaid block is the source of truth for the request flows. For the
+account and trust-boundary view, see the diagram at the top of the
+[README](../README.md#architecture).
 
 ```mermaid
 flowchart TB
