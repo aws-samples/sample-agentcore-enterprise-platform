@@ -138,6 +138,15 @@ agent_pattern = cfg("agent_pattern", "AGENT_PATTERN", "orchestrator")
 model_id = cfg("model_id", "MODEL_ID", "")
 model_env = {"MODEL_ID": model_id} if model_id else {}
 
+# IAM allow-list for the runtime roles: scopes the Bedrock statement to these
+# models. Validation of the model_id/allowed_models combination lives in
+# infra_utils/platform_config.py.
+allowed_models = [
+    m.strip()
+    for m in cfg("allowed_models", "ALLOWED_MODELS", "").split(",")
+    if m.strip()
+]
+
 # Long-term memory configuration
 use_long_term_memory = (
     cfg("use_long_term_memory", "USE_LONG_TERM_MEMORY", "false") == "true"
@@ -414,6 +423,7 @@ if not is_fed_platform:
         source_dir="agent-code",
         dockerfile_pattern=agent_pattern,
         runtime_type="orchestrator",
+        allowed_models=allowed_models,
         cognito_issuer_url=issuer_url,
         cognito_allowed_clients=allowed_clients,
         extra_env_vars={
@@ -462,6 +472,7 @@ if enable_a2a and not is_fed_platform:
         source_dir="agent-code",
         dockerfile_pattern="code-agent",
         runtime_type="a2a_agent",
+        allowed_models=allowed_models,
         cognito_issuer_url=issuer_url,
         cognito_allowed_clients=allowed_clients,
         extra_env_vars=model_env,
@@ -485,6 +496,7 @@ if enable_a2a and not is_fed_platform:
         source_dir="agent-code",
         dockerfile_pattern="research-agent",
         runtime_type="a2a_agent",
+        allowed_models=allowed_models,
         cognito_issuer_url=issuer_url,
         cognito_allowed_clients=allowed_clients,
         extra_env_vars={

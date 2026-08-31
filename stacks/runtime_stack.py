@@ -38,6 +38,7 @@ from aws_cdk import (
 )
 from constructs import Construct
 
+from infra_utils.platform_config import allowed_model_resources
 from infra_utils.runtime_network import build_network_config
 from infra_utils.runtime_protocol import needs_jwt_authorizer, resolve_protocol
 from infra_utils.source_hash import component_image_tag
@@ -68,6 +69,7 @@ class RuntimeStack(cdk.Stack):
         security_group_ids: list[str] | None = None,
         extra_env_vars: dict[str, str] | None = None,
         dockerfile_pattern: str = "",
+        allowed_models: list[str] | None = None,
         **kwargs,
     ):
         super().__init__(scope, id, **kwargs)
@@ -234,7 +236,10 @@ class RuntimeStack(cdk.Stack):
             role_name=f"{prefix}-{component_name}-runtime-role",
         )
         self._attach_runtime_permissions(
-            runtime_role, repo.repository_arn, project_name=project_name
+            runtime_role,
+            repo.repository_arn,
+            project_name=project_name,
+            allowed_models=allowed_models,
         )
 
         # ── Protocol Configuration ──
@@ -332,7 +337,11 @@ class RuntimeStack(cdk.Stack):
 
     @staticmethod
     def _attach_runtime_permissions(
-        role: iam.Role, ecr_repo_arn: str, *, project_name: str
+        role: iam.Role,
+        ecr_repo_arn: str,
+        *,
+        project_name: str,
+        allowed_models: list[str] | None = None,
     ) -> None:
         """Attach the standard AgentCore Runtime permissions to a role.
 
@@ -391,7 +400,11 @@ class RuntimeStack(cdk.Stack):
                     "StringEquals": {"cloudwatch:namespace": "bedrock-agentcore"}
                 },
             ),
-            # Bedrock model invocation
+            # Bedrock model invocation. Wildcard by default (any model the
+            # account has access to — the workshop default); scoped to the
+            # platform.yaml allow-list when one is set, so the role is the
+            # enforcement point even against the containers' baked-in default
+            # model ids.
             iam.PolicyStatement(
                 sid="BedrockModels",
                 actions=[
@@ -400,10 +413,14 @@ class RuntimeStack(cdk.Stack):
                     "bedrock:Converse",
                     "bedrock:ConverseStream",
                 ],
-                resources=[
-                    "arn:aws:bedrock:*::foundation-model/*",
-                    "arn:aws:bedrock:*:*:inference-profile/*",
-                ],
+                resources=(
+                    allowed_model_resources(allowed_models)
+                    if allowed_models
+                    else [
+                        "arn:aws:bedrock:*::foundation-model/*",
+                        "arn:aws:bedrock:*:*:inference-profile/*",
+                    ]
+                ),
             ),
             # SSM Parameter Store (cross-stack discovery), scoped to this
             # project's own parameter path. On "*" the agent could read every
