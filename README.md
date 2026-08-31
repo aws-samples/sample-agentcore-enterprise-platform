@@ -243,6 +243,7 @@ Use these settings to change the platform's name, environment, identity provider
 | `enable_security` | `ENABLE_SECURITY` | `false` | Create the security stack |
 | `enable_a2a` | `ENABLE_A2A` | `true` | Create A2A agent stacks |
 | `model_id` | `MODEL_ID` | *(in code for each pattern)* | Override the Bedrock model for all agents, for example `us.anthropic.claude-sonnet-5` |
+| `agents.allowed_models` | `ALLOWED_MODELS` | *(unrestricted)* | Optional model allow-list. When set, `model_id` must be one of these and the runtime role's Bedrock permissions are scoped to exactly these models |
 | `agent_pattern` | `AGENT_PATTERN` | `orchestrator` | Pattern built for the runtime. See [Agent Pattern Selection](#choose-an-agent-framework). |
 | `enable_transaction_search` | `ENABLE_TRANSACTION_SEARCH` | `true` | Configure CloudWatch Transaction Search. This setting is account scoped. See [details](#search-agent-traces). |
 

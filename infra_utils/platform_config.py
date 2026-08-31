@@ -160,8 +160,52 @@ AGENT_PATTERNS = (
 class AgentsConfig(BaseModel):
     pattern: Literal[AGENT_PATTERNS] = "orchestrator"  # type: ignore[valid-type]
     model_id: str = ""  # empty = the pattern's own default
+    # Empty = no restriction: the runtime roles keep wildcard Bedrock IAM and
+    # any MODEL_ID works — today's behavior, byte-identical templates.
+    allowed_models: list[str] = Field(default_factory=list)
     a2a: bool = False
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+
+    @field_validator("allowed_models")
+    @classmethod
+    def _allowed_model_shapes(cls, v: list[str]) -> list[str]:
+        # A malformed or placeholder entry would render into the runtime
+        # role's IAM policy as an ARN that matches nothing — every model
+        # invoke fails at runtime with AccessDenied, long after validation
+        # said the config was fine. Catch it here instead.
+        for m in v:
+            if re.search(
+                r"replace|example|changeme", m, re.IGNORECASE
+            ) or not re.fullmatch(
+                r"([a-z]{2,4}\.)?[a-z0-9-]+\.[a-z0-9][a-zA-Z0-9.:_-]*", m
+            ):
+                raise ValueError(
+                    f"not a Bedrock model id: {m!r}. Expected provider.model or a "
+                    "cross-region inference profile like "
+                    "'us.anthropic.claude-sonnet-4-6'"
+                )
+        return v
+
+    @model_validator(mode="after")
+    def _allowlist_needs_model_id(self) -> AgentsConfig:
+        if self.allowed_models:
+            if not self.model_id:
+                # When model_id is empty, MODEL_ID is never injected and each
+                # agent container falls back to its baked-in DEFAULT_MODEL_ID —
+                # the allow-list would be silently bypassed. Setting model_id
+                # injects MODEL_ID into every runtime (including the A2A
+                # sub-agents), closing the bypass.
+                raise ValueError(
+                    "agents.allowed_models requires agents.model_id: without it "
+                    "each agent falls back to its baked-in DEFAULT_MODEL_ID and "
+                    "the allow-list is silently bypassed"
+                )
+            if self.model_id not in self.allowed_models:
+                raise ValueError(
+                    f"agents.model_id {self.model_id!r} is not in "
+                    f"agents.allowed_models {self.allowed_models}"
+                )
+        return self
 
 
 class GatewayConfig(BaseModel):
@@ -391,6 +435,29 @@ def load_platform_config(path: str | Path) -> PlatformConfig:
     return PlatformConfig.model_validate(raw)
 
 
+def allowed_model_resources(models: list[str]) -> list[str]:
+    """IAM resource ARNs for the runtime role's BedrockModels statement.
+
+    A geo-prefixed entry (us., eu., ...) is a cross-region inference-profile
+    id and emits BOTH the profile ARN and the base foundation-model ARN:
+    invoking through a profile also requires foundation-model permissions in
+    the profile's target regions — profile-only scoping breaks invokes.
+    Foundation-model ARNs get a trailing '*' because Bedrock model ids carry
+    version/context-window suffixes ('-v1:0', ':0:200k') that configs
+    commonly omit.
+    """
+    resources: list[str] = []
+    for m in models:
+        prefix_match = re.match(r"^[a-z]{2,4}\.", m)
+        base = m[prefix_match.end() :] if prefix_match else m
+        if prefix_match and "." in base:
+            resources.append(f"arn:aws:bedrock:*:*:inference-profile/{m}")
+        else:
+            base = m
+        resources.append(f"arn:aws:bedrock:*::foundation-model/{base}*")
+    return list(dict.fromkeys(resources))  # dedupe, order preserved
+
+
 def to_env(config: PlatformConfig) -> dict[str, str]:
     """Map the schema onto the env-var names deploy.sh and app.py already use.
 
@@ -411,6 +478,7 @@ def to_env(config: PlatformConfig) -> dict[str, str]:
         "IDP_CLIENT_SECRET_NAME": config.identity.client_secret_name,
         "AGENT_PATTERN": config.agents.pattern,
         "MODEL_ID": config.agents.model_id,
+        "ALLOWED_MODELS": ",".join(config.agents.allowed_models),
         "ENABLE_A2A": str(config.agents.a2a).lower(),
         "USE_LONG_TERM_MEMORY": str(config.agents.memory.long_term).lower(),
         "LTM_TOP_K": str(config.agents.memory.top_k),
