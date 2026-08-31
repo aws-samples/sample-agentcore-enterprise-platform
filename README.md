@@ -241,6 +241,7 @@ Use these settings to change the platform's name, environment, identity provider
 | `idp_type` | `IDP_TYPE` | `cognito` | IdP: cognito/entra_id/okta/ping |
 | `enable_networking` | `ENABLE_NETWORKING` | `false` | Create the VPC stack |
 | `enable_security` | `ENABLE_SECURITY` | `false` | Create the security stack |
+| `require_guardrails` | `REQUIRE_GUARDRAILS` | `false` | Deny Bedrock inference without a Guardrail on the runtime roles and inject a baseline guardrail into every agent (not supported by the claude-sdk patterns) |
 | `enable_a2a` | `ENABLE_A2A` | `true` | Create A2A agent stacks |
 | `model_id` | `MODEL_ID` | *(in code for each pattern)* | Override the Bedrock model for all agents, for example `us.anthropic.claude-sonnet-5` |
 | `agents.allowed_models` | `ALLOWED_MODELS` | *(unrestricted)* | Optional model allow-list. When set, `model_id` must be one of these and the runtime role's Bedrock permissions are scoped to exactly these models |

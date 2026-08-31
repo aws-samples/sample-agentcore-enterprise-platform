@@ -15,6 +15,7 @@ if any claim fails:
     memory                      test_memory.py        (event write/read)
     observability               check_observability.py
     networking                  check_network.py      (runtimes really in VPC)
+    (require_guardrails flag)   check_guardrail_enforcement.py (IAM simulation)
     runtime-orchestrator        invoke.py             (live invoke; --agui for
                                                        agui-* agent patterns)
     runtime-code-agent          invoke.py --a2a code-agent
@@ -56,7 +57,9 @@ def load_config() -> PlatformConfig:
     return config
 
 
-def checks_for(suffixes: set[str], agent_pattern: str) -> list[tuple[str, list[str]]]:
+def checks_for(
+    suffixes: set[str], agent_pattern: str, require_guardrails: bool = False
+) -> list[tuple[str, list[str]]]:
     """Map a footprint onto the tools that verify it. Pure — unit-tested."""
     checks: list[tuple[str, list[str]]] = []
     if "gateway" in suffixes:
@@ -67,6 +70,8 @@ def checks_for(suffixes: set[str], agent_pattern: str) -> list[tuple[str, list[s
         checks.append(("observability", ["check_observability.py"]))
     if "networking" in suffixes:
         checks.append(("networking", ["check_network.py"]))
+    if require_guardrails:
+        checks.append(("guardrail enforcement", ["check_guardrail_enforcement.py"]))
     if "runtime-orchestrator" in suffixes:
         agui = ["--agui"] if agent_pattern.startswith("agui-") else []
         checks.append(("orchestrator invoke", ["invoke.py", *agui, HEALTH_PROMPT]))
@@ -94,8 +99,14 @@ def main() -> int:
     prefix = f"{config.project}-{config.environment}-"
     suffixes = {s.removeprefix(prefix) for s in config.expected_stacks(account)}
     pattern = os.environ.get("AGENT_PATTERN", config.agents.pattern)
+    require_guardrails = (
+        os.environ.get(
+            "REQUIRE_GUARDRAILS", str(config.security.require_guardrails).lower()
+        )
+        == "true"
+    )
 
-    checks = checks_for(suffixes, pattern)
+    checks = checks_for(suffixes, pattern, require_guardrails)
     print(f"Verifying {config.project}/{config.environment} in account {account}")
     print(f"Footprint: {' '.join(sorted(suffixes))}\n")
 

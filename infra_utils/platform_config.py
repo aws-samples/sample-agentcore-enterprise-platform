@@ -224,6 +224,9 @@ class SecurityConfig(BaseModel):
     cloudtrail_alerting: bool = False  # the security stack (trail + alerting)
     resource_policies: bool = False
     egress_filter: bool = False
+    # IAM-denies ungoverned inference on the runtime roles; creates a baseline
+    # guardrail per runtime and injects it into the agents.
+    require_guardrails: bool = False
     cedar: CedarConfig = Field(default_factory=CedarConfig)
     traceability: bool = False
     org_id: str = ""
@@ -343,6 +346,22 @@ class PlatformConfig(BaseModel):
                 "(a use case is a directory under use-cases/ with a manifest.yaml)"
             )
         return v
+
+    @model_validator(mode="after")
+    def _guardrails_need_an_attachable_model(self) -> PlatformConfig:
+        # The Claude Agent SDK's Bedrock path has no way to attach a Bedrock
+        # Guardrail, so the require_guardrails IAM deny would block every
+        # inference from those patterns — a bricked agent, not a hardened one.
+        if self.security.require_guardrails and self.agents.pattern.startswith(
+            "claude-sdk"
+        ):
+            raise ValueError(
+                f"security.require_guardrails is incompatible with agents.pattern "
+                f"{self.agents.pattern!r}: the Claude Agent SDK cannot attach a "
+                "Bedrock Guardrail to its inference calls, so the IAM deny would "
+                "block every inference from this pattern"
+            )
+        return self
 
     @property
     def web_search_enabled(self) -> bool:
@@ -488,6 +507,7 @@ def to_env(config: PlatformConfig) -> dict[str, str]:
         "ENABLE_SECURITY": str(config.security.cloudtrail_alerting).lower(),
         "ENABLE_RESOURCE_POLICIES": str(config.security.resource_policies).lower(),
         "ENABLE_EGRESS_FILTER": str(config.security.egress_filter).lower(),
+        "REQUIRE_GUARDRAILS": str(config.security.require_guardrails).lower(),
         "ENABLE_CEDAR": str(config.security.cedar.enabled).lower(),
         "CEDAR_MODE": config.security.cedar.mode,
         "ENABLE_TRACEABILITY": str(config.security.traceability).lower(),

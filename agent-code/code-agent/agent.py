@@ -18,6 +18,17 @@ logging.basicConfig(level=logging.INFO)
 DEFAULT_MODEL_ID = "us.anthropic.claude-sonnet-4-6"
 MODEL_ID = os.environ.get("MODEL_ID", DEFAULT_MODEL_ID)
 
+# When the platform enforces guardrailed-only Bedrock (security.require_guardrails),
+# the runtime injects these and IAM denies any inference call without a guardrail.
+_GUARDRAIL_KWARGS = (
+    {
+        "guardrail_id": os.environ["GUARDRAIL_ID"],
+        "guardrail_version": os.environ.get("GUARDRAIL_VERSION", "DRAFT"),
+    }
+    if os.environ.get("GUARDRAIL_ID")
+    else {}
+)
+
 SYSTEM_PROMPT = """You are a code generation and analysis agent. You help with:
 - Writing Python, TypeScript, and other code
 - Code review and debugging
@@ -31,7 +42,7 @@ def build_agent() -> Agent:
         name="code_agent",
         description="Generates, reviews, and explains code, including IaC templates.",
         system_prompt=SYSTEM_PROMPT,
-        model=BedrockModel(model_id=MODEL_ID),
+        model=BedrockModel(model_id=MODEL_ID, **_GUARDRAIL_KWARGS),
     )
 
 

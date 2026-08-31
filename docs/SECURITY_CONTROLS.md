@@ -41,6 +41,7 @@ against the exact lowercase string `"true"`; `-c enable_cedar=True` silently doe
 | 3 | **AgentCore Cedar policies** | `enable_cedar`, `cedar_mode` | `gateway_stack.py` ← `control-library/cedar/` | LOG_ONLY |
 | 4 | **Resource-based policy: Memory in-account-only** | `enable_resource_policies`, `org_id` | `memory_stack.py` ← `control-library/resource-policies/` | enforce |
 | 5+6 | **Bedrock Guardrails + egress Lambda interceptor** | `enable_egress_filter` | `gateway_stack.py`, `tools/egress_interceptor/` ← `control-library/guardrails/` | **masking**, not blocking (see below) |
+| 6b | **Guardrailed-only Bedrock inference** — IAM `Null`-deny on the runtime roles for inference calls carrying no `bedrock:GuardrailIdentifier`, plus a baseline guardrail per runtime (same `control-library` artifact as item 5+6) injected into the agents via `GUARDRAIL_ID`/`GUARDRAIL_VERSION`, with `bedrock:ApplyGuardrail` allowed only on that guardrail. Incompatible with the claude-sdk patterns (they cannot attach a guardrail; the config validator refuses the combination). Verify live with `scripts/check_guardrail_enforcement.py` | `require_guardrails` | `stacks/runtime_stack.py` ← `control-library/guardrails/` | off |
 | 7 | **Observability: SNS + EventBridge alerting** | `enable_traceability` | `observability_stack.py` | off |
 | 8 | **AgentCore Identity: deny unverified-userId workload tokens**, plus a scoped credential-provider IAM reference policy | `enable_scp_identity_deny_token_for_userid` (Terraform var) | `terraform/org-guardrails/identity.tf` ← `control-library/scp/identity/`, `control-library/iam/` | enforce (denies everyone) |
 
@@ -52,6 +53,7 @@ Set via CDK context (`-c flag=value`) or environment variable (`FLAG=value`):
 |---|---|---|
 | `enable_resource_policies` | `ENABLE_RESOURCE_POLICIES` | Memory resource-based policy (item 4) |
 | `enable_egress_filter` | `ENABLE_EGRESS_FILTER` | Guardrail + interceptor (items 5+6) |
+| `require_guardrails` | `REQUIRE_GUARDRAILS` | Guardrailed-only Bedrock inference (item 6b) |
 | `enable_cedar` | `ENABLE_CEDAR` | Cedar policy engine (item 3) |
 | `cedar_mode` | `CEDAR_MODE` | `LOG_ONLY` (default) or `ENFORCE` |
 | `enable_traceability` | `ENABLE_TRACEABILITY` | Alerting on sensitive API calls (item 7) |
