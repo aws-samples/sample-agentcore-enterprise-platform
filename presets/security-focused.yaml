@@ -14,6 +14,13 @@ identity:
 
 agents:
   pattern: orchestrator
+  # Pinned model + allow-list: the runtime roles' Bedrock IAM is scoped to
+  # exactly this model, and every agent (including A2A sub-agents) runs it.
+  # model_id is required alongside allowed_models — without it the containers'
+  # baked-in defaults would silently bypass the list.
+  model_id: us.anthropic.claude-sonnet-4-6
+  allowed_models:
+    - us.anthropic.claude-sonnet-4-6
 
 gateway:
   web_search: auto
