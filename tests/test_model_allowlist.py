@@ -134,3 +134,17 @@ def test_every_shipped_default_model_id_passes_the_allowlist():
         config = AgentsConfig(model_id=model, allowed_models=[model])
         assert config.allowed_models == [model]
         assert allowed_model_resources([model]), f"no ARNs derived for {model!r}"
+
+
+# ── The security preset ships the allow-list on ──
+
+
+def test_security_preset_pins_the_allowlist():
+    """security-focused promises governed inference — dropping the pinned
+    model + allow-list would silently widen the runtime IAM back to any model
+    (owner decision 2026-08-31)."""
+    from infra_utils.platform_config import load_platform_config
+
+    config = load_platform_config(REPO / "presets" / "security-focused.yaml")
+    assert config.agents.allowed_models == [SONNET]
+    assert config.agents.model_id == SONNET
