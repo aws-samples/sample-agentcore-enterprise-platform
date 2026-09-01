@@ -24,6 +24,7 @@ security:
   cloudtrail_alerting: true
   resource_policies: true
   egress_filter: true
+  require_guardrails: true
   cedar:
     enabled: true
     mode: LOG_ONLY

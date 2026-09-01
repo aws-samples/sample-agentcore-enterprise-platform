@@ -16,6 +16,9 @@ from aws_cdk import (
     CustomResource,
 )
 from aws_cdk import (
+    aws_bedrock as bedrock,
+)
+from aws_cdk import (
     aws_bedrockagentcore as agentcore,
 )
 from aws_cdk import (
@@ -39,6 +42,7 @@ from aws_cdk import (
 from constructs import Construct
 
 from infra_utils.platform_config import allowed_model_resources
+from infra_utils.policy_loader import load_control
 from infra_utils.runtime_network import build_network_config
 from infra_utils.runtime_protocol import needs_jwt_authorizer, resolve_protocol
 from infra_utils.source_hash import component_image_tag
@@ -70,6 +74,7 @@ class RuntimeStack(cdk.Stack):
         extra_env_vars: dict[str, str] | None = None,
         dockerfile_pattern: str = "",
         allowed_models: list[str] | None = None,
+        require_guardrails: bool = False,
         **kwargs,
     ):
         super().__init__(scope, id, **kwargs)
@@ -228,6 +233,32 @@ class RuntimeStack(cdk.Stack):
             },
         )
 
+        # ── Optional: baseline Bedrock Guardrail (guardrailed-only inference) ──
+        # Same control-library artifact the gateway's egress filter uses: PII +
+        # prompt-injection content filtering is equally valid at the inference
+        # boundary. A runtime-specific profile can fork the artifact later.
+        guardrail = None
+        if require_guardrails:
+            guardrail_cfg = load_control("guardrail.egress-default")
+            guardrail = bedrock.CfnGuardrail(
+                self,
+                "BaselineGuardrail",
+                name=f"{prefix}-{component_name}-guardrail",
+                description=f"Baseline inference guardrail for {component_name}.",
+                blocked_input_messaging=guardrail_cfg["BlockedInputMessaging"],
+                blocked_outputs_messaging=guardrail_cfg["BlockedOutputsMessaging"],
+            )
+            # Policy blocks come straight from the control-library artifact (CFN shape).
+            for cfn_key in (
+                "ContentPolicyConfig",
+                "SensitiveInformationPolicyConfig",
+                "TopicPolicyConfig",
+                "WordPolicyConfig",
+                "ContextualGroundingPolicyConfig",
+            ):
+                if cfn_key in guardrail_cfg:
+                    guardrail.add_property_override(cfn_key, guardrail_cfg[cfn_key])
+
         # ── AgentCore Runtime IAM Role ──
         runtime_role = iam.Role(
             self,
@@ -240,6 +271,7 @@ class RuntimeStack(cdk.Stack):
             repo.repository_arn,
             project_name=project_name,
             allowed_models=allowed_models,
+            guardrail=guardrail,
         )
 
         # ── Protocol Configuration ──
@@ -253,6 +285,12 @@ class RuntimeStack(cdk.Stack):
             "AWS_REGION_NAME": self.region,
             "SOURCE_HASH": source_hash,
         }
+        # Guardrail injection sits BEFORE the extra_env_vars merge so an explicit
+        # override wins. Agents attach the guardrail when GUARDRAIL_ID is present
+        # (the IAM deny below is what makes skipping it fail, not convention).
+        if guardrail is not None:
+            env_vars["GUARDRAIL_ID"] = guardrail.attr_guardrail_id
+            env_vars["GUARDRAIL_VERSION"] = guardrail.attr_version
         env_vars.update(extra_env_vars or {})
 
         # ── Network Configuration ──
@@ -342,6 +380,7 @@ class RuntimeStack(cdk.Stack):
         *,
         project_name: str,
         allowed_models: list[str] | None = None,
+        guardrail: bedrock.CfnGuardrail | None = None,
     ) -> None:
         """Attach the standard AgentCore Runtime permissions to a role.
 
@@ -487,5 +526,32 @@ class RuntimeStack(cdk.Stack):
                 ],
             ),
         ]
+        if guardrail is not None:
+            statements += [
+                # Using a guardrail during inference requires ApplyGuardrail on
+                # it — scoped to this stack's own baseline guardrail, nothing else.
+                iam.PolicyStatement(
+                    sid="ApplyBaselineGuardrail",
+                    actions=["bedrock:ApplyGuardrail"],
+                    resources=[guardrail.attr_guardrail_arn],
+                ),
+                # The enforcement point: deny any inference call that does not
+                # carry a guardrail. Null:true matches only when the key is
+                # ABSENT, so this is self-consistent without the negated-operator
+                # guard the SCPs need (control-library/scp/memory/enforce-cmk.json
+                # documents that pattern).
+                iam.PolicyStatement(
+                    sid="DenyUngovernedInference",
+                    effect=iam.Effect.DENY,
+                    actions=[
+                        "bedrock:InvokeModel",
+                        "bedrock:InvokeModelWithResponseStream",
+                        "bedrock:Converse",
+                        "bedrock:ConverseStream",
+                    ],
+                    resources=["*"],
+                    conditions={"Null": {"bedrock:GuardrailIdentifier": "true"}},
+                ),
+            ]
         for stmt in statements:
             role.add_to_policy(stmt)

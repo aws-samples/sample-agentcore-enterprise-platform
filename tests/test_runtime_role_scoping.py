@@ -56,7 +56,7 @@ def _policy_statements() -> list[dict]:
         name = getattr(func, "attr", None)
         if name != "PolicyStatement":
             continue
-        entry = {"sid": None, "actions": [], "resources": []}
+        entry = {"sid": None, "actions": [], "resources": [], "effect": "ALLOW"}
         for kw in node.keywords:
             if kw.arg in ("actions", "resources") and isinstance(kw.value, ast.List):
                 entry[kw.arg] = [
@@ -64,6 +64,8 @@ def _policy_statements() -> list[dict]:
                 ]
             elif kw.arg == "sid" and isinstance(kw.value, ast.Constant):
                 entry["sid"] = kw.value.value
+            elif kw.arg == "effect" and isinstance(kw.value, ast.Attribute):
+                entry["effect"] = kw.value.attr  # iam.Effect.DENY → "DENY"
         found.append(entry)
     return found
 
@@ -76,6 +78,10 @@ def test_source_is_parseable_and_has_statements():
 def test_readable_data_actions_are_never_on_star():
     offenders = []
     for statement in _policy_statements():
+        # A Deny on "*" is the point, not a scoping miss — a deny that does not
+        # cover everything is a bypass (DenyUngovernedInference).
+        if statement["effect"] == "DENY":
+            continue
         if "*" not in statement["resources"]:
             continue
         for action in statement["actions"]:
@@ -91,6 +97,10 @@ def test_every_remaining_wildcard_is_a_known_aws_limitation():
     """A new unscoped statement should fail here rather than ship quietly."""
     unexplained = []
     for statement in _policy_statements():
+        # Deny statements are exempt for the same reason as above: a Deny must
+        # cover everything to enforce anything.
+        if statement["effect"] == "DENY":
+            continue
         if "*" not in statement["resources"]:
             continue
         for action in statement["actions"]:

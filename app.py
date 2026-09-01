@@ -99,7 +99,11 @@ idp_type = cfg("idp_type", "IDP_TYPE", "cognito")
 
 
 # Security control feature flags (control-library / scope-split model).
-# Additional flags (enable_guardrails, enable_cedar) will be added here as their stacks land.
+# Guardrailed-only Bedrock: every runtime stack gets a baseline guardrail plus an
+# IAM deny on inference calls that carry none. The claude-sdk incompatibility is
+# validated on the platform.yaml path only (raw -c users are on their own — same
+# stance as the rest of app.py).
+require_guardrails = cfg("require_guardrails", "REQUIRE_GUARDRAILS", "false") == "true"
 enable_resource_policies = (
     cfg("enable_resource_policies", "ENABLE_RESOURCE_POLICIES", "false") == "true"
 )
@@ -426,6 +430,7 @@ if not is_fed_platform:
         allowed_models=allowed_models,
         cognito_issuer_url=issuer_url,
         cognito_allowed_clients=allowed_clients,
+        require_guardrails=require_guardrails,
         extra_env_vars={
             "GATEWAY_URL": gateway_url_for_runtimes,
             "GATEWAY_CREDENTIAL_PROVIDER_NAME": identity_stack.gateway_credential_provider_name,
@@ -475,6 +480,7 @@ if enable_a2a and not is_fed_platform:
         allowed_models=allowed_models,
         cognito_issuer_url=issuer_url,
         cognito_allowed_clients=allowed_clients,
+        require_guardrails=require_guardrails,
         extra_env_vars=model_env,
         **runtime_network,
         env=cdk_env,
@@ -499,6 +505,7 @@ if enable_a2a and not is_fed_platform:
         allowed_models=allowed_models,
         cognito_issuer_url=issuer_url,
         cognito_allowed_clients=allowed_clients,
+        require_guardrails=require_guardrails,
         extra_env_vars={
             "GATEWAY_URL": gateway_url_for_runtimes,
             "GATEWAY_CREDENTIAL_PROVIDER_NAME": identity_stack.gateway_credential_provider_name,

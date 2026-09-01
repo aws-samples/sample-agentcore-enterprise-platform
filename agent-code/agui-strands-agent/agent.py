@@ -30,6 +30,17 @@ app = BedrockAgentCoreApp()
 DEFAULT_MODEL_ID = "us.anthropic.claude-sonnet-4-6"
 MODEL_ID = os.environ.get("MODEL_ID", DEFAULT_MODEL_ID)
 
+# When the platform enforces guardrailed-only Bedrock (security.require_guardrails),
+# the runtime injects these and IAM denies any inference call without a guardrail.
+_GUARDRAIL_KWARGS = (
+    {
+        "guardrail_id": os.environ["GUARDRAIL_ID"],
+        "guardrail_version": os.environ.get("GUARDRAIL_VERSION", "DRAFT"),
+    }
+    if os.environ.get("GUARDRAIL_ID")
+    else {}
+)
+
 SYSTEM_PROMPT = (
     "You are a helpful assistant with access to tools via the Gateway and Code Interpreter. "
     "When asked about your tools, list them and explain what they do."
@@ -37,7 +48,7 @@ SYSTEM_PROMPT = (
 
 
 def _build_model() -> BedrockModel:
-    return BedrockModel(model_id=MODEL_ID, temperature=0.1)
+    return BedrockModel(model_id=MODEL_ID, temperature=0.1, **_GUARDRAIL_KWARGS)
 
 
 def _create_session_manager(

@@ -49,11 +49,18 @@ def test_agui_patterns_invoke_over_agui():
     assert "--agui" not in checks["orchestrator invoke"]
 
 
+def test_require_guardrails_selects_the_enforcement_check():
+    on = names(checks_for(suffixes(), "orchestrator", require_guardrails=True))
+    assert "guardrail enforcement" in on
+    off = names(checks_for(suffixes(), "orchestrator"))
+    assert "guardrail enforcement" not in off
+
+
 def test_every_check_maps_to_an_existing_tool():
     # A selected check must never point at a script that does not exist —
     # that is exactly the silent-success class this command replaces.
     all_suffixes = suffixes(agents={"a2a": True}, security={"networking": True})
-    for _, argv in checks_for(all_suffixes, "orchestrator"):
+    for _, argv in checks_for(all_suffixes, "orchestrator", require_guardrails=True):
         assert (REPO / "scripts" / argv[0]).is_file(), argv[0]
 
 
