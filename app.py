@@ -592,4 +592,15 @@ if platform_config and platform_config.use_cases:
         _spec.loader.exec_module(_mod)
         _mod.build(app, _uc_ctx, platform_config.use_cases[_uc_name] or {})
 
+# ── Cost-allocation tags ──
+# Component = the stack's suffix in the deployment contract (expected_stacks),
+# so Cost Explorer can split spend per component instead of per project only.
+# Runs after the use-case loop so contributed stacks are tagged too. The tag
+# only reaches billing once activated (README "Cost attribution"); Bedrock
+# inference itself is untagged — that needs Application Inference Profiles,
+# tracked as its own task.
+for _stack in app.node.children:
+    if isinstance(_stack, cdk.Stack):
+        cdk.Tags.of(_stack).add("Component", _stack.node.id.removeprefix(f"{prefix}-"))
+
 app.synth()
