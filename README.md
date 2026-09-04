@@ -209,6 +209,17 @@ cdk deploy agentcore-workshop-dev-runtime-orchestrator -c agent_pattern=claude-s
 
 The agent applications and shared utilities build on patterns from [fullstack-solution-template-for-agentcore](https://github.com/aws-samples/fullstack-solution-template-for-agentcore) (FAST). The CDK stacks are specific to this accelerator.
 
+### Track Costs per Component
+
+Every stack is tagged with `Project`, `Environment`, and `Component` (the stack's suffix in the deployment contract — `gateway`, `memory`, `runtime-orchestrator`, use-case stacks included). To see them in Cost Explorer, activate the tags once per payer account — takes effect within about 24 hours:
+
+```bash
+aws ce update-cost-allocation-tags-status --cost-allocation-tags-status \
+  Status=Active,TagKey=Project Status=Active,TagKey=Environment Status=Active,TagKey=Component
+```
+
+Then group by the `Component` tag in Cost Explorer to split spend per stack. Scope: tags attribute *resource* costs (NAT, endpoints, CloudWatch, CodeBuild). Two gaps to know about: a few resource types (AgentCore Memory, SSM parameters) do not accept CloudFormation tags, and Bedrock model inference — usually the largest line — is not covered by resource tags at all; attributing inference requires Application Inference Profiles, which is on the roadmap.
+
 ### Run Runtimes in Your VPC (`enable_networking`)
 
 Use this when your agents need private access to resources in your VPC or tighter outbound network controls. Set `enable_networking=true` to run runtimes in your VPC. AgentCore creates network interfaces in private subnets and attaches them to a security group with HTTPS-only egress and no inbound access. Traffic goes out through the NAT gateway. Interface endpoints cover Bedrock, ECR, CloudWatch Logs, and AgentCore Gateway. ECR layer pulls use the free S3 gateway endpoint.
