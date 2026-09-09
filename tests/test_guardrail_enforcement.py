@@ -142,3 +142,38 @@ def test_security_focused_preset_enables_the_control():
     raw = yaml.safe_load((REPO / "presets" / "security-focused.yaml").read_text())
     config = PlatformConfig.model_validate(raw)
     assert config.security.require_guardrails is True
+
+
+# ── the enforcement check must respect the allow-list ──
+# With allowed_models deployed, the BedrockModels allow is scoped; simulating
+# against a generic model ARN returns implicitDeny even though real inference
+# works — the check cried wolf the first time R1 and R2 ran together (live).
+
+
+def _load_check_module():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "check_guardrail_enforcement",
+        REPO / "scripts" / "check_guardrail_enforcement.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_sim_arn_uses_the_allowlist(monkeypatch):
+    monkeypatch.setenv("ALLOWED_MODELS", "us.anthropic.claude-sonnet-4-6")
+    mod = _load_check_module()
+    arn = mod.sim_model_arn()
+    assert arn.endswith("::foundation-model/anthropic.claude-sonnet-4-6")
+    assert "*" not in arn, "simulation needs a concrete ARN, not a pattern"
+
+
+def test_sim_arn_falls_back_to_generic_without_a_list(monkeypatch, tmp_path):
+    monkeypatch.delenv("ALLOWED_MODELS", raising=False)
+    # Point PLATFORM_CONFIG somewhere empty so a developer's local
+    # platform.yaml can't leak into the test.
+    monkeypatch.setenv("PLATFORM_CONFIG", str(tmp_path / "absent.yaml"))
+    mod = _load_check_module()
+    assert mod.sim_model_arn().endswith("::foundation-model/anthropic.claude")
