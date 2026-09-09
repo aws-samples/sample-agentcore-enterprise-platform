@@ -261,6 +261,27 @@ class SecurityConfig(BaseModel):
 
 class ObservabilityConfig(BaseModel):
     transaction_search: bool = True
+    # CloudWatch alarms + SNS ops topic + the platform dashboard.
+    alarms: bool = False
+    alarm_email: str = ""  # empty = topic exists, no email subscription
+
+    @field_validator("alarm_email")
+    @classmethod
+    def _alarm_email_shape(cls, v: str) -> str:
+        # Empty is fine — the topic still deploys for manual subscription.
+        # A placeholder is not: SNS mails a confirmation link to an inbox
+        # nobody reads and every alarm after that goes nowhere.
+        if v and (
+            re.search(r"replace|example|changeme", v, re.IGNORECASE)
+            or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", v)
+        ):
+            raise ValueError(
+                f"not a subscribable email address: {v!r}. Placeholders "
+                "(replace/example/changeme) are rejected — deliberately "
+                "including 'user@example.com'. Use a real inbox or leave "
+                "it empty."
+            )
+        return v
 
 
 # ── Use cases ──
@@ -515,6 +536,8 @@ def to_env(config: PlatformConfig) -> dict[str, str]:
         "ENABLE_TRANSACTION_SEARCH": str(
             config.observability.transaction_search
         ).lower(),
+        "ENABLE_ALARMS": str(config.observability.alarms).lower(),
+        "ALARM_EMAIL": config.observability.alarm_email,
     }
     return {k: v for k, v in pairs.items() if v != ""}
 

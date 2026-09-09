@@ -247,6 +247,8 @@ Use these settings to change the platform's name, environment, identity provider
 | `agents.allowed_models` | `ALLOWED_MODELS` | *(unrestricted)* | Optional model allow-list. When set, `model_id` must be one of these and the runtime role's Bedrock permissions are scoped to exactly these models |
 | `agent_pattern` | `AGENT_PATTERN` | `orchestrator` | Pattern built for the runtime. See [Agent Pattern Selection](#choose-an-agent-framework). |
 | `enable_transaction_search` | `ENABLE_TRANSACTION_SEARCH` | `true` | Configure CloudWatch Transaction Search. This setting is account scoped. See [details](#search-agent-traces). |
+| `enable_alarms` | `ENABLE_ALARMS` | `false` | Create CloudWatch alarms, an SNS ops topic, and the platform dashboard. See [details](#alarms-and-the-platform-dashboard). |
+| `alarm_email` | `ALARM_EMAIL` | *(none)* | Email address subscribed to the alarm topic. Requires `enable_alarms`. |
 
 Prefer a file you can review and commit? `platform.yaml` is the declarative manifest for the same settings and more (multi-account strategy, gateway tools, security controls). Deploying with `--profile <name>` writes it for you from [`presets/`](presets/), or copy a preset yourself and validate it offline:
 
@@ -265,6 +267,10 @@ Agents identify callers from the JWT in the `Authorization` header, not the requ
 ### Search Agent Traces
 
 Runtime traces won't appear until the account is configured to receive them. See [`docs/TRACING.md`](docs/TRACING.md) for the setup and verification steps.
+
+### Alarms and the Platform Dashboard
+
+With `observability.alarms: true` (or `-c enable_alarms=true`) the observability stack also creates CloudWatch alarms per deployed resource (runtime and gateway errors, throttles, and p99 latency; memory event errors; account-level Bedrock throttles and server errors), an SNS topic named `{project}-{environment}-platform-alarms` that receives every alarm and OK transition, and a CloudWatch dashboard named `{project}-{environment}-platform`. `INSUFFICIENT_DATA` is the normal state for the error alarms — those metrics only emit when something fails. Set `observability.alarm_email` to subscribe an inbox; SNS sends a confirmation email that must be accepted before notifications arrive. Verify with `python scripts/check_alarms.py` (also part of `deploy.sh verify` when the flag is on).
 
 ### Extend the Platform with Other Stacks
 

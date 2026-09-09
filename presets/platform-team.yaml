@@ -29,3 +29,4 @@ security:
 
 observability:
   transaction_search: true
+  alarms: true                # CloudWatch alarms + the platform dashboard
