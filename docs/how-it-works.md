@@ -67,6 +67,10 @@ before creating anything. Under an hour later:
 Secrets never appear in code, context, or templates — they live in Secrets
 Manager and only their *names* travel through configuration.
 
+Each stack has a technical reference page — resources, configuration keys,
+interfaces, IAM shape, verification hooks, and known gotchas — in the
+[module reference](modules/README.md).
+
 ## 3. Prove — verification is a feature
 
 ```bash
