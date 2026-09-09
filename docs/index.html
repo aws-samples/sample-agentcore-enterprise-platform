@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="description" content="Enterprise Agentic AI Platform Accelerator documentation — deploy a governed agent platform on Amazon Bedrock AgentCore in under an hour." />
+  <title>AgentCore Platform Accelerator Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+    rel="stylesheet"
+  />
+  <style>
+    /* Warm-paper docs theme: Fraunces display serif, Inter body, JetBrains
+       Mono code — cream/ink/terracotta palette. */
+    :root {
+      --paper: #faf7f2;
+      --paper-2: #f2ede4;
+      --line: #e4ddd0;
+      --ink: #1a1915;
+      --ink-2: #3a3731;
+      --muted: #6b675d;
+      --faint: #a8a299;
+      --accent: #b5462a;
+      --accent-dark: #8a3420;
+      --accent-soft: #e8c5a0;
+      --theme-color: #b5462a;
+      --sidebar-width: 300px;
+    }
+    body {
+      background: var(--paper);
+      color: var(--ink-2);
+      font-family: "Inter", -apple-system, sans-serif;
+      font-size: 15.5px;
+      line-height: 1.7;
+    }
+    /* ── Sidebar ── */
+    .sidebar {
+      background: var(--paper);
+      border-right: 1px solid var(--line);
+      padding-top: 1.5rem;
+    }
+    .sidebar > h1 {
+      font-family: "Fraunces", serif;
+      font-weight: 600;
+      margin: 0 0 .25rem;
+    }
+    .sidebar > h1 a { color: var(--ink); font-size: 1.25rem; }
+    .app-name-badge { color: var(--muted); font-size: .75rem; }
+    .sidebar ul li a {
+      color: var(--ink-2);
+      font-size: .92rem;
+      font-weight: 450;
+    }
+    .sidebar ul li a:hover { color: var(--accent); text-decoration: none; }
+    .sidebar ul li.active > a {
+      color: var(--accent);
+      font-weight: 600;
+      border-right: 2px solid var(--accent);
+    }
+    .sidebar p {
+      color: var(--faint);
+      font-size: .72rem;
+      font-weight: 700;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+      margin: 1.6em 0 .4em;
+    }
+    /* ── Content ── */
+    .markdown-section { max-width: 52rem; padding: 2.5rem 3rem 5rem; }
+    .markdown-section h1, .markdown-section h2, .markdown-section h3 {
+      font-family: "Fraunces", serif;
+      color: var(--ink);
+      font-weight: 550;
+      letter-spacing: -.01em;
+    }
+    .markdown-section h1 { font-size: 2.3rem; }
+    .markdown-section h2 {
+      font-size: 1.55rem;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: .35rem;
+      margin-top: 2.2em;
+    }
+    .markdown-section a { color: var(--accent); text-decoration: none; font-weight: 500; }
+    .markdown-section a:hover { color: var(--accent-dark); text-decoration: underline; }
+    .markdown-section code {
+      font-family: "JetBrains Mono", monospace;
+      font-size: .82em;
+      background: var(--paper-2);
+      color: var(--accent-dark);
+      border-radius: 4px;
+      padding: .15em .4em;
+    }
+    .markdown-section pre {
+      background: var(--ink);
+      border-radius: 10px;
+      padding: 0;
+    }
+    .markdown-section pre > code {
+      font-family: "JetBrains Mono", monospace;
+      font-size: .8rem;
+      background: var(--ink);
+      color: #f2ede4;
+      padding: 1.1rem 1.3rem;
+      line-height: 1.6;
+    }
+    .markdown-section blockquote {
+      border-left: 3px solid var(--accent-soft);
+      background: var(--paper-2);
+      border-radius: 0 8px 8px 0;
+      color: var(--muted);
+      margin: 1.2em 0;
+      padding: .1em 1.2em;
+    }
+    .markdown-section table { display: table; width: 100%; border-collapse: collapse; }
+    .markdown-section tr { border: none; }
+    .markdown-section tr:nth-child(2n) { background: var(--paper-2); }
+    .markdown-section th {
+      font-size: .72rem;
+      text-transform: uppercase;
+      letter-spacing: .07em;
+      color: var(--muted);
+      border: none;
+      border-bottom: 2px solid var(--line);
+      text-align: left;
+    }
+    .markdown-section td { border: none; border-bottom: 1px solid var(--line); font-size: .9rem; }
+    .markdown-section img { border-radius: 10px; border: 1px solid var(--line); }
+    /* search */
+    .search { border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+    .search input { background: var(--paper); font-family: "Inter", sans-serif; }
+    .search .results-panel .matching-post { border-bottom: 1px solid var(--line); }
+    .search h2 { font-size: .9rem; color: var(--accent); }
+    /* code copy button contrast on dark blocks */
+    .docsify-copy-code-button { background: var(--accent) !important; }
+  </style>
+</head>
+<body>
+  <div id="app">Loading the accelerator docs…</div>
+  <script>
+    window.$docsify = {
+      name: "AgentCore Platform Accelerator",
+      nameLink: "#/",
+      repo: "https://github.com/aws-samples/sample-agentcore-enterprise-platform",
+      loadSidebar: true,
+      subMaxLevel: 2,
+      auto2top: true,
+      homepage: "home.md",
+      search: {
+        placeholder: "Search the docs",
+        depth: 3,
+      },
+      notFoundPage: true,
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify@4/lib/docsify.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify@4/lib/plugins/search.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify-copy-code@3"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-bash.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-python.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-yaml.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify-mermaid@2/dist/docsify-mermaid.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>mermaid.initialize({ startOnLoad: true, theme: "neutral" });</script>
+</body>
+</html>
