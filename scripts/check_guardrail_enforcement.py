@@ -28,9 +28,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from utils import DEFAULT_ENV, DEFAULT_PROJECT
 
-from infra_utils.platform_config import resolve_region
+from infra_utils.platform_config import (
+    allowed_model_resources,
+    load_platform_config,
+    resolve_region,
+)
 
 REGION = resolve_region()
+REPO = Path(__file__).resolve().parents[1]
 
 
 def fail(message: str) -> None:
@@ -38,15 +43,44 @@ def fail(message: str) -> None:
     sys.exit(1)
 
 
+def sim_model_arn() -> str:
+    """A foundation-model ARN the role's BedrockModels allow must match.
+
+    With agents.allowed_models deployed, the allow statement is scoped to
+    those models — a generic ARN then simulates to implicitDeny even though
+    real inference works, and this check cries wolf (hit live the first time
+    require_guardrails and the allow-list ran together). Resolution mirrors
+    the deploy: ALLOWED_MODELS env > platform.yaml > wildcard-era generic.
+    """
+    models = [
+        m.strip() for m in os.environ.get("ALLOWED_MODELS", "").split(",") if m.strip()
+    ]
+    if not models:
+        manifest = Path(os.environ.get("PLATFORM_CONFIG") or REPO / "platform.yaml")
+        if manifest.exists():
+            try:
+                models = load_platform_config(manifest).agents.allowed_models
+            except Exception:  # noqa: BLE001, S110 — deploy validates loudly;
+                pass  # a read-only check just falls back to the generic ARN.
+    if models:
+        # First allow-listed model's foundation-model ARN: concretize the
+        # region wildcard and drop the trailing version wildcard.
+        fm = next(
+            r for r in allowed_model_resources(models[:1]) if ":foundation-model/" in r
+        )
+        return fm.replace("arn:aws:bedrock:*", f"arn:aws:bedrock:{REGION}", 1).rstrip(
+            "*"
+        )
+    return f"arn:aws:bedrock:{REGION}::foundation-model/anthropic.claude"
+
+
 def simulate(role_arn: str, context_entries: list[dict]) -> str:
     """One bedrock:InvokeModel simulation; returns the EvalDecision."""
     iam = boto3.client("iam", region_name=REGION)
-    # Any foundation-model ARN matches the BedrockModels allow (wildcarded on
-    # model), so a generic one keeps the check independent of the model list.
     result = iam.simulate_principal_policy(
         PolicySourceArn=role_arn,
         ActionNames=["bedrock:InvokeModel"],
-        ResourceArns=[f"arn:aws:bedrock:{REGION}::foundation-model/anthropic.claude"],
+        ResourceArns=[sim_model_arn()],
         ContextEntries=context_entries,
     )
     return result["EvaluationResults"][0]["EvalDecision"]
