@@ -11,9 +11,12 @@
     href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
     rel="stylesheet"
   />
+  <!-- Docsify base theme FIRST: it provides the app layout (sidebar, content
+       column, responsive behavior). The block below only re-skins it. -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/docsify@4/themes/vue.css" />
   <style>
-    /* Warm-paper docs theme: Fraunces display serif, Inter body, JetBrains
-       Mono code — cream/ink/terracotta palette. */
+    /* Warm-paper re-skin over vue.css: Fraunces display serif, Inter body,
+       JetBrains Mono code — cream/ink/terracotta palette. */
     :root {
       --paper: #faf7f2;
       --paper-2: #f2ede4;
@@ -134,6 +137,12 @@
     .search h2 { font-size: .9rem; color: var(--accent); }
     /* code copy button contrast on dark blocks */
     .docsify-copy-code-button { background: var(--accent) !important; }
+    /* vue.css leftovers the palette must reach */
+    .sidebar-toggle { background-color: transparent; }
+    .sidebar-toggle span { background-color: var(--accent); }
+    .app-name-link { color: var(--ink) !important; font-family: "Fraunces", serif; }
+    .markdown-section strong { color: var(--ink); }
+    body.close .sidebar-toggle { background-color: transparent; }
   </style>
 </head>
 <body>
