@@ -126,6 +126,11 @@ enable_traceability = (
 enable_transaction_search = (
     cfg("enable_transaction_search", "ENABLE_TRANSACTION_SEARCH", "true") == "true"
 )
+# CloudWatch alarms + SNS ops topic + the platform dashboard, all in the
+# observability stack. alarm_email subscribes an inbox to the topic (SNS sends
+# a confirmation link); empty means the topic deploys without a subscription.
+enable_alarms = cfg("enable_alarms", "ENABLE_ALARMS", "false") == "true"
+alarm_email = cfg("alarm_email", "ALARM_EMAIL", "")
 # AWS Organizations ID (o-xxxx). Required when enable_resource_policies is on, so the
 # in-account-only resource policies can render their aws:PrincipalOrgID deny guard.
 org_id = cfg("org_id", "ORG_ID", "")
@@ -547,6 +552,8 @@ obs_stack = ObservabilityStack(
     monitored_resources=monitored_resources,
     enable_traceability=enable_traceability,
     enable_transaction_search=enable_transaction_search,
+    enable_alarms=enable_alarms,
+    alarm_email=alarm_email,
     env=cdk_env,
 )
 for _dep in (
