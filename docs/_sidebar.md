@@ -6,6 +6,18 @@ Start here
 - [How it works](how-it-works.md)
 - [Getting started](https://github.com/aws-samples/sample-agentcore-enterprise-platform#getting-started)
 
+Modules
+
+- [Overview](modules/README.md)
+- [Auth](modules/auth.md)
+- [Identity](modules/identity.md)
+- [Memory](modules/memory.md)
+- [Gateway](modules/gateway.md)
+- [Runtime](modules/runtime.md)
+- [Observability](modules/observability.md)
+- [Security](modules/security.md)
+- [Networking](modules/networking.md)
+
 Build
 
 - [Architecture](ARCHITECTURE.md)

@@ -42,8 +42,11 @@
     .sidebar {
       background: var(--paper);
       border-right: 1px solid var(--line);
-      padding-top: 1.5rem;
+      /* breathing room from the viewport edge — content was flush left */
+      padding: 1.5rem 1rem 2rem 1.5rem;
     }
+    .sidebar .sidebar-nav { padding-right: .5rem; }
+    .sidebar ul { margin-left: 0; }
     .sidebar > h1 {
       font-family: "Fraunces", serif;
       font-weight: 600;
