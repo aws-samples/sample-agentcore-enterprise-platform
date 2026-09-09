@@ -10,7 +10,7 @@ arrows are opt-in features or control-plane relationships.
 
 This mermaid block is the source of truth for the request flows. For the
 account and trust-boundary view, see the diagram at the top of the
-[README](../README.md#architecture).
+[README](https://github.com/aws-samples/sample-agentcore-enterprise-platform#architecture).
 
 ```mermaid
 flowchart TB

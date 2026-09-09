@@ -14,7 +14,7 @@ time, never template syntax that would break linting.
 ## The model (scope-split)
 
 - **`control-library/`** — single source of truth. Valid JSON / Cedar with `<<sentinel>>`
-  parameters, indexed by `catalog.yaml`. See [`../control-library/README.md`](../control-library/README.md).
+  parameters, indexed by `catalog.yaml`. See [`control-library/README.md`](https://github.com/aws-samples/sample-agentcore-enterprise-platform/blob/main/control-library/README.md).
 - **Terraform** (`terraform/org-guardrails/`) — org-scope guardrails (SCPs).
 - **CDK (Python)** — account/workload-scope controls, loaded via
   `infra_utils/policy_loader.py` and toggled by feature flags.

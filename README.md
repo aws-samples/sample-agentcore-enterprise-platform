@@ -2,6 +2,8 @@
 
 Deploy a secure, governed foundation for production AI agents on Amazon Bedrock AgentCore. This **open-source, modular** project works as a self-service starter kit, a foundation to tailor to your environment, or a guided team build.
 
+**📖 Documentation site:** [aws-samples.github.io/sample-agentcore-enterprise-platform](https://aws-samples.github.io/sample-agentcore-enterprise-platform/) — start with [How it works](https://aws-samples.github.io/sample-agentcore-enterprise-platform/#/how-it-works).
+
 ## What You Get
 
 - **An AI platform for production agents:** AgentCore Runtime, Gateway, Identity, Memory, and observability.
