@@ -2,7 +2,7 @@
 
 # How it works
 
-The accelerator follows a **Declare → Deploy → Prove** workflow: you declare
+The Agentic AI Platform EBA follows a **Declare → Deploy → Prove** workflow: you declare
 the platform in one file, deploy it with one command, and prove it works with
 another. Everything else — governance, growth to multiple accounts, your own
 use cases — is an edit to the same file.

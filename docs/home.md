@@ -1,11 +1,13 @@
 <!-- markdownlint-disable MD041 -->
 
-# Enterprise Agentic AI Platform Accelerator
+# Agentic AI Platform EBA
 
-A deployable platform for running AI agents under enterprise governance on
+The Agentic AI Platform EBA (Experience-Based Acceleration) is a deployable
+platform for running AI agents under enterprise governance on
 **Amazon Bedrock AgentCore** — authentication, identity, tool gateway, memory,
 observability, and security controls, stood up from one declarative
-configuration file in under an hour, in a single AWS account.
+configuration file in under an hour, in a single AWS account. Your team
+deploys it, builds on it, and owns it.
 
 > Agents are easy to prototype and hard to run. This accelerator is the part
 > that's hard: the governed platform your agents deploy onto.
