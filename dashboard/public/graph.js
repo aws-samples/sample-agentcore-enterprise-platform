@@ -938,41 +938,30 @@
 
   // ------------------------------------------------------------------ legend
   var LEGEND = [
-    ['deployed', 'green', 'CloudFormation reports the stack complete'],
-    ['in progress', 'amber', 'deploying now — border pulses, incoming edges march'],
-    ['failed', 'red', 'failed or rolled back'],
-    ['not deployed', 'text3', 'in scope, not there yet'],
-    ['not in scope', 'gray', 'not applicable for this configuration — shown in the bottom tray'],
-    ['not observed', 'gray', 'lives in another account — this dashboard polls only one']
+    ['deployed', 'deployed', 'CloudFormation reports the stack complete'],
+    ['deploying', 'in-progress', 'in progress: the border pulses and incoming edges march'],
+    ['failed', 'failed', 'failed or rolled back'],
+    ['not deployed', 'not-deployed', 'in scope, not there yet'],
+    ['not in scope', 'not-applicable', 'disabled for this configuration, shown in the bottom tray'],
+    ['not observed', 'not-observed', 'lives in another account; this dashboard polls only one'],
+    ['badge', 'badge', 'logs and traces delivered to the observability stack (a badge, not five edges)']
   ];
 
   function renderLegend() {
     if (!legendEl || typeof legendEl.innerHTML !== 'string') return;
-    // Swatches are rounded squares because that is now what a card shows: the
-    // state colour lives in the icon tile, not in a border.
+    // Class-based markup: the swatch colours live in graph.css next to the card
+    // colours they describe, so the two cannot drift apart.
     var rows = LEGEND.map(function (r) {
-      var dashed = (r[0] === 'not observed' || r[0] === 'not deployed');
-      return '<div style="display:flex;gap:8px;align-items:baseline;margin:2px 0">' +
-        '<span style="flex:0 0 10px;height:10px;border-radius:3px;margin-top:5px;' +
-        (dashed ? 'border:1px dashed var(--' + r[1] + ')' : 'background:var(--' + r[1] + ')') + '"></span>' +
-        '<span style="color:var(--text2);font-size:.8rem"><b style="color:var(--text)">' + r[0] +
-        '</b> — ' + r[2] + '</span></div>';
+      return '<div class="rf-legend-item"><span class="rf-swatch rf-swatch--' + r[1] + '"></span>' +
+        '<span><b>' + r[0] + '</b> \u2014 ' + r[2] + '</span></div>';
     }).join('');
-    legendEl.innerHTML = rows +
-      '<div style="display:flex;gap:8px;align-items:baseline;margin:2px 0">' +
-      '<span style="flex:0 0 10px;height:10px;border-radius:50%;margin-top:5px;background:var(--accent2)"></span>' +
-      '<span style="color:var(--text2);font-size:.8rem"><b style="color:var(--text)">badge</b> — ' +
-      'logs + traces delivered to the observability stack (drawn as a badge, not as edges, ' +
-      'so the diagram stays readable)</span></div>' +
-      '<div style="margin-top:8px;color:var(--text3);font-size:.75rem;line-height:1.5">' +
-      'The colour is in each card\u2019s <b>icon square</b>; the glyph says which layer it ' +
-      'belongs to (base, identity, service, runtime, watching).<br>' +
-      'This reflects <b>CloudFormation status on a ~15s poll</b>, not live traffic — there is ' +
-      'no request-level data here.<br>' +
-      'Drag a card to move it — it sticks where you drop it, including across polls. ' +
-      'Click a card to select it and read its outputs · click the background to deselect · ' +
-      'drag the background to pan · scroll to zoom · zoom, fit and reset buttons bottom-left · ' +
-      'double-click the background to fit.</div>';
+    legendEl.innerHTML = '<div class="rf-legend">' + rows +
+      '<div class="rf-legend-note">' +
+      'The colour is in each card\u2019s icon square; the glyph says which layer it belongs to. ' +
+      'This reflects CloudFormation status on a ~15s poll, not live traffic. ' +
+      'Drag a card to move it (it stays put across polls), click a card for its outputs, ' +
+      'drag the background to pan, scroll to zoom, double-click to fit. ' +
+      'Zoom, fit and reset buttons sit bottom-left.</div></div>';
   }
 
   // ------------------------------------------------------------------ sizing
