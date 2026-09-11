@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "agentcore-mcp-server": {
+      "command": "uvx",
+      "args": ["awslabs.amazon-bedrock-agentcore-mcp-server@latest"],
+      "disabled": false
+    },
+    "awsknowledge": {
+      "url": "https://knowledge-mcp.global.api.aws",
+      "type": "http",
+      "disabled": false
+    }
+  }
+}

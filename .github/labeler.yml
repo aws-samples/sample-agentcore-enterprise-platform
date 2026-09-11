@@ -1,0 +1,35 @@
+# Configuration for .github/workflows/label.yml (actions/labeler@v7).
+#
+# The workflow has run since it was added and has never succeeded, because this
+# file did not exist. actions/labeler resolves its config with
+# `ref: github.context.sha`, which under `pull_request_target` is the base
+# branch commit — so the file has to be on the default branch to be found. A
+# contributor cannot supply it from a pull request branch.
+#
+# Labels below are limited to ones that already exist in this repository.
+# actions/labeler creates missing labels implicitly with an arbitrary colour, so
+# adding a new name here has a side effect outside this file.
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'docs/**'
+          - '**/*.md'
+
+python:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.py'
+          - 'requirements.txt'
+
+github_actions:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/workflows/**'
+          - '.github/labeler.yml'
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'requirements.txt'
+          - '**/package.json'
