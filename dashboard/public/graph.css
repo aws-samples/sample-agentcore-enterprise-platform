@@ -28,9 +28,10 @@
   --rf-ink2: #5b6472;         /* secondary text */
   --rf-ink3: #8b93a1;         /* captions, glyphs on pale tiles */
   --rf-zone: #f2f3f5;         /* account container fill */
-  --rf-green: #16a34a;
-  --rf-amber: #d97706;
-  --rf-red: #dc2626;
+  --rf-green: #00802f;
+  --rf-progress: #006ce0;    /* in progress: blue, like the shell's status indicator */
+  --rf-warn: #855900;
+  --rf-red: #db0000;
   --rf-idle: #cbd2da;         /* not deployed — light grey tile */
   --rf-void: #e2e5ea;         /* not applicable / unobserved — paler still */
   --rf-edge: #c9ced6;
@@ -49,7 +50,7 @@
   cursor: grab;
   user-select: none;
   color: var(--rf-ink);
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: var(--font, system-ui, sans-serif);
   -webkit-font-smoothing: antialiased;
 }
 .rf-pane.is-panning { cursor: grabbing; }
@@ -90,7 +91,7 @@
   position: absolute; left: 16px; top: 26px;
   font-size: 10.5px; color: var(--rf-ink3);
 }
-.rf-group--unobserved .rf-group-caption { color: var(--rf-amber); }
+.rf-group--unobserved .rf-group-caption { color: var(--rf-warn); }
 .rf-layer-labels { position: absolute; left: 0; right: 0; top: -16px; height: 13px; }
 .rf-layer-label {
   position: absolute; top: 0;
@@ -117,7 +118,7 @@
 /* Drawn only when the networking stack is deployed (see renderVpc). */
 .rf-vpc {
   position: absolute;
-  border: 1px dashed var(--accent, #FF9900);
+  border: 1px dashed var(--accent, #006ce0);
   border-radius: 12px;
   opacity: .6;
   z-index: 2;
@@ -126,7 +127,7 @@
 .rf-vpc-label {
   position: absolute; left: 6px; top: -15px;
   font-size: 9.5px; letter-spacing: .04em;
-  color: var(--accent, #FF9900);
+  color: var(--accent, #006ce0);
   white-space: nowrap;
 }
 
@@ -141,28 +142,28 @@
 /* Thin, light, no opacity trickery: a hairline that reads at 100% is easier to
    keep consistent than a heavier stroke faded to look thin. */
 .rf-edge { fill: none; stroke: var(--rf-edge); stroke-width: 1.2; stroke-linecap: round; }
-.rf-edge--live { stroke: #86c8a4; }
+.rf-edge--live { stroke: #7fc79a; }
 .rf-edge--building {
-  stroke: var(--rf-amber);
+  stroke: var(--rf-progress);
   stroke-dasharray: 5 5;
   animation: rf-march 1s linear infinite;
 }
 .rf-edge--unobserved { stroke: var(--rf-void); stroke-dasharray: 5 5; }
 .rf-edge--trust {
-  stroke: var(--accent, #FF9900); stroke-width: 1.4;
+  stroke: var(--accent, #006ce0); stroke-width: 1.4;
   stroke-dasharray: 7 5;
 }
 .rf-edge-label {
-  fill: #b06f00;                     /* AWS orange is unreadable as text on white */
+  fill: var(--rf-ink2);
   font-size: 10px;
   font-weight: 500;
   text-anchor: middle;
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: var(--font, system-ui, sans-serif);
 }
 .rf-mk path { fill: var(--rf-edge); }
-.rf-mk--live path { fill: #86c8a4; }
-.rf-mk--building path { fill: var(--rf-amber); }
-.rf-mk--trust path { fill: var(--accent, #FF9900); }
+.rf-mk--live path { fill: #7fc79a; }
+.rf-mk--building path { fill: var(--rf-progress); }
+.rf-mk--trust path { fill: var(--accent, #006ce0); }
 .rf-mk--unobserved path { fill: var(--rf-void); }
 
 /* --------------------------------------------------------------- node cards */
@@ -189,7 +190,7 @@
 .rf-node:hover { box-shadow: var(--rf-shadow-up); }
 .rf-node.is-dragging { transition: none; cursor: grabbing; z-index: 5; }
 .rf-node:focus-visible, .rf-node:focus {
-  outline: 2px solid var(--accent, #FF9900);
+  outline: 2px solid var(--accent, #006ce0);
   outline-offset: 2px;
 }
 
@@ -205,7 +206,7 @@
 }
 .rf-glyph { width: 15px; height: 15px; display: block; fill: currentColor; }
 .rf-node--deployed .rf-tile { background: var(--rf-green); }
-.rf-node--in-progress .rf-tile { background: var(--rf-amber); }
+.rf-node--in-progress .rf-tile { background: var(--rf-progress); }
 .rf-node--failed .rf-tile { background: var(--rf-red); }
 .rf-node--not-deployed .rf-tile { background: var(--rf-idle); }
 .rf-node--not-applicable .rf-tile,
@@ -251,8 +252,8 @@
 .rf-node--tray .rf-name { font-size: 11px; font-weight: 500; color: var(--rf-ink2); }
 .rf-node--tray .rf-sub { font-size: 9.5px; }
 .rf-node.is-selected {
-  border-color: var(--accent, #FF9900);
-  box-shadow: 0 0 0 3px rgba(255, 153, 0, .18), var(--rf-shadow-up);
+  border-color: var(--accent, #006ce0);
+  box-shadow: 0 0 0 3px rgba(0, 108, 224, .18), var(--rf-shadow-up);
   z-index: 4;
 }
 .rf-node.is-pinned { border-color: var(--rf-line2); border-style: solid; }
@@ -293,7 +294,7 @@
   transition: background .15s, color .15s;
 }
 .rf-btn:hover { background: rgba(31, 36, 48, .06); color: var(--rf-ink); }
-.rf-btn:focus-visible { outline: 2px solid var(--accent, #FF9900); outline-offset: 1px; }
+.rf-btn:focus-visible { outline: 2px solid var(--accent, #006ce0); outline-offset: 1px; }
 
 .rf-details {
   position: absolute; right: 12px; top: 12px;
@@ -324,17 +325,17 @@
 
 /* ---------------------------------------------------------------- animations */
 @keyframes rf-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(217, 119, 6, .28), var(--rf-shadow); }
-  50% { box-shadow: 0 0 0 5px rgba(217, 119, 6, .10), var(--rf-shadow); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 108, 224, .28), var(--rf-shadow); }
+  50% { box-shadow: 0 0 0 5px rgba(0, 108, 224, .10), var(--rf-shadow); }
 }
 @keyframes rf-march { to { stroke-dashoffset: -10; } }
 @keyframes rf-ok {
-  0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, .40); }
-  100% { box-shadow: 0 0 0 14px rgba(22, 163, 74, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(0, 128, 47, .40); }
+  100% { box-shadow: 0 0 0 14px rgba(0, 128, 47, 0); }
 }
 @keyframes rf-bad {
-  0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, .40); border-color: var(--rf-red); }
-  100% { box-shadow: 0 0 0 14px rgba(220, 38, 38, 0); border-color: var(--rf-line); }
+  0% { box-shadow: 0 0 0 0 rgba(219, 0, 0, .40); border-color: var(--rf-red); }
+  100% { box-shadow: 0 0 0 14px rgba(219, 0, 0, 0); border-color: var(--rf-line); }
 }
 /* One-shot, added on a state transition and removed on animationend. Neither
    flash animates `transform`: the card's transform IS its layout position, so a
@@ -351,3 +352,18 @@
     transition: none !important;
   }
 }
+
+/* ------------------------------------------------------------------ legend */
+/* Rendered by graph.js renderLegend(); class-based so the shell's tokens apply. */
+.rf-legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 8px 28px; font-size: 13px; color: var(--ink-2, #424650); }
+.rf-legend-item { display: flex; gap: 10px; align-items: baseline; }
+.rf-legend-item b { color: var(--ink, #0f141a); font-weight: 600; }
+.rf-swatch { flex: 0 0 12px; width: 12px; height: 12px; border-radius: 3px; position: relative; top: 1px; }
+.rf-swatch--deployed { background: var(--rf-green, #00802f); }
+.rf-swatch--in-progress { background: var(--rf-progress, #006ce0); }
+.rf-swatch--failed { background: var(--rf-red, #db0000); }
+.rf-swatch--not-deployed { border: 1px dashed #8d99a5; }
+.rf-swatch--not-applicable { background: #e2e5ea; }
+.rf-swatch--not-observed { border: 1px dashed #c6c6cd; }
+.rf-swatch--badge { border-radius: 50%; background: #9aa3b0; width: 10px; height: 10px; flex-basis: 10px; }
+.rf-legend-note { grid-column: 1 / -1; margin-top: 8px; font-size: 12.5px; line-height: 1.55; color: var(--ink-3, #656871); }

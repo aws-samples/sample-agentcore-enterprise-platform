@@ -6,7 +6,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { strict as assert } from "node:assert";
 
 const html = readFileSync(new URL("./public/index.html", import.meta.url), "utf8");
-const src = html.match(/function statusClass\(s\) \{[\s\S]*?\n\}/)?.[0];
+const src = html.match(/function statusClass\(stack\) \{[\s\S]*?\n\}/)?.[0];
 assert.ok(src, "statusClass not found in index.html");
 const statusClass = new Function(`return ${src}`)();
 

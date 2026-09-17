@@ -132,9 +132,11 @@ For the wider test plan, read [`docs/TESTING.md`](docs/TESTING.md). For live res
 
 ## Dashboard
 
-Want to see the platform come together? The local dashboard shows deployment status and a
-short explanation of the pieces you are deploying. It runs on your machine and polls the
-resources in your AWS account.
+Want to see the platform come together? The local dashboard reads the same deployment
+contract as `deploy.sh` and shows three views: an **Overview** (stacks this profile promises,
+grouped by layer, with outputs and resources one click away), a live **Architecture** map, and
+the published **Parameters** that make up the platform interface. It runs on your machine,
+polls your AWS account, and is plain HTML served by Python: no build step, no dependencies.
 
 Run both commands from the repository root. The dashboard is only available on localhost.
 

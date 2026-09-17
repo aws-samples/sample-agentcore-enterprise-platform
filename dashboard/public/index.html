@@ -1,257 +1,213 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AgentCore Platform Accelerator — Workshop Dashboard</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-:root{
-  --bg:#0a0a0f;--bg2:#12121a;--bg3:#1a1a2e;--bg4:#22223a;
-  --accent:#FF9900;--accent2:#ffb84d;
-  --text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;
-  --green:#22c55e;--amber:#f59e0b;--red:#ef4444;--gray:#6b7280;
-  --radius:12px;--radius-sm:8px;
-}
-body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);line-height:1.6;min-height:100vh}
-a{color:var(--accent);text-decoration:none}
-
-/* NAV */
-.nav{position:sticky;top:0;z-index:100;background:rgba(10,10,15,.92);backdrop-filter:blur(20px);border-bottom:1px solid rgba(255,153,0,.15);padding:0 2rem;display:flex;align-items:center;justify-content:space-between;height:60px}
-.nav-brand{display:flex;align-items:center;gap:.75rem;font-weight:700;font-size:1.1rem}
-.nav-brand .logo{width:32px;height:32px;background:var(--accent);border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.9rem;color:#000}
-.nav-tabs{display:flex;gap:4px;background:var(--bg2);border-radius:10px;padding:4px}
-.nav-tab{padding:.5rem 1.5rem;border-radius:8px;cursor:pointer;font-weight:500;font-size:.875rem;color:var(--text2);transition:all .25s;border:none;background:none}
-.nav-tab:hover{color:var(--text)}
-.nav-tab.active{background:var(--accent);color:#000;font-weight:600}
-.nav-right{display:flex;align-items:center;gap:1rem;font-size:.8rem;color:var(--text3)}
-.refresh-badge{display:flex;align-items:center;gap:.4rem;background:var(--bg3);padding:.3rem .7rem;border-radius:6px;font-variant-numeric:tabular-nums}
-.refresh-dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
-
-/* TAB CONTENT */
-.tab-content{display:none;animation:fadeIn .4s}
-.tab-content.active{display:block}
-
-/* MONITOR TAB */
-.monitor-offline{text-align:center;padding:6rem 2rem}
-.monitor-offline .icon{font-size:3rem;margin-bottom:1rem}
-.monitor-offline h2{font-size:1.5rem;margin-bottom:.5rem}
-.monitor-offline p{color:var(--text2);margin-bottom:1.5rem}
-.monitor-offline code{background:var(--bg3);padding:.4rem .8rem;border-radius:6px;font-size:.9rem;color:var(--accent)}
-
-.monitor-wrap{max-width:1400px;margin:0 auto;padding:1.5rem 2rem 4rem}
-
-/* SUMMARY BAR */
-.summary-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.5rem}
-@media(max-width:600px){.summary-bar{grid-template-columns:repeat(2,1fr)}}
-.summary-card{background:var(--bg2);border-radius:var(--radius);padding:1.25rem;text-align:center;border:1px solid var(--bg4)}
-.summary-card .count{font-size:2.5rem;font-weight:800;line-height:1}
-.summary-card .label{font-size:.8rem;color:var(--text2);margin-top:.25rem;font-weight:500}
-.summary-card.deployed .count{color:var(--green)}
-.summary-card.in-progress .count{color:var(--amber)}
-.summary-card.failed .count{color:var(--red)}
-.summary-card.not-deployed .count{color:var(--gray)}
-
-/* ACCOUNT BAR */
-.account-bar{display:flex;flex-wrap:wrap;gap:1.5rem;background:var(--bg2);border-radius:var(--radius-sm);padding:.75rem 1.25rem;margin-bottom:2rem;font-size:.8rem;color:var(--text2);border:1px solid var(--bg4)}
-.account-bar .item{display:flex;align-items:center;gap:.4rem}
-.account-bar .item strong{color:var(--text);font-weight:600}
-
-/* LAYER GROUP */
-.layer-group{margin-bottom:2rem}
-.layer-group h3{font-size:.85rem;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:1px;margin-bottom:1rem;padding-bottom:.5rem;border-bottom:1px solid var(--bg4)}
-
-/* STACK CARDS */
-.stacks-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:1rem;margin-bottom:.5rem}
-.stack-card{background:var(--bg2);border-radius:var(--radius);padding:1.25rem;border:1px solid var(--bg4);transition:all .3s}
-.stack-card:hover{border-color:rgba(255,153,0,.3);transform:translateY(-1px)}
-.stack-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.75rem}
-.stack-name{font-weight:600;font-size:1rem}
-.stack-module{font-size:.7rem;color:var(--text3);margin-top:.15rem}
-.stack-badges{display:flex;gap:.4rem;align-items:center}
-.badge{padding:.2rem .6rem;border-radius:5px;font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
-.badge-team{background:var(--bg4);color:var(--text2)}
-.badge-status{color:#000}
-.badge-deployed{background:var(--green)}
-.badge-in-progress{background:var(--amber);animation:pulse 2s infinite}
-.badge-failed{background:var(--red)}
-.badge-not-deployed{background:var(--gray);color:var(--text)}
-/* Out of scope for this configuration — dimmed, never counted as a problem. */
-.badge-not-applicable{background:transparent;color:var(--text3);border:1px dashed var(--gray)}
-.stack-card.not-applicable{opacity:.55}
-.stack-resources{font-size:.8rem;color:var(--text2);margin-bottom:.75rem}
-.stack-outputs{display:flex;flex-direction:column;gap:.35rem}
-.stack-output{display:flex;justify-content:space-between;gap:.5rem;font-size:.75rem;padding:.3rem .5rem;background:var(--bg3);border-radius:4px}
-.stack-output .key{color:var(--text2);flex-shrink:0}
-.stack-output .val{color:var(--accent);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px}
-
-/* SSM TABLE */
-.ssm-section{margin-top:2rem}
-.ssm-section h3{font-size:1rem;font-weight:600;margin-bottom:1rem}
-.ssm-table{width:100%;border-collapse:collapse;font-size:.8rem}
-.ssm-table th{text-align:left;padding:.6rem .75rem;background:var(--bg3);color:var(--text2);font-weight:600;border-bottom:1px solid var(--bg4)}
-.ssm-table td{padding:.5rem .75rem;border-bottom:1px solid var(--bg4);color:var(--text2)}
-.ssm-table td:first-child{color:var(--accent);font-family:monospace;font-size:.75rem}
-.ssm-table td:last-child{max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-
-/* ANIMATIONS */
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
-@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-@keyframes spin{to{transform:rotate(360deg)}}
-
-/* SCROLLBAR */
-::-webkit-scrollbar{width:6px}
-::-webkit-scrollbar-track{background:var(--bg)}
-::-webkit-scrollbar-thumb{background:var(--bg4);border-radius:3px}
-</style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Platform dashboard · AgentCore Platform Accelerator</title>
+<!-- No CDN, no fonts, no framework: `python3 -m http.server` is the whole stack. -->
+<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="graph.css">
 </head>
 <body>
 
-<!-- NAV -->
-<nav class="nav">
-  <div class="nav-brand"><div class="logo">AC</div> AgentCore Accelerator</div>
-  <div class="nav-tabs">
-    <button class="nav-tab active" onclick="switchTab('monitor')">Monitor</button>
-    <button class="nav-tab" onclick="switchTab('architecture')">Architecture</button>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 16 16" fill="none" stroke="#0f1b2a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5l6-3 6 3-6 3-6-3zM2 8l6 3 6-3M2 11l6 3 6-3"/></svg>
+    </span>
+    <span>Platform dashboard</span>
+    <span class="brand-sep" aria-hidden="true">/</span>
+    <span class="brand-sub">AgentCore Platform Accelerator</span>
   </div>
-  <div class="nav-right">
-    <div class="refresh-badge" id="refreshBadge" style="display:none"><div class="refresh-dot"></div> <span id="countdown">10s</span></div>
+  <div class="live" id="live" data-state="connecting" role="status" aria-live="polite">
+    <span class="live-dot" aria-hidden="true"></span>
+    <span id="liveText">Connecting…</span>
   </div>
-</nav>
+</header>
 
-<!-- ==================== MONITOR TAB ==================== -->
-<div id="tab-monitor" class="tab-content active">
-
-  <!-- OFFLINE STATE -->
-  <div id="monitorOffline" class="monitor-offline">
-    <div class="icon">📡</div>
-    <h2>Monitor Not Running</h2>
-    <p>Start the deployment monitor to see live stack status.</p>
-    <code>python3 monitor.py</code>
+<main class="page">
+  <div class="page-head">
+    <div>
+      <h1>Deployment status</h1>
+      <dl class="kv" id="context">
+        <div><dt>Project</dt><dd id="infoProject">—</dd></div>
+        <div><dt>Environment</dt><dd id="infoEnv">—</dd></div>
+        <div><dt>Region</dt><dd id="infoRegion">—</dd></div>
+        <div><dt>Account</dt><dd id="infoAccount" class="num">—</dd></div>
+        <div><dt>Topology</dt><dd id="infoStrategy">—</dd></div>
+      </dl>
+    </div>
+    <nav class="tabs" role="tablist" aria-label="Dashboard sections">
+      <button class="tab" role="tab" id="tabbtn-overview" aria-selected="true" aria-controls="tab-overview" data-tab="overview">Overview</button>
+      <button class="tab" role="tab" id="tabbtn-architecture" aria-selected="false" aria-controls="tab-architecture" data-tab="architecture">Architecture</button>
+      <button class="tab" role="tab" id="tabbtn-parameters" aria-selected="false" aria-controls="tab-parameters" data-tab="parameters">Parameters</button>
+    </nav>
   </div>
 
-  <!-- ONLINE STATE -->
-  <div id="monitorOnline" class="monitor-wrap" style="display:none">
+  <div id="banner" aria-live="polite"></div>
 
-    <!-- SUMMARY BAR -->
-    <div class="summary-bar">
-      <div class="summary-card deployed"><div class="count" id="countDeployed">0</div><div class="label">Deployed</div></div>
-      <div class="summary-card in-progress"><div class="count" id="countInProgress">0</div><div class="label">In Progress</div></div>
-      <div class="summary-card failed"><div class="count" id="countFailed">0</div><div class="label">Failed</div></div>
-      <div class="summary-card not-deployed"><div class="count" id="countNotDeployed">0</div><div class="label">Not Deployed</div></div>
+  <!-- ================================================================ OVERVIEW -->
+  <section id="tab-overview" class="tab-content active" role="tabpanel" aria-labelledby="tabbtn-overview">
+
+    <div class="empty" id="stateConnecting">
+      <div class="spinner" aria-hidden="true"></div>
+      <h2>Connecting to the poller</h2>
+      <p>Reading <code>status.json</code>…</p>
     </div>
 
-    <!-- ACCOUNT BAR -->
-    <div class="account-bar" id="accountBar">
-      <div class="item">Project: <strong id="infoProject">—</strong></div>
-      <div class="item">Env: <strong id="infoEnv">—</strong></div>
-      <div class="item">Region: <strong id="infoRegion">—</strong></div>
-      <div class="item">Account: <strong id="infoAccount">—</strong></div>
-      <div class="item">Updated: <strong id="infoUpdated">—</strong></div>
+    <div class="empty" id="stateOffline" hidden>
+      <h2>The poller is not running</h2>
+      <p>This page reads <code>dashboard/public/status.json</code>, which <code>monitor.py</code> rewrites every 15 seconds from CloudFormation. Start it from the repository root:</p>
+      <pre>AWS_PROFILE=&lt;profile&gt; .venv/bin/python dashboard/monitor.py</pre>
     </div>
 
-    <!-- STACK CARDS (filled by JS) -->
-    <div id="stackLayers"></div>
+    <div id="stateOnline" hidden>
+      <div class="kpis" id="kpis"></div>
 
-    <!-- SSM PARAMETERS -->
-    <div class="ssm-section" id="ssmSection" style="display:none">
-      <h3>📌 Published SSM Parameters</h3>
-      <table class="ssm-table">
-        <thead><tr><th>Parameter Path</th><th>Value</th></tr></thead>
-        <tbody id="ssmBody"></tbody>
-      </table>
-    </div>
-
-  </div>
-</div>
-
-<!-- ==================== ARCHITECTURE TAB ==================== -->
-<!-- Same status.json as Monitor, drawn as a live flow map (graph.js).
-     Multi-account aware: a federated deployment shows both account boxes, and
-     the side this dashboard cannot poll is drawn "not observed" rather than
-     guessed at. -->
-<div id="tab-architecture" class="tab-content">
-  <div class="card" style="margin-bottom:1rem">
-    <div class="card-header" style="display:flex;justify-content:space-between;align-items:baseline;gap:1rem;flex-wrap:wrap">
-      <div>
-        <h2 style="margin:0">Live architecture</h2>
-        <p style="margin:.25rem 0 0;color:var(--text2);font-size:.85rem">
-          Cards are CloudFormation stacks, positioned by layer and grouped by account.
-          Drag a card to move it, drag the background to pan, scroll to zoom.
-        </p>
+      <div class="container">
+        <div class="container-head">
+          <div>
+            <h2>Stacks<span class="count-pill" id="stackCount">0</span></h2>
+            <p>CloudFormation stacks this configuration promises, in deployment order. Select a row for outputs and resources.</p>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Stack</th>
+                <th>Status</th>
+                <th>Module</th>
+                <th>Team</th>
+                <th class="num">Resources</th>
+                <th class="num">Outputs</th>
+              </tr>
+            </thead>
+            <tbody id="stackRows"></tbody>
+          </table>
+        </div>
       </div>
-      <div id="archSummary" style="color:var(--text2);font-size:.85rem;text-align:right"></div>
-    </div>
-  </div>
-  <div class="card" style="padding:0;overflow:hidden">
-    <!-- graph.js owns everything inside this div (DOM cards + SVG edges, no
-         canvas — real text is crisp, selectable and reaches the a11y tree).
-         The height has to be set here: graph.css only styles .rf-* so it
-         cannot size a container it does not own. -->
-    <div id="archFlow" style="height:min(62vh,600px)"></div>
-  </div>
-  <div class="card" style="margin-top:1rem">
-    <div id="archLegend"></div>
-  </div>
-  <div id="archOffline" class="monitor-offline" style="display:none">
-    <div class="icon">📡</div>
-    <h2>Monitor Not Running</h2>
-    <p>Start the poller to see the platform: <code>python3 -m dashboard.monitor</code></p>
-  </div>
-</div>
 
-<link rel="stylesheet" href="graph.css">
+      <details class="container" id="scopeBox" hidden>
+        <summary>Not in this profile<span class="count-pill" id="scopeCount">0</span> <span class="hint">— not missing, not failed: disabled in <code>platform.yaml</code></span></summary>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Stack</th><th>Layer</th><th>Module</th><th>Team</th><th>Enable with</th></tr></thead>
+            <tbody id="scopeRows"></tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <!-- ============================================================ ARCHITECTURE -->
+  <!-- Same status.json, drawn as a live flow map (graph.js). Multi-account aware:
+       a federated deployment shows both account boxes and the side this dashboard
+       cannot poll is drawn "not observed" rather than guessed at. -->
+  <section id="tab-architecture" class="tab-content" role="tabpanel" aria-labelledby="tabbtn-architecture">
+    <div class="container">
+      <div class="container-head">
+        <div>
+          <h2>Live architecture</h2>
+          <p>Cards are CloudFormation stacks, positioned by layer and grouped by account. Drag a card to move it, drag the background to pan, scroll to zoom, select a card for its outputs.</p>
+        </div>
+        <div class="arch-summary" id="archSummary"></div>
+      </div>
+      <!-- graph.js owns everything inside #archFlow (DOM cards + SVG edges, no
+           canvas). The height lives in app.css: graph.css only styles .rf-*. -->
+      <div id="archFlow"></div>
+    </div>
+    <div class="container">
+      <div class="container-head"><h2>Legend</h2></div>
+      <div class="container-body" id="archLegend"></div>
+    </div>
+    <div class="empty" id="archOffline" hidden>
+      <h2>The poller is not running</h2>
+      <p>Start it from the repository root:</p>
+      <pre>AWS_PROFILE=&lt;profile&gt; .venv/bin/python dashboard/monitor.py</pre>
+    </div>
+  </section>
+
+  <!-- ============================================================== PARAMETERS -->
+  <section id="tab-parameters" class="tab-content" role="tabpanel" aria-labelledby="tabbtn-parameters">
+    <div class="container">
+      <div class="container-head">
+        <div>
+          <h2>Published parameters<span class="count-pill" id="ssmCount">0</span></h2>
+          <p>The platform interface: SSM parameters under <code id="ssmPrefix">/project/env/</code> that agents and use cases read instead of hard-coding ARNs.</p>
+        </div>
+      </div>
+      <div class="toolbar">
+        <input class="filter" id="ssmFilter" type="search" placeholder="Filter by path or value" aria-label="Filter parameters">
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Parameter</th><th>Value</th></tr></thead>
+          <tbody id="ssmBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</main>
+
+<aside class="drawer" id="drawer" aria-label="Stack details" hidden>
+  <div class="drawer-head">
+    <div>
+      <h2 id="drawerTitle"></h2>
+      <div id="drawerStatus"></div>
+    </div>
+    <button class="icon-btn" id="drawerClose" aria-label="Close details">
+      <svg viewBox="0 0 16 16"><path d="M3 3l10 10M13 3L3 13"/></svg>
+    </button>
+  </div>
+  <div class="drawer-body" id="drawerBody"></div>
+</aside>
+
 <script src="graph.js"></script>
 <script>
-/* ── CONFIG ── */
-const POLL_INTERVAL = 10000;
+/* ── CONFIG ─────────────────────────────────────────────────────────────── */
+const POLL_INTERVAL = 10000;      // monitor.py rewrites status.json every 15s
+const STALE_AFTER = 60;           // seconds without a fresh timestamp → warn
 const LAYERS = [
-  { name: 'Foundation', stacks: ['networking', 'security'] },
-  { name: 'Identity', stacks: ['auth', 'identity'] },
-  { name: 'Service', stacks: ['gateway', 'memory'] },
-  { name: 'Runtime', stacks: ['runtime-orchestrator', 'runtime-code-agent', 'runtime-research-agent'] },
-  { name: 'Observability', stacks: ['observability'] }
+  { id: 'foundation',    name: 'Foundation',    stacks: ['networking', 'security'] },
+  { id: 'identity',      name: 'Identity',      stacks: ['auth', 'identity'] },
+  { id: 'service',       name: 'Service',       stacks: ['gateway', 'memory'] },
+  { id: 'runtime',       name: 'Runtime',       stacks: ['runtime-orchestrator', 'runtime-code-agent', 'runtime-research-agent'] },
+  { id: 'observability', name: 'Observability', stacks: ['observability'] }
 ];
-const STACK_META = {
-  'networking':            { module: 'Module 1', team: 'Platform' },
-  'security':              { module: 'Module 1', team: 'Platform' },
-  'auth':                  { module: 'Module 2', team: 'Platform' },
-  'identity':              { module: 'Module 2', team: 'Platform' },
-  'gateway':               { module: 'Module 3', team: 'Agent' },
-  'memory':                { module: 'Module 3', team: 'Agent' },
-  'runtime-orchestrator':  { module: 'Module 5', team: 'Agent' },
-  'runtime-code-agent':    { module: 'Module 5', team: 'Agent' },
-  'runtime-research-agent':{ module: 'Module 5', team: 'Agent' },
-  'observability':         { module: 'Module 7', team: 'Platform' }
+// How an out-of-scope stack is switched on. Keys mirror platform.yaml.
+const ENABLE_HINT = {
+  'networking': 'networking.enabled: true',
+  'security': 'security.enabled: true',
+  'runtime-code-agent': 'agents.a2a: true',
+  'runtime-research-agent': 'agents.a2a: true'
 };
+const STATE_LABEL = {
+  'deployed': 'Deployed', 'in-progress': 'Deploying', 'failed': 'Failed',
+  'not-deployed': 'Not deployed', 'not-applicable': 'Not in scope'
+};
+const ICON = {
+  'deployed':       '<circle cx="8" cy="8" r="7"/><path d="M4.5 8.3l2.4 2.4 4.6-5"/>',
+  'failed':         '<circle cx="8" cy="8" r="7"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5"/>',
+  'in-progress':    '<path d="M8 1a7 7 0 1 1-7 7"/>',
+  'not-deployed':   '<circle cx="8" cy="8" r="7" stroke-dasharray="3 2.2"/>',
+  'not-applicable': '<circle cx="8" cy="8" r="7"/><path d="M5 8h6"/>',
+  'warning':        '<path d="M8 2l6.5 11.5H1.5z"/><path d="M8 6.5v3M8 12h.01"/>',
+  'info':           '<circle cx="8" cy="8" r="7"/><path d="M8 7.5v4M8 5h.01"/>'
+};
+const SECRET_RE = /secret|password|token|api-?key/i;
 
-let countdownVal = 10;
-let pollTimer = null;
-let countdownTimer = null;
+let lastStatus = null;
+let lastFetchOk = null;
+let selectedKey = null;
+let returnFocusTo = null;
 
-/* ── TAB SWITCHING ── */
-function switchTab(tab) {
-  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-  document.querySelectorAll('.nav-tab').forEach(el => el.classList.remove('active'));
-  document.getElementById('tab-' + tab).classList.add('active');
-  document.querySelector(`.nav-tab[onclick*="${tab}"]`).classList.add('active');
-  const live = tab === 'monitor' || tab === 'architecture';
-  document.getElementById('refreshBadge').style.display = live ? 'flex' : 'none';
-
-  // The graph must mount AFTER its tab is visible: a display:none container has
-  // clientWidth 0, so auto-fit would size itself to the minimum floor.
-  if (tab === 'architecture' && window.ArchGraph) {
-    window.ArchGraph.mount(document.getElementById('archFlow'),
-                           document.getElementById('archLegend'));
-    if (lastStatus) window.ArchGraph.update(lastStatus);
-  } else if (window.ArchGraph) {
-    window.ArchGraph.destroy();   // drop listeners + DOM while the tab is off-screen
-  }
-  if (live) fetchStatus();
+/* ── HELPERS ────────────────────────────────────────────────────────────── */
+const $ = id => document.getElementById(id);
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
-
-/* ── TIME HELPERS ── */
 function relativeTime(iso) {
   if (!iso) return '—';
   const diff = (Date.now() - new Date(iso).getTime()) / 1000;
@@ -261,10 +217,29 @@ function relativeTime(iso) {
   if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
   return Math.floor(diff / 86400) + 'd ago';
 }
-
-function truncate(str, len) {
-  if (!str) return '—';
-  return str.length > len ? str.slice(0, len) + '…' : str;
+function ageSeconds(iso) { return iso ? (Date.now() - new Date(iso).getTime()) / 1000 : Infinity; }
+function svgIcon(kind) {
+  return `<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON[kind] || ''}</svg>`;
+}
+function indicator(state, label, raw) {
+  const text = label ?? STATE_LABEL[state] ?? state;
+  return `<span class="si si--${esc(state)}">${svgIcon(state)}<span>${esc(text)}</span></span>` +
+    (raw ? `<span class="si-raw">${esc(raw)}</span>` : '');
+}
+function teamBadge(team) {
+  return team ? `<span class="badge badge--${esc(team)}">${esc(team)}</span>` : '<span class="badge">—</span>';
+}
+function moduleBadge(m) { return m ? `<span class="badge">Module ${esc(m)}</span>` : '—'; }
+function copyBtn(value) {
+  return `<button class="copy" type="button" data-copy="${esc(value)}" aria-label="Copy value" title="Copy">` +
+    `<svg viewBox="0 0 16 16"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5"/></svg></button>`;
+}
+function valueCell(key, value) {
+  const v = String(value ?? '');
+  const masked = SECRET_RE.test(key);
+  const shown = masked ? '••••••••••••' : v;
+  return `<div class="val-cell"><span class="val${masked ? ' masked' : ''}" data-full="${esc(v)}">${esc(shown)}</span>` +
+    `<span style="display:flex;align-items:center">${masked ? '<button class="link-btn reveal" type="button" data-reveal>Show</button>' : ''}${copyBtn(v)}</span></div>`;
 }
 
 // Classification belongs to monitor.py, which emits `state` per stack; this
@@ -286,166 +261,289 @@ function statusClass(stack) {
   return 'not-deployed';
 }
 
-function statusLabel(s) {
-  if (!s) return 'Not Deployed';
-  return s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+/* ── TABS ───────────────────────────────────────────────────────────────── */
+function switchTab(tab, viaUser) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(el => el.setAttribute('aria-selected', 'false'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  const btn = document.getElementById('tabbtn-' + tab);
+  btn.setAttribute('aria-selected', 'true');
+  if (viaUser) btn.focus({ preventScroll: true });
+  history.replaceState(null, '', '#' + tab);
+  closeDrawer();
+
+  // The graph must mount AFTER its tab is visible: a display:none container has
+  // clientWidth 0, so auto-fit would size itself to the minimum floor.
+  if (tab === 'architecture' && window.ArchGraph) {
+    window.ArchGraph.mount(document.getElementById('archFlow'),
+                           document.getElementById('archLegend'));
+    if (lastStatus) window.ArchGraph.update(lastStatus);
+  } else if (window.ArchGraph) {
+    window.ArchGraph.destroy();   // drop listeners + DOM while the tab is off-screen
+  }
+  fetchStatus();
+}
+document.querySelector('.tabs').addEventListener('click', e => {
+  const b = e.target.closest('[data-tab]');
+  if (b) switchTab(b.dataset.tab, true);
+});
+document.querySelector('.tabs').addEventListener('keydown', e => {
+  if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+  const tabs = [...document.querySelectorAll('.tab')];
+  const i = tabs.findIndex(t => t.getAttribute('aria-selected') === 'true');
+  const next = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+  switchTab(next.dataset.tab, true);
+});
+
+/* ── LIVE INDICATOR + BANNERS ───────────────────────────────────────────── */
+function setLive(state, text) {
+  const el = $('live');
+  el.dataset.state = state;
+  $('liveText').textContent = text;
+}
+function renderBanner(data, stale) {
+  const s = (data && data.summary) || {};
+  const parts = [];
+  if (lastFetchOk === false && data) {
+    parts.push(['error', 'warning', '<b>Lost contact with the poller.</b> status.json could not be read; showing the last successful poll from ' + esc(relativeTime(data.timestamp)) + '.']);
+  } else if (stale) {
+    parts.push(['warning', 'warning', '<b>Data is ' + esc(relativeTime(data.timestamp)) + '.</b> monitor.py writes every 15 seconds; it may have stopped or lost its credentials.']);
+  }
+  if (s.failed > 0) {
+    parts.push(['error', 'failed', `<b>${s.failed} stack${s.failed > 1 ? 's' : ''} failed.</b> Open the row for the CloudFormation status, then check the stack events in the console.`]);
+  }
+  if (s.in_progress > 0) {
+    parts.push(['info', 'in-progress', `<b>Deployment in progress.</b> ${s.in_progress} stack${s.in_progress > 1 ? 's are' : ' is'} being created or updated.`]);
+  }
+  $('banner').innerHTML = parts.map(([tone, icon, html]) =>
+    `<div class="alert alert--${tone}" role="${tone === 'error' ? 'alert' : 'status'}">${svgIcon(icon)}<div>${html}</div></div>`).join('');
 }
 
-/* ── RENDER ── */
+/* ── OVERVIEW ───────────────────────────────────────────────────────────── */
 function render(data) {
-  const offline = document.getElementById('monitorOffline');
-  const online = document.getElementById('monitorOnline');
-  offline.style.display = 'none';
-  online.style.display = 'block';
+  $('stateConnecting').hidden = true;
+  $('stateOffline').hidden = true;
+  $('stateOnline').hidden = false;
 
-  // Account info
   const meta = data.metadata || data;
-  document.getElementById('infoProject').textContent = meta.project || meta.projectName || '—';
-  document.getElementById('infoEnv').textContent = meta.environment || meta.env || '—';
-  document.getElementById('infoRegion').textContent = meta.region || '—';
-  document.getElementById('infoAccount').textContent = meta.accountId || meta.account || '—';
-  document.getElementById('infoUpdated').textContent = relativeTime(data.timestamp || data.lastUpdated);
+  const dep = data.deployment || {};
+  $('infoProject').textContent = meta.project || meta.projectName || '—';
+  $('infoEnv').textContent = meta.environment || meta.env || '—';
+  $('infoRegion').textContent = meta.region || '—';
+  $('infoAccount').textContent = meta.accountId || meta.account || '—';
+  $('infoStrategy').textContent = (dep.strategy || 'centralized') + (dep.role ? ' · ' + dep.role + ' side' : '');
+  $('ssmPrefix').textContent = `/${meta.project || 'project'}/${meta.environment || 'env'}/`;
 
   // Stacks — monitor.py keys by full stack name ({project}-{env}-{short});
-  // LAYERS/STACK_META use short names, so resolve each short name by suffix.
+  // LAYERS use short names, so resolve each short name by suffix.
   const stacks = data.stacks || {};
   const allNames = Object.keys(stacks);
   const bySuffix = short => stacks[allNames.find(n => n.endsWith('-' + short)) || short];
 
   // Denominator = what this configuration actually promises (the deployment
-  // contract, via monitor.py). It used to be Math.max(count, 10), so a healthy
-  // greenfield deployment read 6/10 and looked permanently incomplete.
+  // contract, via monitor.py) — never a fixed floor.
   const summary = data.summary || {};
   const counts = { deployed: 0, 'in-progress': 0, failed: 0, 'not-deployed': 0, 'not-applicable': 0 };
-  allNames.forEach(name => {
-    const cls = statusClass(stacks[name]);
-    counts[cls] = (counts[cls] || 0) + 1;
-  });
+  allNames.forEach(name => { const cls = statusClass(stacks[name]); counts[cls] = (counts[cls] || 0) + 1; });
   const total = summary.total_stacks ?? (allNames.length - counts['not-applicable']);
+  const resources = summary.total_resources ?? allNames.reduce((n, k) => n + (Array.isArray(stacks[k].resources) ? stacks[k].resources.length : 0), 0);
+  const pct = total ? Math.round(100 * counts.deployed / total) : 0;
 
-  document.getElementById('countDeployed').textContent = counts.deployed + '/' + total;
-  document.getElementById('countInProgress').textContent = counts['in-progress'] + '/' + total;
-  document.getElementById('countFailed').textContent = counts.failed + '/' + total;
-  document.getElementById('countNotDeployed').textContent = counts['not-deployed'] + '/' + total;
+  $('kpis').innerHTML = [
+    kpi('Deployed', `${counts.deployed}<small>/ ${total}</small>`, `${pct}% of the promised footprint`,
+        counts.deployed === total && total > 0 ? 'ok' : (counts.failed ? 'err' : ''), pct),
+    kpi('Deploying', counts['in-progress'], counts['in-progress'] ? 'CloudFormation is working' : 'nothing in flight',
+        counts['in-progress'] ? 'info' : ''),
+    kpi('Failed', counts.failed, counts.failed ? 'needs attention' : 'no failed or rolled-back stacks',
+        counts.failed ? 'err' : ''),
+    kpi('Not deployed', counts['not-deployed'], counts['not-deployed'] ? 'in scope, not there yet' : 'everything in scope exists'),
+    kpi('Resources', resources, 'CloudFormation resources across all stacks'),
+    kpi('Not in scope', counts['not-applicable'], 'disabled for this profile')
+  ].join('');
 
-  // Stack layers
-  const container = document.getElementById('stackLayers');
-  container.innerHTML = '';
+  // Main table: in-scope stacks grouped by layer, in deployment order.
+  const rows = [];
+  const scope = [];
   LAYERS.forEach(layer => {
-    const group = document.createElement('div');
-    group.className = 'layer-group';
-    group.innerHTML = `<h3>${layer.name} Layer</h3>`;
-    const grid = document.createElement('div');
-    grid.className = 'stacks-grid';
-
-    layer.stacks.forEach(stackKey => {
-      const s = bySuffix(stackKey) || {};
+    const inScope = layer.stacks.map(k => [k, bySuffix(k) || {}]).filter(([, s]) => statusClass(s) !== 'not-applicable');
+    layer.stacks.forEach(k => { const s = bySuffix(k) || {}; if (statusClass(s) === 'not-applicable') scope.push([k, s, layer]); });
+    if (!inScope.length) return;
+    rows.push(`<tr class="group"><th colspan="6">${esc(layer.name)}</th></tr>`);
+    inScope.forEach(([key, s]) => {
       const cls = statusClass(s);
-      // monitor.py carries the module/team labels (they are checked against
-      // deploy.sh's MODULE_MAP in CI); STACK_META here is only a fallback.
-      const meta = { module: s.module ? 'Module ' + s.module : '—', team: s.team || '—',
-                     ...(s.module ? {} : STACK_META[stackKey] || {}) };
-      const outputs = s.outputs || {};
-      const outputKeys = Object.keys(outputs);
-      const resources = Array.isArray(s.resources) ? s.resources.length : (s.resourceCount ?? s.resources ?? '—');
-
-      let outputsHtml = '';
-      outputKeys.slice(0, 4).forEach(k => {
-        outputsHtml += `<div class="stack-output"><span class="key">${truncate(k, 25)}</span><span class="val" title="${outputs[k]}">${truncate(String(outputs[k]), 40)}</span></div>`;
-      });
-      if (outputKeys.length > 4) {
-        outputsHtml += `<div class="stack-output"><span class="key" style="color:var(--text3)">+${outputKeys.length - 4} more</span><span class="val"></span></div>`;
-      }
-
-      const card = document.createElement('div');
-      card.className = 'stack-card' + (cls === 'not-applicable' ? ' not-applicable' : '');
-      card.style.animation = 'fadeIn .4s';
-      card.innerHTML = `
-        <div class="stack-header">
-          <div><div class="stack-name">${stackKey}</div><div class="stack-module">${meta.module}</div></div>
-          <div class="stack-badges">
-            <span class="badge badge-team">${meta.team}</span>
-            <span class="badge badge-status badge-${cls}">${cls === 'not-applicable' ? 'Not In Scope' : statusLabel(s.status)}</span>
-          </div>
-        </div>
-        <div class="stack-resources">${resources !== '—' ? resources + ' resources' : 'No resources yet'}</div>
-        <div class="stack-outputs">${outputsHtml || '<span style="font-size:.8rem;color:var(--text3)">No outputs</span>'}</div>
-      `;
-      grid.appendChild(card);
+      const outputs = Object.keys(s.outputs || {}).filter(k => !k.startsWith('ExportsOutput'));
+      const res = Array.isArray(s.resources) ? s.resources.length : 0;
+      const fullKey = allNames.find(n => n.endsWith('-' + key)) || key;
+      rows.push(`<tr class="row" tabindex="0" role="button" data-key="${esc(fullKey)}" aria-selected="${fullKey === selectedKey}">
+        <td><div class="stack-name">${esc(key)}</div><div class="stack-desc">${esc(s.description || '')}</div></td>
+        <td>${indicator(cls, null, cls === 'deployed' ? '' : s.status)}</td>
+        <td>${moduleBadge(s.module)}</td>
+        <td>${teamBadge(s.team)}</td>
+        <td class="num">${res || '—'}</td>
+        <td class="num">${outputs.length ? `<button class="link-btn" type="button" data-key="${esc(fullKey)}">${outputs.length}</button>` : '—'}</td>
+      </tr>`);
     });
-
-    group.appendChild(grid);
-    container.appendChild(group);
   });
+  $('stackRows').innerHTML = rows.join('');
+  $('stackCount').textContent = total;
 
-  // SSM Parameters
-  const ssm = data.ssm_parameters || data.ssmParameters || data.ssm || {};
-  const ssmKeys = Object.keys(ssm);
-  const ssmSection = document.getElementById('ssmSection');
-  const ssmBody = document.getElementById('ssmBody');
-  if (ssmKeys.length > 0) {
-    ssmSection.style.display = 'block';
-    ssmBody.innerHTML = '';
-    ssmKeys.sort().forEach(k => {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${k}</td><td title="${ssm[k]}">${truncate(String(ssm[k]), 80)}</td>`;
-      ssmBody.appendChild(tr);
-    });
-  } else {
-    ssmSection.style.display = 'none';
-  }
+  $('scopeBox').hidden = !scope.length;
+  $('scopeCount').textContent = scope.length;
+  $('scopeRows').innerHTML = scope.map(([key, s, layer]) =>
+    `<tr class="muted"><td><div class="stack-name">${esc(key)}</div><div class="stack-desc">${esc(s.description || '')}</div></td>
+     <td>${esc(layer.name)}</td><td>${moduleBadge(s.module)}</td><td>${teamBadge(s.team)}</td>
+     <td><code>${esc(ENABLE_HINT[key] || 'see platform.yaml')}</code></td></tr>`).join('');
+
+  renderParameters(data);
+  if (selectedKey && stacks[selectedKey]) fillDrawer(selectedKey, stacks[selectedKey]);
+}
+function kpi(label, value, sub, tone, pct) {
+  return `<div class="kpi" data-tone="${tone || ''}"><div class="kpi-label">${esc(label)}</div>` +
+    `<div class="kpi-value num">${value}</div><div class="kpi-sub">${esc(sub)}</div>` +
+    (pct !== undefined ? `<div class="bar" data-tone="${tone || ''}"><span style="width:${pct}%"></span></div>` : '') + `</div>`;
 }
 
-/* ── FETCH ── */
-let lastStatus = null;
-
-async function fetchStatus() {
-  try {
-    const res = await fetch('status.json?t=' + Date.now());
-    if (!res.ok) throw new Error(res.status);
-    const data = await res.json();
-    lastStatus = data;
-    render(data);
-    renderArchitecture(data);
-  } catch (e) {
-    document.getElementById('monitorOffline').style.display = 'block';
-    document.getElementById('monitorOnline').style.display = 'none';
-    const archOff = document.getElementById('archOffline');
-    if (archOff) archOff.style.display = 'block';
-  }
+/* ── PARAMETERS ─────────────────────────────────────────────────────────── */
+function renderParameters(data) {
+  const params = data.ssm_parameters || {};
+  const keys = Object.keys(params).sort();
+  const q = ($('ssmFilter').value || '').toLowerCase();
+  const shown = keys.filter(k => !q || k.toLowerCase().includes(q) || String(params[k]).toLowerCase().includes(q));
+  $('ssmCount').textContent = keys.length;
+  $('ssmBody').innerHTML = shown.length
+    ? shown.map(k => `<tr><td><code>${esc(k)}</code></td><td>${valueCell(k, params[k])}</td></tr>`).join('')
+    : `<tr><td colspan="2" style="color:var(--ink-3);padding:24px 20px">${keys.length ? 'No parameter matches the filter.' : 'No parameters published yet — they appear after the first stack deploys.'}</td></tr>`;
 }
+$('ssmFilter').addEventListener('input', () => { if (lastStatus) renderParameters(lastStatus); });
 
+/* ── DRAWER ─────────────────────────────────────────────────────────────── */
+function openDrawer(key, from) {
+  const s = lastStatus && lastStatus.stacks && lastStatus.stacks[key];
+  if (!s) return;
+  selectedKey = key;
+  returnFocusTo = from || null;
+  fillDrawer(key, s);
+  $('drawer').hidden = false;
+  document.querySelectorAll('tr.row').forEach(r => r.setAttribute('aria-selected', r.dataset.key === key));
+  $('drawerClose').focus();
+}
+function closeDrawer() {
+  if ($('drawer').hidden) return;
+  $('drawer').hidden = true;
+  selectedKey = null;
+  document.querySelectorAll('tr.row[aria-selected="true"]').forEach(r => r.setAttribute('aria-selected', 'false'));
+  if (returnFocusTo && document.body.contains(returnFocusTo)) returnFocusTo.focus();
+}
+function fillDrawer(key, s) {
+  const cls = statusClass(s);
+  $('drawerTitle').textContent = key;
+  $('drawerStatus').innerHTML = indicator(cls, null, s.status);
+  const outputs = s.outputs || {};
+  const shown = Object.keys(outputs).filter(k => !k.startsWith('ExportsOutput')).sort();
+  const hiddenExports = Object.keys(outputs).length - shown.length;
+  const res = Array.isArray(s.resources) ? s.resources : [];
+  const byType = {};
+  res.forEach(r => { byType[r.type] = (byType[r.type] || 0) + 1; });
+  const topTypes = Object.entries(byType).sort((a, b) => b[1] - a[1]).slice(0, 12);
+
+  $('drawerBody').innerHTML = `
+    ${s.description ? `<p class="desc">${esc(s.description)}</p>` : ''}
+    <h3>Details</h3>
+    <dl class="grid2">
+      <div><dt>Layer</dt><dd>${esc(s.layer || '—')}</dd></div>
+      <div><dt>Module</dt><dd>${esc(s.module ? 'Module ' + s.module : '—')}</dd></div>
+      <div><dt>Team</dt><dd>${teamBadge(s.team)}</dd></div>
+      <div><dt>Resources</dt><dd class="num">${res.length}</dd></div>
+    </dl>
+    <h3>Outputs<span class="count-pill">${shown.length}</span></h3>
+    ${shown.length ? `<table><tbody>${shown.map(k => `<tr><td style="width:38%"><code>${esc(k)}</code></td><td>${valueCell(k, outputs[k])}</td></tr>`).join('')}</tbody></table>` : '<p class="more">No outputs.</p>'}
+    ${hiddenExports ? `<p class="more">${hiddenExports} CDK cross-stack export${hiddenExports > 1 ? 's' : ''} hidden.</p>` : ''}
+    <h3>Resources by type</h3>
+    ${topTypes.length ? `<table><tbody>${topTypes.map(([t, n]) => `<tr><td><span class="res-type">${esc(t)}</span></td><td class="num" style="width:3em">${n}</td></tr>`).join('')}</tbody></table>` : '<p class="more">No resources yet.</p>'}
+    ${Object.keys(byType).length > topTypes.length ? `<p class="more">+${Object.keys(byType).length - topTypes.length} more types</p>` : ''}`;
+}
+$('drawerClose').addEventListener('click', closeDrawer);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+$('stackRows').addEventListener('click', e => {
+  const row = e.target.closest('[data-key]');
+  if (row) openDrawer(row.dataset.key, row.closest('tr'));
+});
+$('stackRows').addEventListener('keydown', e => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('tr.row')) { e.preventDefault(); openDrawer(e.target.dataset.key, e.target); }
+});
+document.addEventListener('click', e => {
+  // Outside click closes the drawer; clicks inside it or on a row do not.
+  if (!$('drawer').hidden && !e.target.closest('#drawer') && !e.target.closest('[data-key]')) closeDrawer();
+});
+
+/* Copy + reveal, delegated so re-renders never lose the handlers. */
+document.addEventListener('click', async e => {
+  const c = e.target.closest('[data-copy]');
+  if (c) {
+    try { await navigator.clipboard.writeText(c.dataset.copy); c.dataset.done = '1'; setTimeout(() => { c.dataset.done = ''; }, 1200); }
+    catch (err) { c.title = 'Copy failed: ' + err; }
+    return;
+  }
+  const r = e.target.closest('[data-reveal]');
+  if (r) {
+    const v = r.closest('.val-cell').querySelector('.val');
+    const showing = !v.classList.contains('masked');
+    v.classList.toggle('masked', showing);
+    v.textContent = showing ? '••••••••••••' : v.dataset.full;
+    r.textContent = showing ? 'Show' : 'Hide';
+  }
+});
+
+/* ── ARCHITECTURE ───────────────────────────────────────────────────────── */
 /* The graph owns its own drawing; this only feeds it and captions the header. */
 function renderArchitecture(data) {
-  const off = document.getElementById('archOffline');
-  if (off) off.style.display = 'none';
+  $('archOffline').hidden = true;
   const s = data.summary || {};
   const dep = data.deployment || {};
-  const el = document.getElementById('archSummary');
-  if (el) {
-    const strategy = dep.strategy || 'centralized';
-    const role = dep.role ? ' · this account is the ' + dep.role + ' side' : '';
-    el.innerHTML = `<b style="color:var(--text)">${s.deployed ?? 0}/${s.total_stacks ?? 0}</b> deployed`
-      + ` · ${s.total_resources ?? 0} resources<br>`
-      + `<span style="color:var(--text3)">${strategy}${role} · updated ${relativeTime(data.timestamp)}</span>`;
-  }
+  const role = dep.role ? ' · this account is the ' + dep.role + ' side' : '';
+  $('archSummary').innerHTML = `<b class="num">${s.deployed ?? 0}/${s.total_stacks ?? 0}</b> deployed · ` +
+    `<span class="num">${s.total_resources ?? 0}</span> resources<br>${esc(dep.strategy || 'centralized')}${esc(role)}`;
   if (window.ArchGraph) window.ArchGraph.update(data);
 }
 
-/* ── COUNTDOWN ── */
-function startPolling() {
-  fetchStatus();
-  countdownVal = 10;
-  clearInterval(pollTimer);
-  clearInterval(countdownTimer);
-  pollTimer = setInterval(() => { fetchStatus(); countdownVal = 10; }, POLL_INTERVAL);
-  countdownTimer = setInterval(() => {
-    countdownVal = Math.max(0, countdownVal - 1);
-    const el = document.getElementById('countdown');
-    if (el) el.textContent = countdownVal + 's';
-  }, 1000);
+/* ── FETCH ──────────────────────────────────────────────────────────────── */
+async function fetchStatus() {
+  if (document.hidden) return;          // nothing to draw for a background tab
+  try {
+    const res = await fetch('status.json?t=' + Date.now(), { cache: 'no-store' });
+    if (!res.ok) throw new Error(res.status);
+    const data = await res.json();
+    lastStatus = data;
+    lastFetchOk = true;
+    render(data);
+    renderArchitecture(data);
+    tickLive();
+  } catch (e) {
+    lastFetchOk = false;
+    if (lastStatus) { renderBanner(lastStatus, false); setLive('offline', 'Poller unreachable'); return; }
+    $('stateConnecting').hidden = true;
+    $('stateOnline').hidden = true;
+    $('stateOffline').hidden = false;
+    $('archOffline').hidden = false;
+    setLive('offline', 'Poller not running');
+  }
 }
-
+/* Freshness is recomputed every second, so a dead poller cannot keep showing
+   "just now" with a green dot — the exact failure a status page must not have. */
+function tickLive() {
+  if (!lastStatus || lastFetchOk === false) return;
+  const age = ageSeconds(lastStatus.timestamp);
+  const stale = age > STALE_AFTER;
+  setLive(stale ? 'stale' : 'live', (stale ? 'Stale · ' : 'Live · ') + 'updated ' + relativeTime(lastStatus.timestamp));
+  renderBanner(lastStatus, stale);
+}
+function startPolling() {
+  const initial = location.hash.replace('#', '');
+  if (initial && document.getElementById('tab-' + initial)) switchTab(initial); else fetchStatus();
+  setInterval(fetchStatus, POLL_INTERVAL);
+  setInterval(tickLive, 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) fetchStatus(); });
+}
 startPolling();
 </script>
 </body>
