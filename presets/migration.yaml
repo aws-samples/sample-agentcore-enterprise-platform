@@ -2,27 +2,40 @@
 # Modules: 3 4 6 7 9
 # Fill in the identity block from your IdP's app registration; the client
 # secret goes in Secrets Manager, only its NAME goes here.
+# Preview the migration before touching AWS:  deploy.sh migrate plan
 project: agentcore-workshop
 environment: dev
 region: us-east-1
-
 deployment:
   strategy: centralized
-
 identity:
   idp: entra_id
   tenant_id: "00000000-0000-0000-0000-000000000000"   # your Entra tenant
   client_id: "REPLACE_ME"
   client_secret_name: "agentcore/idp-client-secret"  # pragma: allowlist secret — Secrets Manager NAME, not a value
-
 agents:
-  pattern: langgraph-agent    # bring your framework; see the 7 patterns
-
+  pattern: langgraph-agent    # ignored for the image once migration: is set; still selects verify/invoke behaviour
 gateway:
   web_search: auto
   tools: [sample-tool]
-
-security: {}
-
+security: {}                  # target ec2 or private_dependencies need networking: true
 observability:
   transaction_search: true
+migration:
+  source:
+    platform: openshift       # where it runs today (shapes the docs, not the deploy)
+    build:                    # build here so the image is arm64 (AgentCore Runtime is arm64-only);
+      context: ./workshop-simulation/existing-ec2-agent   # use image: for a registry reference instead
+      dockerfile: Dockerfile
+    port: 8000                # what the container listens on
+    invoke_path: /run         # the adapter forwards POST /invocations here
+    health_path: /healthz     # ...and GET /ping here
+    trigger: webhook          # how work arrives today (webhook|schedule|http|queue)
+    env: {}                   # plain config only; secret-looking keys are refused
+    secrets: [JIRA_TOKEN, GIT_TOKEN]   # ENV NAMES; values in Secrets Manager under <project>/<env>/migration/<NAME>
+  target:
+    runtime: agentcore        # ec2 (ECS on EC2 in the VPC) for amd64-only images
+    mode: adapter             # native when the image already speaks /invocations + /ping on 8080
+  network:
+    private_dependencies: []  # customer-side hostnames the agent must reach (needs networking + connectivity)
+    connectivity: none        # vpn|transit-gateway once private_dependencies is filled

@@ -26,6 +26,7 @@ fi
 #   ./deploy.sh diff
 #   ./deploy.sh export
 #   ./deploy.sh config [--reset]
+#   ./deploy.sh migrate plan [--profile PROFILE]
 #
 # Profiles: greenfield, migration, multi-agent, platform-team, security-focused
 # Teams: platform, agent, security
@@ -885,6 +886,48 @@ run_verify() {
 }
 
 # ═══════════════════════════════════════════════════════════════
+# Migration planning (migrate action) — read-only, never needs --yes
+# ═══════════════════════════════════════════════════════════════
+migrate_plan() {
+    # Renders the migration: block of the manifest (infra_utils.platform_config
+    # --plan) and, with credentials, reports which expected secrets already
+    # exist. describe-secret and get-caller-identity are the only AWS calls.
+    local py name secret_name names=()
+    if [ ! -f "$PLATFORM_CONFIG" ]; then
+        log_error "No $PLATFORM_CONFIG — migrate plan reads the migration: block from the manifest."
+        log_error "Start from the preset:  $0 migrate plan --profile migration"
+        exit 1
+    fi
+    py="$PROJECT_DIR/.venv/bin/python"; [ -x "$py" ] || py="python3"
+    # The account selects the side of a federated deployment; app.py and the
+    # contract read CDK_DEFAULT_ACCOUNT from the environment, so export it.
+    local have_creds=0
+    if ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null); then
+        have_creds=1
+        export CDK_DEFAULT_ACCOUNT="$ACCOUNT_ID"
+        AWS_REGION=${AWS_REGION:-$(aws configure get region 2>/dev/null || echo "us-east-1")}
+    fi
+    (cd "$PROJECT_DIR" && "$py" -m infra_utils.platform_config --plan "$PLATFORM_CONFIG") || exit 1
+    [ -n "${MIGRATION_SECRETS:-}" ] || return 0
+    echo ""
+    if [ "$have_creds" != "1" ]; then
+        log_warn "Secret check skipped (no AWS credentials)"
+        return 0
+    fi
+    log_step "Secrets Manager check (read-only, region $AWS_REGION)"
+    IFS=',' read -ra names <<< "$MIGRATION_SECRETS"
+    for name in "${names[@]}"; do
+        secret_name="${PROJECT_NAME}/${ENVIRONMENT}/migration/${name}"
+        if aws secretsmanager describe-secret --secret-id "$secret_name" --region "$AWS_REGION" >/dev/null 2>&1; then
+            log_info "found:   $secret_name"
+        else
+            log_warn "missing: $secret_name"
+            log_warn "         aws secretsmanager create-secret --name $secret_name --region $AWS_REGION --secret-string '<value>'"
+        fi
+    done
+}
+
+# ═══════════════════════════════════════════════════════════════
 # Deploy Summary (Requirement 2.5)
 # ═══════════════════════════════════════════════════════════════
 print_summary() {
@@ -996,6 +1039,27 @@ require_flag_value() {
         exit 1
     fi
 }
+
+# ── 'migrate' action: plan only, before any prerequisite/credential gate ──
+# Read-only by construction (see migrate_plan), so it takes no --yes. Fails
+# closed on anything but `plan`; --profile is accepted because the pre-scan
+# has already materialized it as the manifest.
+if [ "$ACTION" = "migrate" ]; then
+    MIGRATE_SUB="${1:-}"; shift || true
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --profile) require_flag_value "--profile" "$#"; shift 2 ;;
+            *) log_error "Unknown option for migrate: '$1' (valid: --profile PROFILE)"; exit 1 ;;
+        esac
+    done
+    if [ "$MIGRATE_SUB" != "plan" ]; then
+        log_error "Unknown migrate sub-action: '${MIGRATE_SUB:-(none)}'. Usage: $0 migrate plan [--profile PROFILE]"
+        exit 1
+    fi
+    migrate_plan
+    exit 0
+fi
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --stack)   require_flag_value "--stack" "$#";   STACK_FILTER="$2"; shift 2 ;;
@@ -1225,11 +1289,12 @@ case "$ACTION" in
         ;;
 
     *)
-        echo "Usage: $0 [deploy|workshop|destroy|synth|diff|export|ls|config] [OPTIONS]"
+        echo "Usage: $0 [deploy|workshop|destroy|synth|diff|export|ls|config|migrate] [OPTIONS]"
         echo ""
         echo "Actions:"
         echo "  workshop           Guided module-by-module deploy: explain → deploy → verify → pause"
         echo "  verify             Run every check this configuration promises; non-zero on failure"
+        echo "  migrate plan       Print the migration: plan (source → target, adapter mapping, secrets); read-only"
         echo "  config             Show saved answers (workshop.env)"
         echo "  config --reset     Delete saved answers and start fresh"
         echo ""
