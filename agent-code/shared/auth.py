@@ -13,7 +13,12 @@ import jwt
 from bedrock_agentcore.identity.auth import requires_access_token
 from bedrock_agentcore.runtime import RequestContext
 
-from shared.jwt_claims import TokenRejected, validate_claims
+from shared.jwt_claims import (
+    TokenRejected,
+    gateway_token_scopes,
+    jwks_uri,
+    validate_claims,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +37,23 @@ def _signing_key(token: str) -> str:
     """Public key for this token, from the issuer's published JWKS."""
     global _jwks_client
     if _jwks_client is None:
+        # The JWKS location comes from the issuer's discovery document: Cognito
+        # and Entra publish their keys at different paths (see jwks_uri).
+        discovery = None
+        try:
+            import json
+            import urllib.request
+
+            with urllib.request.urlopen(  # nosec B310 — https issuer from the deployment
+                f"{COGNITO_ISSUER_URL}/.well-known/openid-configuration", timeout=5
+            ) as resp:
+                discovery = json.load(resp)
+        except Exception as exc:  # noqa: BLE001 — fall back to the Cognito layout
+            logger.warning(
+                "OIDC discovery failed (%s); assuming Cognito JWKS path", exc
+            )
         _jwks_client = jwt.PyJWKClient(
-            f"{COGNITO_ISSUER_URL}/.well-known/jwks.json",
-            cache_keys=True,
+            jwks_uri(COGNITO_ISSUER_URL, discovery), cache_keys=True
         )
     return _jwks_client.get_signing_key_from_jwt(token).key
 
@@ -126,7 +145,7 @@ def extract_user_id_from_context(context: RequestContext) -> str:
 @requires_access_token(
     provider_name=os.environ.get("GATEWAY_CREDENTIAL_PROVIDER_NAME", ""),
     auth_flow="M2M",
-    scopes=[],
+    scopes=gateway_token_scopes(),
 )
 def get_gateway_access_token(access_token: str) -> str:
     """

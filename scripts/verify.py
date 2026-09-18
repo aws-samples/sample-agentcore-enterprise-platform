@@ -75,6 +75,10 @@ def checks_for(
     verify.py (CONTRIBUTING_USE_CASES.md), appended after the core checks.
     Paths are relative to scripts/, which is where main() runs every tool."""
     checks: list[tuple[str, list[str]]] = []
+    if "auth" in suffixes:
+        # First, deliberately: every later check mints a token through the same
+        # issuer, and this one turns an opaque 401 into the IdP-side fix.
+        checks.append(("identity", ["check_identity.py"]))
     if "gateway" in suffixes:
         checks.append(("gateway", ["test_gateway.py"]))
     if "memory" in suffixes:
@@ -127,6 +131,8 @@ def main() -> int:
         == "true"
     )
 
+    # check_identity.py compares the deployed issuer mode against the design.
+    os.environ.setdefault("IDP_MODE", config.identity.mode)
     # Enabled use cases whose stacks are actually in this footprint (in a
     # federation, expected_stacks already placed them on the right side).
     manifests = discover_use_cases() if config.use_cases else {}
@@ -135,7 +141,6 @@ def main() -> int:
         for name in sorted(config.use_cases)
         if any(s in suffixes for s in manifests[name].stacks)
     ]
-
     checks = checks_for(suffixes, pattern, require_guardrails, alarms, use_cases)
     print(f"Verifying {config.project}/{config.environment} in account {account}")
     print(f"Footprint: {' '.join(sorted(suffixes))}\n")

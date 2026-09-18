@@ -23,6 +23,7 @@ class AuthStack(cdk.Stack):
         project_name: str,
         environment: str,
         idp_type: str = "cognito",
+        idp_mode: str = "brokered",
         idp_config: dict | None = None,
         callback_urls: list[str] | None = None,
         logout_urls: list[str] | None = None,
@@ -31,6 +32,10 @@ class AuthStack(cdk.Stack):
         """
         Args:
             idp_type: One of 'cognito', 'entra_id', 'okta', 'ping'
+            idp_mode: 'brokered' (Cognito issues tokens; the IdP federates
+                through it) or 'direct' (the IdP issues tokens; no user pool
+                is created and this stack only publishes the issuer facts to
+                the same /auth/* SSM interface). See IdentityConfig.
             idp_config: IdP-specific settings:
                 - entra_id: {tenant_id, client_id, client_secret_name}
                 - okta: {issuer_url, client_id, client_secret_name}
@@ -62,6 +67,11 @@ class AuthStack(cdk.Stack):
             "http://localhost:3000/api/auth/callback/cognito"
         ]
         logout_urls = logout_urls or ["http://localhost:3000"]
+
+        self._mode = idp_mode
+        if idp_mode == "direct":
+            self._build_direct(project_name, environment, idp_type, idp_config)
+            return
 
         # ── User Pool ──
         self.user_pool = cognito.UserPool(
@@ -235,21 +245,19 @@ class AuthStack(cdk.Stack):
         self._m2m_client.node.add_dependency(resource_server)
 
         # ── SSM Parameters (cross-stack / cross-account discovery) ──
-        ssm_params = {
-            "issuer-url": f"https://cognito-idp.{self.region}.amazonaws.com/{self.user_pool.user_pool_id}",
-            "user-pool-id": self.user_pool.user_pool_id,
-            "app-client-id": self._app_client.user_pool_client_id,
-            "web-client-id": self._web_client.user_pool_client_id,
-            "m2m-client-id": self._m2m_client.user_pool_client_id,
-        }
-        for key, value in ssm_params.items():
-            ssm.StringParameter(
-                self,
-                f"SSM-{key}",
-                parameter_name=f"/{project_name}/{environment}/auth/{key}",
-                string_value=value,
-                description=f"Auth {key} for {project_name}/{environment}",
-            )
+        self._publish(
+            project_name,
+            environment,
+            {
+                "mode": "brokered",
+                "issuer-url": f"https://cognito-idp.{self.region}.amazonaws.com/{self.user_pool.user_pool_id}",
+                "user-pool-id": self.user_pool.user_pool_id,
+                "app-client-id": self._app_client.user_pool_client_id,
+                "web-client-id": self._web_client.user_pool_client_id,
+                "m2m-client-id": self._m2m_client.user_pool_client_id,
+                "m2m-scope": "agentcore/invoke",
+            },
+        )
 
         # ── Outputs ──
         cdk.CfnOutput(self, "UserPoolId", value=self.user_pool.user_pool_id)
@@ -265,9 +273,67 @@ class AuthStack(cdk.Stack):
             value=f"https://{prefix}-{self.account}.auth.{self.region}.amazoncognito.com",
         )
         cdk.CfnOutput(self, "IdPType", value=idp_type)
+        cdk.CfnOutput(self, "IdPMode", value="brokered")
+
+    def _build_direct(
+        self, project_name: str, environment: str, idp_type: str, idp_config: dict
+    ) -> None:
+        """Direct mode: the IdP is the issuer. Nothing to create — this stack
+        exists so the /auth/* interface (and the contract) stay the same shape
+        for every consumer. The M2M credential is the IdP app's own client
+        secret, already in Secrets Manager under client_secret_name for the
+        brokered path; direct mode just reads it for a different purpose.
+        Only Entra is wired today (IdentityConfig enforces this)."""
+        if idp_type != "entra_id":
+            raise ValueError("idp_mode='direct' supports idp_type 'entra_id' only")
+        for key in ("tenant_id", "client_id", "client_secret_name"):
+            if not idp_config.get(key):
+                raise ValueError(f"idp_mode='direct' requires idp_{key}")
+        tenant_id = idp_config["tenant_id"]
+        self._direct_issuer = f"https://login.microsoftonline.com/{tenant_id}/v2.0"
+        self._direct_client_id = idp_config["client_id"]
+        self._direct_secret = cdk.SecretValue.secrets_manager(
+            idp_config["client_secret_name"]
+        )
+        self._publish(
+            project_name,
+            environment,
+            {
+                "mode": "direct",
+                "issuer-url": self._direct_issuer,
+                # The same app registration serves humans (auth-code) and
+                # machines (client_credentials); there is no separate M2M app.
+                "app-client-id": self._direct_client_id,
+                "m2m-client-id": self._direct_client_id,
+                "m2m-client-secret-name": idp_config["client_secret_name"],
+                "m2m-scope": f"{self._direct_client_id}/.default",
+            },
+        )
+        cdk.CfnOutput(self, "IssuerUrl", value=self.issuer_url)
+        cdk.CfnOutput(self, "DiscoveryUrl", value=self.discovery_url)
+        cdk.CfnOutput(self, "AppClientId", value=self._direct_client_id)
+        cdk.CfnOutput(self, "M2MClientId", value=self._direct_client_id)
+        cdk.CfnOutput(self, "IdPType", value=idp_type)
+        cdk.CfnOutput(self, "IdPMode", value="direct")
+
+    def _publish(self, project_name: str, environment: str, params: dict) -> None:
+        for key, value in params.items():
+            ssm.StringParameter(
+                self,
+                f"SSM-{key}",
+                parameter_name=f"/{project_name}/{environment}/auth/{key}",
+                string_value=value,
+                description=f"Auth {key} for {project_name}/{environment}",
+            )
+
+    @property
+    def is_direct(self) -> bool:
+        return self._mode == "direct"
 
     @property
     def issuer_url(self) -> str:
+        if self.is_direct:
+            return self._direct_issuer
         return f"https://cognito-idp.{self.region}.amazonaws.com/{self.user_pool.user_pool_id}"
 
     @property
@@ -276,6 +342,8 @@ class AuthStack(cdk.Stack):
 
     @property
     def app_client_id(self) -> str:
+        if self.is_direct:
+            return self._direct_client_id
         return self._app_client.user_pool_client_id
 
     @property
@@ -284,14 +352,19 @@ class AuthStack(cdk.Stack):
 
     @property
     def m2m_client_id(self) -> str:
+        if self.is_direct:
+            return self._direct_client_id
         return self._m2m_client.user_pool_client_id
 
     @property
     def m2m_client_secret(self) -> cdk.SecretValue:
         """M2M client secret as a SecretValue.
 
-        CDK backs this with a DescribeUserPoolClient custom resource in this
-        stack. The value renders as a CloudFormation token (Fn::GetAtt on the
-        custom resource) in the synthesized template — never literal text.
+        Brokered: CDK backs this with a DescribeUserPoolClient custom resource
+        in this stack; it renders as a CloudFormation token (Fn::GetAtt) in the
+        template — never literal text. Direct: a Secrets Manager dynamic
+        reference to the IdP client secret — also never literal text.
         """
+        if self.is_direct:
+            return self._direct_secret
         return self._m2m_client.user_pool_client_secret

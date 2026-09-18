@@ -1,0 +1,17 @@
+# Contract fixture: identity.mode direct — Entra ID is the token issuer, no
+# Cognito user pool. Synthesized by scripts/check-contract.sh so the
+# audience-pinned authorizers and the pool-less auth stack stay buildable.
+# Placeholder-shaped values are legal here (PLATFORM_ALLOW_PLACEHOLDERS=1).
+project: agentcore-workshop
+environment: dev
+region: us-east-1
+
+identity:
+  idp: entra_id
+  mode: direct
+  tenant_id: "00000000-0000-0000-0000-000000000000"
+  client_id: "REPLACE_WITH_ENTRA_APP_CLIENT_ID"
+  client_secret_name: "agentcore/idp-client-secret"
+
+agents:
+  pattern: strands-agent

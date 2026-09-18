@@ -209,15 +209,55 @@ def deployment_placeholders(deployment: DeploymentConfig) -> list[str]:
 
 
 class IdentityConfig(BaseModel):
+    """Who issues the tokens the platform trusts.
+
+    brokered (default) — Cognito is the issuer; a corporate IdP, when set,
+        is federated THROUGH it (users sign in at the IdP, Cognito mints the
+        token). One issuer whatever the IdP, platform-owned M2M clients,
+        works with no IdP at all.
+    direct — the corporate IdP IS the issuer; no Cognito user pool is
+        deployed. Gateway and runtimes validate the IdP's tokens by audience
+        (Entra tokens carry `aud`/`azp`, not Cognito's `client_id`), and the
+        M2M credential is the same app registration's client secret.
+        Supported for entra_id; okta/ping stay brokered for now.
+    """
+
     idp: Literal["cognito", "entra_id", "okta", "ping"] = "cognito"
+    mode: Literal["brokered", "direct"] = "brokered"
     tenant_id: str = ""
     client_id: str = ""
     issuer_url: str = ""
     # Secrets Manager secret NAME — the secret itself never goes in this file.
     client_secret_name: str = ""
 
+    @property
+    def direct_issuer_url(self) -> str:
+        """The IdP's OIDC issuer when it is the token issuer itself (mode direct).
+
+        Entra: the v2.0 issuer. The app registration must request v2 access
+        tokens (api.requestedAccessTokenVersion = 2), or Entra signs tokens
+        with the v1 issuer `https://sts.windows.net/<tenant>/` and every
+        authorizer rejects them — checked live by scripts/check_identity.py.
+        """
+        if self.idp == "entra_id":
+            return f"https://login.microsoftonline.com/{self.tenant_id}/v2.0"
+        return self.issuer_url.rstrip("/")
+
+    @property
+    def direct_m2m_scope(self) -> str:
+        """client_credentials scope in direct mode: the app's own `.default`,
+        so the token's audience is the app itself (Entra rejects a missing
+        scope outright)."""
+        return f"{self.client_id}/.default"
+
     @model_validator(mode="after")
     def _federated_idp_fields(self) -> IdentityConfig:
+        if self.mode == "direct" and self.idp != "entra_id":
+            raise ValueError(
+                f"identity.mode 'direct' is supported for idp 'entra_id' today; "
+                f"idp {self.idp!r} deploys brokered (through Cognito). Set mode: "
+                "brokered or switch the IdP."
+            )
         if self.idp == "entra_id" and not self.tenant_id:
             raise ValueError("idp 'entra_id' requires identity.tenant_id")
         if self.idp in ("okta", "ping") and not self.issuer_url:
@@ -645,6 +685,10 @@ def discover_use_cases(root: Path = USE_CASES_DIR) -> dict[str, UseCaseManifest]
     if not root.is_dir():
         return found
     for mf in sorted(root.glob("*/manifest.yaml")):
+        # use-cases/_template/ is what `deploy.sh usecase new` copies from; its
+        # manifest holds {{tokens}} and is not a use case.
+        if mf.parent.name.startswith("_"):
+            continue
         manifest = UseCaseManifest.model_validate(yaml.safe_load(mf.read_text()))
         if manifest.name != mf.parent.name:
             raise ValueError(
@@ -876,6 +920,7 @@ def to_env(config: PlatformConfig) -> dict[str, str]:
         "DEPLOYMENT_STRATEGY": config.deployment.strategy,
         "PLATFORM_ACCOUNT": config.deployment.platform_account,
         "IDP_TYPE": config.identity.idp,
+        "IDP_MODE": config.identity.mode,
         "IDP_TENANT_ID": config.identity.tenant_id,
         "IDP_CLIENT_ID": config.identity.client_id,
         "IDP_ISSUER_URL": config.identity.issuer_url,
@@ -1020,6 +1065,107 @@ def migration_plan(config: PlatformConfig, account: str = "") -> list[str]:
     return lines
 
 
+def sign_in_lines(config: PlatformConfig, account: str = "") -> list[str]:
+    """The Design read-back for identity: who issues tokens, and what the
+    customer must register on the IdP side BEFORE build — the redirect URI in
+    brokered mode was derived by hand (and once for the wrong account) until
+    this printed it."""
+    ident = config.identity
+    if ident.idp == "cognito":
+        return ["  Sign-in: cognito"]
+    if ident.mode == "direct":
+        return [
+            f"  Sign-in: {ident.idp} (direct — the IdP issues tokens; no Cognito)",
+            f"    issuer: {ident.direct_issuer_url}",
+            f"    audience: {ident.client_id}",
+            (
+                "    IdP app must: have a service principal in the tenant and "
+                "request v2 access tokens (deploy.sh verify checks both)"
+            ),
+        ]
+    acct = account or "<account-id>"
+    redirect = (
+        f"https://{config.project}-{config.environment}-{acct}.auth."
+        f"{config.region}.amazoncognito.com/oauth2/idpresponse"
+    )
+    return [
+        f"  Sign-in: {ident.idp} via Cognito (brokered)",
+        f"    register this redirect URI on the IdP app: {redirect}",
+    ]
+
+
+def design_plan(config: PlatformConfig, account: str = "") -> list[str]:
+    """The Design-phase read-back: everything this manifest will make the
+    platform do, as plain text, before anything exists. Pure — no I/O, no AWS
+    — so `deploy.sh design`, tests and docs print the same thing.
+
+    Composes the pieces that already know their part (expected_stacks, the
+    migration plan, warnings) rather than growing a second opinion of any.
+    """
+    dep = config.deployment
+    try:
+        role = config.federated_role(account)
+    except Exception:  # noqa: BLE001 — an unlisted account is reported in the plan, not raised
+        role = None
+    stacks = (
+        config.expected_stacks(account) if (dep.strategy != "federated" or role) else []
+    )
+    lines = [
+        f"Design: {config.project}-{config.environment} in {config.region}",
+        f"  Topology: {dep.strategy}"
+        + (f", this account is the {role} side" if role else "")
+        + (f" (account {account})" if account else ""),
+        *sign_in_lines(config, account),
+        f"  Agent pattern: {config.agents.pattern}"
+        + (f", model {config.agents.model_id}" if config.agents.model_id else "")
+        + (" (allow-listed)" if config.agents.allowed_models else ""),
+        "",
+        f"Stacks ({len(stacks)}):"
+        if stacks
+        else "Stacks: (federated — deploy from a listed account to see a side)",
+    ]
+    lines += [f"  {s}" for s in stacks]
+
+    on = [
+        name
+        for name, flag in (
+            ("private networking (VPC mode)", config.security.networking),
+            ("CloudTrail + alerting", config.security.cloudtrail_alerting),
+            ("resource policies", config.security.resource_policies),
+            ("egress filter", config.security.egress_filter),
+            ("guardrail-enforced inference", config.security.require_guardrails),
+            ("Cedar authorization", config.security.cedar.enabled),
+            ("traceability", config.security.traceability),
+            ("alarms + dashboard", config.observability.alarms),
+        )
+        if flag
+    ]
+    lines += [
+        "",
+        "Controls on: " + (", ".join(on) if on else "none (every control is opt-in)"),
+    ]
+
+    if config.use_cases:
+        lines += ["", "Use cases:"]
+        lines += [f"  {name}  (uc-{name})" for name in sorted(config.use_cases)]
+    else:
+        lines += ["", "Use cases: none yet (deploy.sh usecase new <name>)"]
+
+    if config.migration:
+        # migration_plan() prints the migration block's own warnings; the
+        # identity/deployment ones are added below so none is lost.
+        mig = migration_plan(config, account)
+        cut = mig.index("Warnings:") if "Warnings:" in mig else len(mig)
+        lines += [""] + mig[: cut - 1 if cut else 0]
+    if config.warnings:
+        lines += ["", "Warnings:"] + [f"  - {w}" for w in config.warnings]
+    lines += [
+        "",
+        "Nothing has been deployed. Next: deploy.sh build, then deploy.sh verify.",
+    ]
+    return lines
+
+
 def resolve_region(root: Path | None = None) -> str:
     """Resolve the deployment region the way deploy.sh does, so every tool
     (verify, invoke, monitor, check_*) reports on the region the deploy
@@ -1054,18 +1200,18 @@ def resolve_region(root: Path | None = None) -> str:
 def _main() -> int:
     flags = {a for a in sys.argv[1:] if a.startswith("--")}
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    if "--plan" in flags and not args:
+    if flags & {"--plan", "--design"} and not args:
         # --plan alone reads the deployment manifest, like deploy.sh does.
         root = Path(__file__).resolve().parents[1]
         args = [os.environ.get("PLATFORM_CONFIG") or str(root / "platform.yaml")]
     if (
         len(args) != 1
         or len(flags) > 1
-        or not flags <= {"--export", "--stacks", "--plan"}
+        or not flags <= {"--export", "--stacks", "--plan", "--design"}
     ):
         print(
             "usage: python -m infra_utils.platform_config "
-            "[--export | --stacks | --plan] <platform.yaml>",
+            "[--export | --stacks | --plan | --design] <platform.yaml>",
             file=sys.stderr,
         )
         return 2
@@ -1098,6 +1244,9 @@ def _main() -> int:
         # the side of a federated deployment, same as app.py.
         for name in config.expected_stacks(os.environ.get("CDK_DEFAULT_ACCOUNT", "")):
             print(name)
+        return 0
+    if "--design" in flags:
+        print("\n".join(design_plan(config, os.environ.get("CDK_DEFAULT_ACCOUNT", ""))))
         return 0
     if "--plan" in flags:
         print(

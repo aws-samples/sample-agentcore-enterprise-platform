@@ -16,7 +16,9 @@ You own your folder; the platform guarantees the interface.
 
 ## The shape
 
-Copy `use-cases/hello-platform/` and keep all four parts:
+`./scripts/deploy.sh usecase new <your-name>` scaffolds the folder from
+`use-cases/_template/` and enables it in `platform.yaml`;
+`use-cases/hello-platform/` is the same shape, filled in. Keep all four parts:
 
 ```
 use-cases/<your-name>/

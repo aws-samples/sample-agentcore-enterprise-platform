@@ -50,6 +50,7 @@ DESCRIPTIONS: dict[str, str] = {
     "deployment.federation.m2m_client_secret_name": "Secrets Manager NAME in the workload account holding the M2M client secret. The secret itself never goes in this file.",
     # identity
     "identity.idp": "Who authenticates users. `cognito` is self-contained; the others federate Cognito to your enterprise IdP (docs/ENTERPRISE_IDP.md).",
+    "identity.mode": "Who issues the tokens. `brokered`: Cognito issues them and the IdP only signs users in — works with no IdP at all. `direct`: the IdP issues them and no Cognito user pool is deployed; `entra_id` only, and the app registration needs a service principal and v2 access tokens (docs/ENTERPRISE_IDP.md, Direct mode).",
     "identity.tenant_id": "Entra ID tenant. Required when `idp: entra_id`.",
     "identity.client_id": "App registration / OIDC client id at your IdP.",
     "identity.issuer_url": "OIDC issuer of your IdP. Required for `okta` and `ping` (Entra derives it from the tenant).",
@@ -110,6 +111,7 @@ ENV: dict[str, str] = {
     "deployment.strategy": "DEPLOYMENT_STRATEGY",
     "deployment.platform_account": "PLATFORM_ACCOUNT",
     "identity.idp": "IDP_TYPE",
+    "identity.mode": "IDP_MODE",
     "identity.tenant_id": "IDP_TENANT_ID",
     "identity.client_id": "IDP_CLIENT_ID",
     "identity.issuer_url": "IDP_ISSUER_URL",

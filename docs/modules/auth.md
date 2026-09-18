@@ -2,14 +2,23 @@
 
 # Auth module
 
-The auth module (`stacks/auth_stack.py`) is the platform's token issuer: an
-Amazon Cognito user pool that every other component validates JWTs against.
-The gateway and the client-facing runtimes each run a `CUSTOM_JWT` authorizer
-pinned to this pool's issuer, and the agents verify the same tokens a second
-time in code ([Verify caller identity](../IDENTITY.md)). Optionally, an
-enterprise IdP (Entra ID, Okta, Ping) federates in via OIDC — users sign in at
-the corporate IdP, but the tokens agents see are still minted by Cognito, so
-nothing downstream changes ([Enterprise IdP federation](../ENTERPRISE_IDP.md)).
+The auth module (`stacks/auth_stack.py`) declares the platform's token
+issuer: the one OIDC issuer every other component validates JWTs against. The
+gateway and the client-facing runtimes each run a `CUSTOM_JWT` authorizer
+pinned to it, and the agents verify the same tokens a second time in code
+([Verify caller identity](../IDENTITY.md)). It has two modes, chosen in
+Design with `identity.mode`:
+
+- **`brokered`** (default) — an Amazon Cognito user pool is the issuer.
+  Optionally an enterprise IdP (Entra ID, Okta, Ping) federates in via OIDC:
+  users sign in at the corporate IdP, but the tokens agents see are minted by
+  Cognito, so nothing downstream changes
+  ([Enterprise IdP federation](../ENTERPRISE_IDP.md)).
+- **`direct`** — your Entra ID tenant is the issuer. No user pool is created;
+  the stack only publishes the issuer facts to the same `/auth/*` interface,
+  and the authorizers pin the token **audience** (your app's client id)
+  instead of Cognito client ids
+  ([Direct mode](../ENTERPRISE_IDP.md#direct-mode-entra-id-issues-the-tokens)).
 
 ## When it deploys
 
@@ -21,9 +30,13 @@ nothing downstream changes ([Enterprise IdP federation](../ENTERPRISE_IDP.md)).
 
 Source: `expected_stacks()` in `infra_utils/platform_config.py` adds
 `{prefix}-auth` when the federated role is not `workload`; `app.py` skips
-`AuthStack` under the same condition.
+`AuthStack` under the same condition. `identity.mode` does not change *whether*
+the stack deploys, only what it contains — the contract, the dashboard and
+`destroy` stay the same shape in both modes.
 
 ## What it creates
+
+### `mode: brokered`
 
 | Resource | Name pattern | Purpose |
 |---|---|---|
@@ -35,7 +48,18 @@ Source: `expected_stacks()` in `infra_utils/platform_config.py` adds
 | M2M client | `{prefix}-m2m-client` | `client_credentials` grant, scope `agentcore/invoke` — machines |
 | `UserPoolIdentityProviderOidc` (optional) | `EntraID` / `Okta` / `PingIdentity` | Federated OIDC provider, created only when `idp_type` is not `cognito` |
 | CDK custom resource + singleton Lambda | (CDK-generated) | Backs the `m2m_client_secret` property: calls `DescribeUserPoolClient` so the secret reaches consumers as a CloudFormation token, never literal text |
-| 5 × `AWS::SSM::Parameter` | `/{project}/{environment}/auth/*` | Cross-stack / cross-account discovery (see Interfaces) |
+| 7 × `AWS::SSM::Parameter` | `/{project}/{environment}/auth/*` | Cross-stack / cross-account discovery (see Interfaces) |
+
+### `mode: direct`
+
+| Resource | Name pattern | Purpose |
+|---|---|---|
+| 6 × `AWS::SSM::Parameter` | `/{project}/{environment}/auth/*` | The issuer facts: `mode=direct`, Entra's v2 issuer, your app's client id as both `app-client-id` and `m2m-client-id`, the `.default` M2M scope, and the **name** of the Secrets Manager secret holding the client secret |
+
+Nothing else. The Entra app registration serves humans (authorization code)
+and machines (`client_credentials`) alike; the identity module's gateway
+credential provider points at Entra's discovery document and reads the same
+secret.
 
 ## Configuration
 
@@ -44,6 +68,7 @@ Precedence everywhere: cdk context > env var > `platform.yaml` > default.
 | cdk context | Env var | `platform.yaml` | Default | Effect |
 |---|---|---|---|---|
 | `idp_type` | `IDP_TYPE` | `identity.idp` | `cognito` | `cognito`, `entra_id`, `okta`, or `ping` |
+| `idp_mode` | `IDP_MODE` | `identity.mode` | `brokered` | `brokered` (Cognito issues) or `direct` (the IdP issues — `entra_id` only; okta/ping stay brokered) |
 | `idp_tenant_id` | `IDP_TENANT_ID` | `identity.tenant_id` | `""` | Entra ID only; builds the issuer URL |
 | `idp_client_id` | `IDP_CLIENT_ID` | `identity.client_id` | `""` | The IdP application's client id |
 | `idp_issuer_url` | `IDP_ISSUER_URL` | `identity.issuer_url` | `""` | Okta / Ping only (cannot be derived) |
@@ -60,22 +85,29 @@ used a different redirect URI.
 SSM parameters under `/{project}/{environment}/auth/` (part of
 [the platform interface](../PLATFORM_INTERFACE.md)):
 
-| Parameter | Value |
-|---|---|
-| `issuer-url` | `https://cognito-idp.{region}.amazonaws.com/{pool-id}` |
-| `user-pool-id` | The user pool id |
-| `app-client-id` | Authorization-code client (humans) |
-| `web-client-id` | SRP client (browsers) |
-| `m2m-client-id` | `client_credentials` client (machines) |
+| Parameter | brokered | direct |
+|---|---|---|
+| `mode` | `brokered` | `direct` — read this first; absent on platforms deployed before it existed (= brokered) |
+| `issuer-url` | `https://cognito-idp.{region}.amazonaws.com/{pool-id}` | `https://login.microsoftonline.com/{tenant}/v2.0` |
+| `user-pool-id` | The user pool id | — |
+| `app-client-id` | Authorization-code client (humans) | Your Entra app's client id (humans and machines) |
+| `web-client-id` | SRP client (browsers) | — |
+| `m2m-client-id` | `client_credentials` client (machines) | The same Entra client id |
+| `m2m-scope` | `agentcore/invoke` | `{client_id}/.default` |
+| `m2m-client-secret-name` | — (the secret lives in Cognito) | Secrets Manager **name** of the client secret |
 
-Stack outputs (no exports): `UserPoolId`, `UserPoolArn`, `IssuerUrl`,
-`DiscoveryUrl`, `AppClientId`, `WebClientId`, `M2MClientId`, `DomainUrl`,
-`IdPType`. Consumers wired by `app.py`: the gateway and runtime authorizers
-(issuer + allowed clients), the identity module (M2M client id and secret for
-the gateway credential provider), and the `COGNITO_ISSUER_URL` /
-`COGNITO_ALLOWED_CLIENTS` env vars on the orchestrator runtime. In a
-federation, `deploy.sh export` hands `issuer_url` and `m2m_client_id` to
-workload accounts ([Multi-account federation](../MULTI_ACCOUNT.md)).
+Stack outputs (no exports): `IssuerUrl`, `DiscoveryUrl`, `AppClientId`,
+`M2MClientId`, `IdPType`, `IdPMode` in both modes; brokered adds
+`UserPoolId`, `UserPoolArn`, `WebClientId`, `DomainUrl`. Consumers wired by
+`app.py`: the gateway and runtime authorizers (issuer + allowed clients, or
+issuer + allowed audience in direct mode — `infra_utils/jwt_authorizer.py`
+renders both), the identity module (M2M client id and secret for the gateway
+credential provider), and the `COGNITO_ISSUER_URL` / `COGNITO_ALLOWED_CLIENTS`
+env vars on the orchestrator runtime (in direct mode they carry Entra's issuer
+and the audience; the names are kept for compatibility). Direct mode adds
+`GATEWAY_TOKEN_SCOPES` so agents request the `.default` scope Entra requires.
+In a federation, `deploy.sh export` hands `issuer_url` and `m2m_client_id` to
+workload accounts in either mode ([Multi-account federation](../MULTI_ACCOUNT.md)).
 
 ## Security notes
 
@@ -91,19 +123,28 @@ workload accounts ([Multi-account federation](../MULTI_ACCOUNT.md)).
   an email address. The password policy is 8+ chars with upper/lower/digits,
   no symbols required.
 - The runtime and gateway authorizers validate signature, issuer, and
-  **client id — not scopes**. A user token without `agentcore/invoke` is
-  accepted; enforce scopes in the agent if you need them
-  ([details](../IDENTITY.md)).
+  **client id (brokered) or audience (direct) — not scopes**. A user token
+  without `agentcore/invoke` is accepted; enforce scopes in the agent if you
+  need them ([details](../IDENTITY.md)).
+- **Direct mode widens who can mint a platform token**: anyone who can obtain
+  a token from your tenant for that app's audience. Entra's own controls
+  (app role assignment required, conditional access) are the gate — the
+  platform does not add one.
 - Anyone with `cognito-idp:DescribeIdentityProvider` can read the federated
   IdP's client secret from `ProviderDetails` — AWS behaviour, not something
   this stack can hide. Treat that permission as sensitive.
 
 ## Verification
 
-There is no dedicated auth check in `scripts/verify.py` — instead every check
-that mints a token exercises it: `invoke.py` and `test_gateway.py` both obtain
-an M2M token from this pool (`scripts/utils.py get_m2m_token`), so a broken
-auth stack fails the whole footprint. Preflight, `scripts/check-deploy-config.sh`
+`scripts/check_identity.py` runs **first** in `deploy.sh verify` for any
+footprint with an auth stack: it compares the deployed `auth/mode` with the
+design, and in direct mode mints a token exactly as the agents do and checks
+its `iss` against the discovery document and its `aud` against the allowed
+audience — naming the fix for the two Entra prerequisites below. Every later
+check then exercises the issuer for real: `invoke.py` and `test_gateway.py`
+both obtain an M2M token (`scripts/utils.py get_m2m_token`, which reads
+`auth/mode` and switches endpoints), so a broken auth stack fails the whole
+footprint. Preflight, `scripts/check-deploy-config.sh`
 proves the IdP secret is trimmed before storage (check k) and that a
 bring-your-own secret name is reused, not duplicated (check l). For federated
 IdPs, [Enterprise IdP federation](../ENTERPRISE_IDP.md) has four browserless
@@ -124,3 +165,18 @@ checks that isolate failures before a human signs in.
 - Switching `idp_type` back to `cognito` removes the provider but **orphans
   its users**: they remain as `EXTERNAL_PROVIDER` accounts nobody can sign in
   as, until deleted with `admin-delete-user`.
+- **Direct mode, Entra side (both fail silently at build, loudly at first
+  invoke):** the app needs a *service principal* in the tenant (`az ad sp
+  create --id <client-id>` — Cognito federation creates one lazily at first
+  sign-in, `client_credentials` never does; otherwise `AADSTS7000229`), and it
+  must request **v2 access tokens** (`api.requestedAccessTokenVersion: 2`,
+  set via a Graph PATCH — `az ad app update --set api.…` cannot); otherwise
+  tokens carry the v1 issuer `https://sts.windows.net/<tenant>/` and every
+  authorizer rejects them. `check_identity.py` reports both by name.
+- **Switching a live platform from brokered to direct** cannot go auth-first:
+  the gateway, identity and runtime stacks import Cognito values as
+  CloudFormation exports, and CloudFormation refuses to update auth while an
+  export is imported. `deploy.sh build` detects the switch and deploys the
+  consumers first (check v in `check-deploy-config.sh` pins the order). The
+  reverse switch works in the default order. Either way the user pool is
+  deleted and recreated — its users do not survive the round trip.

@@ -16,7 +16,7 @@ preset and fails if the contract and the CDK app (`app.py`) ever drift.
 |---|---|---|---|
 | `networking` | `security.networking` / `ENABLE_NETWORKING` | Optional VPC, private subnets, endpoints, runtime security group | [networking.md](networking.md) |
 | `security` | `security.cloudtrail_alerting` / `ENABLE_SECURITY` | KMS CMK for Memory encryption, CloudTrail audit trail | [security.md](security.md) |
-| `auth` | always¹ | Cognito user pool, app/web/M2M clients, optional enterprise IdP federation | [auth.md](auth.md) |
+| `auth` | always¹ | Cognito user pool, app/web/M2M clients, optional enterprise IdP federation — or, in `identity.mode: direct`, no Cognito: only the issuer facts for your Entra ID tenant | [auth.md](auth.md) |
 | `identity` | always | AgentCore Identity: gateway M2M credential provider, 3LO OAuth providers | [identity.md](identity.md) |
 | `memory` | always¹ | AgentCore Memory store (short-term; long-term opt-in) | [memory.md](memory.md) |
 | `gateway` | always¹ | AgentCore MCP Gateway with Lambda tools, web search, optional Cedar + egress filter | [gateway.md](gateway.md) |

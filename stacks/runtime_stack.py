@@ -41,6 +41,7 @@ from aws_cdk import (
 )
 from constructs import Construct
 
+from infra_utils.jwt_authorizer import custom_jwt_authorizer
 from infra_utils.platform_config import allowed_model_resources
 from infra_utils.policy_loader import load_control
 from infra_utils.runtime_network import build_network_config
@@ -68,6 +69,7 @@ class RuntimeStack(cdk.Stack):
         runtime_type: str = "orchestrator",
         cognito_issuer_url: str = "",
         cognito_allowed_clients: list[str] | None = None,
+        allowed_audience: list[str] | None = None,
         network_mode: str = "PUBLIC",
         subnet_ids: list[str] | None = None,
         security_group_ids: list[str] | None = None,
@@ -459,12 +461,9 @@ class RuntimeStack(cdk.Stack):
         # Docs: "Propagate a JWT token to AgentCore Runtime" (runtime-oauth) +
         # runtime-header-allowlist.
         if needs_jwt_authorizer(protocol) and cognito_issuer_url:
-            runtime_props["authorizer_configuration"] = {
-                "customJwtAuthorizer": {
-                    "discoveryUrl": f"{cognito_issuer_url}/.well-known/openid-configuration",
-                    "allowedClients": cognito_allowed_clients or [],
-                },
-            }
+            runtime_props["authorizer_configuration"] = custom_jwt_authorizer(
+                cognito_issuer_url, cognito_allowed_clients, allowed_audience
+            )
             runtime_props["request_header_configuration"] = {
                 "requestHeaderAllowlist": ["Authorization"],
             }

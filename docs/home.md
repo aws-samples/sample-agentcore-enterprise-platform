@@ -7,7 +7,7 @@ platform for running AI agents under enterprise governance on
 **Amazon Bedrock AgentCore** — authentication, identity, tool gateway, memory,
 observability, and security controls, stood up from one declarative
 configuration file in under an hour, in a single AWS account. Your team
-deploys it, builds on it, and owns it.
+designs it, builds it and a first use case on it, verifies it, and owns it.
 
 > Agents are easy to prototype and hard to run. This accelerator is the part
 > that's hard: the governed platform your agents deploy onto.
@@ -16,18 +16,30 @@ deploys it, builds on it, and owns it.
 
 | Layer | What's deployed |
 |---|---|
-| **Identity** | Amazon Cognito with optional federation to your corporate IdP (Entra ID, Okta, Ping) |
+| **Identity** | Your choice, declared in Design: Amazon Cognito as the token issuer with your corporate IdP (Entra ID, Okta, Ping) federated in — or Entra ID as the issuer directly, with no Cognito deployed |
 | **Agents** | AgentCore Runtime hosting your framework — 7 patterns: Strands, LangGraph, Claude Agent SDK (single + multi), AG-UI, orchestrator |
 | **Tools** | AgentCore Gateway (MCP): tools become governed platform citizens, not code baked into agents |
 | **Memory** | AgentCore Memory — conversation state that survives restarts, with optional long-term memory |
 | **Governance** | Model allow-list and guardrailed-only inference **enforced by IAM**, Cedar tool authorization, audit alerting |
 | **Operations** | Vended logs, traces, CloudWatch alarms and a platform dashboard, plus a `verify` command that tests every claim your configuration makes |
 
+## Design → Build → Verify
+
+1. **Design.** Pick a profile, or write your own `platform.yaml`: single or
+   multi-account, your IdP and who issues tokens, your agent framework, the
+   controls you need. `deploy.sh usecase new <name>` scaffolds your
+   application into the same file. `deploy.sh design` validates it and prints
+   the exact stacks it produces — nothing is deployed yet.
+2. **Build.** `deploy.sh build` stands up the platform and every use case in
+   the design, with one command.
+3. **Verify.** `deploy.sh verify` re-tests every promise the design made,
+   platform and use cases alike, and exits non-zero on any failure.
+
 ## Two ways in
 
-- **"I don't have a platform — how do I start fast?"** Deploy the greenfield
-  profile and have a working, governed agent platform before lunch. Add
-  security controls when security shows up; they're one config flag each.
+- **"I don't have a platform — how do I start fast?"** Design from the
+  greenfield profile and have a working, governed agent platform before lunch.
+  Add security controls when security shows up; they're one config flag each.
 - **"I have agents on other platforms — how do I migrate?"** Keep your
   framework. The migration profile lands your existing agent on AgentCore
   Runtime and decouples what it used to carry inside: tools to the Gateway,

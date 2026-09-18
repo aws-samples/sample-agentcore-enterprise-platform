@@ -86,6 +86,9 @@ def get_m2m_token(
     env = env or os.environ.get("ENVIRONMENT", DEFAULT_ENV)
     region = region or resolve_region()
 
+    if auth_mode(project, env) == "direct":
+        return _get_direct_m2m_token(project, env, region)
+
     pool_id = get_ssm_param("auth/user-pool-id", project, env)
     client_id = get_ssm_param("auth/m2m-client-id", project, env)
     client_secret = boto3.client(
@@ -112,6 +115,61 @@ def get_m2m_token(
     )
     resp = urllib.request.urlopen(req).read()  # nosec B310 — https URL built above
     return json.loads(resp)["access_token"]
+
+
+def auth_mode(project: str, env: str) -> str:
+    """'brokered' (Cognito issues tokens) or 'direct' (the IdP does). The
+    parameter is absent on platforms deployed before it existed — those are
+    brokered by construction. Reads SSM directly: get_ssm_param exits the
+    process on a miss, and a miss is the expected answer here."""
+    ssm = boto3.client("ssm", region_name=resolve_region())
+    try:
+        return ssm.get_parameter(Name=f"{get_ssm_prefix(project, env)}/auth/mode")[
+            "Parameter"
+        ]["Value"]
+    except Exception:  # noqa: BLE001 — ParameterNotFound on an older deployment
+        return "brokered"
+
+
+def _get_direct_m2m_token(project: str, env: str, region: str) -> str:
+    """client_credentials straight against the IdP (identity.mode: direct).
+
+    Everything comes from the /auth/* interface the auth stack published: the
+    issuer (its discovery document names the token endpoint — Entra's is not
+    derivable from the issuer by concatenation), the client id, the scope,
+    and the NAME of the Secrets Manager secret holding the client secret.
+    """
+    issuer = get_ssm_param("auth/issuer-url", project, env)
+    client_id = get_ssm_param("auth/m2m-client-id", project, env)
+    scope = get_ssm_param("auth/m2m-scope", project, env)
+    secret_name = get_ssm_param("auth/m2m-client-secret-name", project, env)
+    client_secret = boto3.client("secretsmanager", region_name=region).get_secret_value(
+        SecretId=secret_name
+    )["SecretString"]
+    token_url = oidc_discovery(issuer)["token_endpoint"]
+    data = urllib.parse.urlencode(
+        {
+            "grant_type": "client_credentials",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "scope": scope,
+        }
+    ).encode()
+    req = urllib.request.Request(
+        token_url,
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    resp = urllib.request.urlopen(req).read()  # nosec B310 — https URL from OIDC discovery
+    return json.loads(resp)["access_token"]
+
+
+def oidc_discovery(issuer: str) -> dict:
+    """The issuer's OpenID configuration document."""
+    url = f"{issuer.rstrip('/')}/.well-known/openid-configuration"
+    if not url.startswith("https://"):
+        raise ValueError(f"issuer must be https: {issuer!r}")
+    return json.loads(urllib.request.urlopen(url).read())  # nosec B310 — https checked above
 
 
 def _compute_secret_hash(username: str, client_id: str, client_secret: str) -> str:

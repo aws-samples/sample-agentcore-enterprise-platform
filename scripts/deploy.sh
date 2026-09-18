@@ -27,6 +27,9 @@ fi
 #   ./deploy.sh export
 #   ./deploy.sh config [--reset]
 #   ./deploy.sh migrate plan [--profile PROFILE]
+#   ./deploy.sh design [--profile PROFILE]    # Design: manifest + plan, nothing deployed
+#   ./deploy.sh build                          # Build:  = deploy
+#   ./deploy.sh usecase new NAME | list        # Build:  scaffold a use case
 #
 # Profiles: greenfield, migration, multi-agent, platform-team, security-focused
 # Teams: platform, agent, security
@@ -56,7 +59,7 @@ log_explain(){ echo -e "${YELLOW}📖${NC} $*"; }
 # ponytail: flat sourceable KEY=value file; upgrade path is the
 # declarative Pydantic/YAML config task on the board.
 CONFIG_FILE="$PROJECT_DIR/workshop.env"
-CONFIG_KEYS=(AWS_REGION IDP_TYPE IDP_TENANT_ID IDP_CLIENT_ID IDP_ISSUER_URL
+CONFIG_KEYS=(AWS_REGION IDP_TYPE IDP_MODE IDP_TENANT_ID IDP_CLIENT_ID IDP_ISSUER_URL
              MODEL_ID ORG_ID PROJECT_NAME ENVIRONMENT AGENT_PATTERN)
 
 save_config() {
@@ -153,16 +156,19 @@ apply_platform_config() {
     local exports key value
     # cd: infra_utils must be importable; this runs before the main-flow cd.
     if ! exports=$(cd "$PROJECT_DIR" && "$py" -m infra_utils.platform_config --export "$PLATFORM_CONFIG" 2>&1); then
-        log_warn "platform.yaml present but not loadable yet (missing venv?) — continuing without it."
-        log_warn "Validate it with: python -m infra_utils.platform_config $PLATFORM_CONFIG"
-        # A malformed file must not silently deploy defaults: hard-stop when the
-        # parse failed for a reason other than missing dependencies.
-        if ! echo "$exports" | grep -q "ModuleNotFoundError"; then
-            log_error "platform.yaml is invalid:"
-            echo "$exports" >&2
-            exit 1
+        # Two different failures, two different messages. Missing dependencies:
+        # continue without the file. Anything else is the manifest itself
+        # (placeholders, a typo'd key): a malformed file must not silently
+        # deploy defaults, so stop and show the validator's own words.
+        if echo "$exports" | grep -q "ModuleNotFoundError"; then
+            log_warn "platform.yaml present but not loadable yet (missing venv?) — continuing without it."
+            log_warn "Validate it with: python -m infra_utils.platform_config $PLATFORM_CONFIG"
+            return 0
         fi
-        return 0
+        log_error "$PLATFORM_CONFIG is not deployable:"
+        echo "$exports" | sed 's/^/    /' >&2
+        log_error "Fix the fields above, then run: $0 design"
+        exit 1
     fi
     local applied=0
     while IFS='=' read -r key value; do
@@ -175,6 +181,16 @@ apply_platform_config() {
     done <<< "$exports"
     log_info "Applied $applied value(s) from $PLATFORM_CONFIG (env vars override)"
 }
+# ── 'usecase' action: scaffold / list use cases (scripts/usecase.py) ──
+# Before apply_platform_config on purpose: scaffolding and listing must work
+# on a manifest that is not deployable yet (placeholders, a half-written
+# use_cases: block) — that is exactly when a customer runs them.
+if [ "${1:-}" = "usecase" ]; then
+    shift
+    py="$PROJECT_DIR/.venv/bin/python"; [ -x "$py" ] || py="python3"
+    cd "$PROJECT_DIR" && exec "$py" scripts/usecase.py --manifest "$PLATFORM_CONFIG" "$@"
+fi
+
 apply_platform_config
 load_config
 
@@ -611,6 +627,7 @@ build_context_args() {
     CONTEXT_ARGS+=(-c "environment=${ENVIRONMENT}")
     CONTEXT_ARGS+=(-c "region=${AWS_REGION:-us-east-1}")
     CONTEXT_ARGS+=(-c "idp_type=${IDP_TYPE:-cognito}")
+    CONTEXT_ARGS+=(-c "idp_mode=${IDP_MODE:-brokered}")
 
     # IdP config — the client secret itself is never passed; only the name of
     # the Secrets Manager secret set by upsert_idp_secret (see above).
@@ -776,6 +793,41 @@ sweep_leftovers() {
 # ═══════════════════════════════════════════════════════════════
 # Stack Deploy Loop (shared by the deploy and workshop actions)
 # ═══════════════════════════════════════════════════════════════
+deployed_idp_mode() {
+    # "brokered" | "direct" for the auth stack in the account, "" when there is
+    # no auth stack yet (fresh deploy). Older brokered stacks predate the
+    # IdPMode output and report brokered.
+    local out
+    out=$(aws cloudformation describe-stacks --stack-name "${PREFIX}-auth" \
+            --query "Stacks[0].Outputs[?OutputKey=='IdPMode'].OutputValue" \
+            --output text 2>/dev/null) || { echo ""; return 0; }
+    case "$out" in direct) echo direct ;; *) echo brokered ;; esac
+}
+
+switch_issuer_consumers_first() {
+    # Switching a LIVE platform from brokered to direct: the gateway, identity
+    # and runtime stacks import Cognito values as CloudFormation exports, and
+    # CloudFormation refuses to update auth while any export is still imported
+    # ("Cannot delete export ... as it is in use by", hit live). Their new
+    # templates carry literal IdP values instead, so deploying them first
+    # drops the imports; the --all pass that follows then updates auth and
+    # no-ops the rest. A fresh deploy has no exports to drop, and the reverse
+    # switch needs auth first (its exports must exist) — the default order.
+    [ "${IDP_MODE:-brokered}" = "direct" ] || return 0
+    local deployed consumers
+    deployed=$(deployed_idp_mode)
+    [ -n "$deployed" ] && [ "$deployed" != "direct" ] || return 0
+    log_info "Switching issuer brokered → direct: deploying the auth consumers before auth"
+    consumers=$(JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+        npx cdk ls "${CONTEXT_ARGS[@]}" 2>/dev/null | grep -v -- "-auth$" | tr '\n' ' ')
+    # shellcheck disable=SC2086  # stack list is space-separated by design
+    JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+        npx cdk deploy $consumers --exclusively --require-approval never "${CONTEXT_ARGS[@]}" 2>&1 || {
+        log_error "Failed to deploy the auth consumers ahead of the issuer switch."
+        exit 1
+    }
+}
+
 deploy_stacks() {
     local stack
     for stack in "$@"; do
@@ -1018,6 +1070,39 @@ require_flag_value() {
     fi
 }
 
+# ── 'design' action: the manifest and what it means, nothing deployed ──
+# Design → Build → Verify. `--profile X` has already been materialized as the
+# manifest by the pre-scan; here the file is validated (placeholders are
+# errors: the operator sees the field and the fix) and the plan is printed
+# from the contract. Read-only; the only AWS call is get-caller-identity, and
+# only to pick the side of a federated deployment.
+if [ "$ACTION" = "design" ]; then
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --profile) require_flag_value "--profile" "$#"; shift 2 ;;
+            *) log_error "Unknown option for design: '$1' (valid: --profile PROFILE)"; exit 1 ;;
+        esac
+    done
+    if [ ! -f "$PLATFORM_CONFIG" ]; then
+        log_error "No $PLATFORM_CONFIG yet. Start from a profile:  $0 design --profile greenfield"
+        log_error "Profiles: $(valid_profiles)"
+        exit 1
+    fi
+    py="$PROJECT_DIR/.venv/bin/python"; [ -x "$py" ] || py="python3"
+    if ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null); then
+        export CDK_DEFAULT_ACCOUNT="$ACCOUNT_ID"
+    fi
+    log_step "Design: $PLATFORM_CONFIG"
+    (cd "$PROJECT_DIR" && "$py" -m infra_utils.platform_config --design "$PLATFORM_CONFIG") || {
+        log_error "Fix the manifest above, then run: $0 design"
+        exit 1
+    }
+    exit 0
+fi
+
+# ── 'build' is 'deploy' by its Design → Build → Verify name ──
+[ "$ACTION" = "build" ] && ACTION="deploy"
+
 # ── 'migrate' action: plan only, before any prerequisite/credential gate ──
 # Read-only by construction (see migrate_plan), so it takes no --yes. Fails
 # closed on anything but `plan`; --profile is accepted because the pre-scan
@@ -1162,6 +1247,7 @@ case "$ACTION" in
             deploy_stacks $CDK_STACKS
         else
             confirm_footprint deploy
+            switch_issuer_consumers_first
             log_step "Deploying all stacks..."
             JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
                 npx cdk deploy --all --require-approval never "${CONTEXT_ARGS[@]}" 2>&1 || {
@@ -1265,9 +1351,12 @@ case "$ACTION" in
         ;;
 
     *)
-        echo "Usage: $0 [deploy|workshop|destroy|synth|diff|export|ls|config|migrate] [OPTIONS]"
+        echo "Usage: $0 [design|build|verify|usecase|deploy|workshop|destroy|synth|diff|export|ls|config|migrate] [OPTIONS]"
         echo ""
-        echo "Actions:"
+        echo "Actions (Design → Build → Verify):"
+        echo "  design [--profile P]  Write platform.yaml from a preset, validate it, print the plan; deploys nothing"
+        echo "  build              Deploy what platform.yaml describes (same as deploy)"
+        echo "  usecase new NAME   Scaffold use-cases/NAME/ and enable it in platform.yaml; usecase list"
         echo "  workshop           Guided module-by-module deploy: explain → deploy → verify → pause"
         echo "  verify             Run every check this configuration promises; non-zero on failure"
         echo "  migrate plan       Print the migration: plan (source → target, adapter mapping, secrets); read-only"
