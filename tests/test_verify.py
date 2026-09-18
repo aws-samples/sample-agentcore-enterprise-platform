@@ -87,7 +87,13 @@ def test_enabled_use_cases_are_verified_last():
         )
     )
     assert got[-1] == "use case hello-platform"
-    assert got[:-1] == ["gateway", "memory", "observability", "orchestrator invoke"]
+    assert got[:-1] == [
+        "identity",
+        "gateway",
+        "memory",
+        "observability",
+        "orchestrator invoke",
+    ]
 
 
 def test_disabled_use_cases_add_no_check():
