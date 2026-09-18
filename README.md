@@ -15,15 +15,15 @@ Deploy a secure, governed foundation for production AI agents on Amazon Bedrock 
 
 ## How to use this accelerator
 
-Use this five-step path to get from a starting point to a working deployment.
+Three phases, three commands: **Design → Build → Verify**.
 
-| Step | What you do | Where to start |
-|------|-------------|----------------|
-| 1 | Pick the deployment shape that fits your work | [Choose a profile](#choose-your-starting-point) |
-| 2 | Check your account, tools, AWS Region, and expected costs | [Review prerequisites](#getting-started) |
-| 3 | Deploy the profile, team, or module(s) you need | [Deploy the platform](#deploy) |
-| 4 | Invoke the sample agent and check the gateway | [Verify the deployment](#test-the-deployment) |
-| 5 | Follow rollout status while you work | [View deployed resources](#dashboard) |
+| Phase | What you do | Command | Where to start |
+|-------|-------------|---------|----------------|
+| **Design** | Pick a profile or write your own `platform.yaml` (accounts, IdP, framework, controls, use cases); validate it and see the exact stacks it produces. Nothing is deployed. | `./scripts/deploy.sh design --profile <name>` | [Choose a profile](#choose-your-starting-point), [`docs/PLATFORM_YAML.md`](docs/PLATFORM_YAML.md) |
+| **Build** | Stand up the platform and the use cases in the design. Scaffold your own use case so it is part of the same build. | `./scripts/deploy.sh usecase new <name>`, `./scripts/deploy.sh build` | [Build the platform](#build) |
+| **Verify** | Re-test every promise the design made, platform and use cases alike; exits non-zero on any failure. | `./scripts/deploy.sh verify` | [Verify the deployment](#test-the-deployment), [Dashboard](#dashboard) |
+
+Before you build, check your account, tools, AWS Region, and expected costs in [Prerequisites](#prerequisites).
 
 > **Doing this as a workshop?** [`docs/PARTICIPANT_GUIDE.md`](docs/PARTICIPANT_GUIDE.md)
 > walks the modules in order with expected timings and what proves each one worked.
@@ -43,7 +43,7 @@ Pick the profile that looks most like your job today. It is a starting point, yo
 | `platform-team` | Setting up shared infrastructure for your organization | Full platform, including memory, A2A, networking, and security |
 | `security-focused` | Starting with compliance and hardening | One-agent platform, networking, security, policy, egress, and traceability controls |
 
-A profile is both a footprint and a lesson plan: `deploy --profile <name>` deploys the whole scope in one run, while `workshop --profile <name>` walks the same scope module by module. The exact stack list comes from the profile's preset ([`presets/`](presets/)); print it any time with `./scripts/deploy.sh ls`.
+A profile is both a footprint and a lesson plan: `design --profile <name>` writes the profile's preset ([`presets/`](presets/)) to `platform.yaml` and prints the stacks it produces; `build` deploys that design in one run, while `workshop --profile <name>` walks the same scope module by module. Multi-account topologies have their own presets, `federated` and `distributed`; see [`docs/MULTI_ACCOUNT.md`](docs/MULTI_ACCOUNT.md).
 
 
 ## Getting Started
@@ -70,27 +70,34 @@ Applications sign in once and carry a validated JWT. Agents run in workload acco
 
 The Mermaid diagram in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) is the source of truth for the request flows, and it renders directly on GitHub.
 
-### Deploy
+### Build
 
-Start with a profile. You can narrow the deployment by team or module later. Want a guided run? That is available too.
+Design first, then build. You can narrow the build by team or module later. Want a guided run? That is available too.
 
 ```bash
 # 1. Install dependencies
 python3.13 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# 2. Pick a profile and deploy it
-./scripts/deploy.sh deploy --profile greenfield
+# 2. Design: pick a profile, review the plan, edit platform.yaml until it is yours
+./scripts/deploy.sh design --profile greenfield
 # Other profiles: migration | multi-agent | platform-team | security-focused
+# Edit platform.yaml (IdP, framework, controls...) and re-run `design` to re-validate.
 
-# 3. Deploy a smaller scope instead
-./scripts/deploy.sh deploy --team agent  # Agent team stacks only
-./scripts/deploy.sh deploy --module 4    # Identity integration
+# 3. Add your use case to the design (scaffolds use-cases/<name>/ and enables it)
+./scripts/deploy.sh usecase new my-agent
 
-# 4. Run a profile in CI/CD
-NON_INTERACTIVE=1 AWS_REGION=us-east-1 ./scripts/deploy.sh deploy --profile platform-team
+# 4. Build the platform and the use cases in the design
+./scripts/deploy.sh build
 
-# 5. Use the guided run for explanations and checks after each module
+# 5. Build a smaller scope instead
+./scripts/deploy.sh build --team agent  # Agent team stacks only
+./scripts/deploy.sh build --module 4    # Identity integration
+
+# 6. Run a design in CI/CD
+NON_INTERACTIVE=1 AWS_REGION=us-east-1 ./scripts/deploy.sh build
+
+# 7. Use the guided run for explanations and checks after each module
 # The script needs bash 4 or newer. macOS includes bash 3.2.
 # Install a newer version with `brew install bash`, then run `bash scripts/deploy.sh ...`.
 ./scripts/deploy.sh workshop                        # Default profile: greenfield
@@ -194,7 +201,7 @@ Use these sections when you need to change how the platform is deployed, secured
 | Use your corporate IdP (Entra ID, Okta, Ping) | [`docs/ENTERPRISE_IDP.md`](docs/ENTERPRISE_IDP.md) |
 | Deploy across multiple accounts (federated) | [`docs/MULTI_ACCOUNT.md`](docs/MULTI_ACCOUNT.md) |
 | Add your own tools to the gateway | [`docs/GATEWAY_TARGETS.md`](docs/GATEWAY_TARGETS.md) |
-| Build a use case on top of the platform | [`CONTRIBUTING_USE_CASES.md`](CONTRIBUTING_USE_CASES.md) with [`docs/PLATFORM_INTERFACE.md`](docs/PLATFORM_INTERFACE.md) |
+| Build a use case on top of the platform | `./scripts/deploy.sh usecase new <name>`, then [`CONTRIBUTING_USE_CASES.md`](CONTRIBUTING_USE_CASES.md) with [`docs/PLATFORM_INTERFACE.md`](docs/PLATFORM_INTERFACE.md) |
 
 ### Choose an Agent Framework
 Each runtime stack builds one agent from the `agent-code/` directory. Pick the framework you want here; the CDK infrastructure does not change.
