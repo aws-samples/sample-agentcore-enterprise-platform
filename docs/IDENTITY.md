@@ -29,6 +29,12 @@ missing client allowlist degrades quietly to "any client of the correct issuer."
 `token_use` is deliberately not checked, so both Cognito access tokens and ID tokens are
 accepted as identity.
 
+The env var names say Cognito, the values need not: in `identity.mode: direct` `app.py`
+sets `COGNITO_ISSUER_URL` to your Entra tenant's v2 issuer and `COGNITO_ALLOWED_CLIENTS`
+to the app's client id, which Entra tokens carry in `aud` — the same code path pins them.
+The JWKS location is taken from the issuer's OIDC discovery document (`jwks_uri`), because
+Cognito and Entra publish their keys at different paths.
+
 ## Why check the token twice?
 
 AgentCore Runtime's `CUSTOM_JWT` authorizer validates a token before the container sees it.
@@ -78,7 +84,8 @@ Cognito M2M (`client_credentials`) access tokens carry `client_id` instead of `a
 only `aud` would reject machine callers, including `scripts/invoke.py`. `jwt_claims.py` prefers
 `aud` when present (taking the first element of a list) and falls back to `client_id`; this is
 why `auth.py` passes `verify_aud: False` and validates the audience itself. `app.py` includes
-the M2M client id in `COGNITO_ALLOWED_CLIENTS` so those callers pass the allowlist.
+the M2M client id in `COGNITO_ALLOWED_CLIENTS` so those callers pass the allowlist. Entra
+tokens (direct mode) carry `aud` for both humans and machines — the same rule accepts them.
 
 ## What the verified identity is used for
 

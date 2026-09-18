@@ -66,6 +66,10 @@ def checks_for(
 ) -> list[tuple[str, list[str]]]:
     """Map a footprint onto the tools that verify it. Pure — unit-tested."""
     checks: list[tuple[str, list[str]]] = []
+    if "auth" in suffixes:
+        # First, deliberately: every later check mints a token through the same
+        # issuer, and this one turns an opaque 401 into the IdP-side fix.
+        checks.append(("identity", ["check_identity.py"]))
     if "gateway" in suffixes:
         checks.append(("gateway", ["test_gateway.py"]))
     if "memory" in suffixes:
@@ -116,6 +120,8 @@ def main() -> int:
         == "true"
     )
 
+    # check_identity.py compares the deployed issuer mode against the design.
+    os.environ.setdefault("IDP_MODE", config.identity.mode)
     checks = checks_for(suffixes, pattern, require_guardrails, alarms)
     print(f"Verifying {config.project}/{config.environment} in account {account}")
     print(f"Footprint: {' '.join(sorted(suffixes))}\n")

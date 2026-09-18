@@ -25,7 +25,7 @@ account ([Multi-account federation](../MULTI_ACCOUNT.md)).
 
 | Resource | Name pattern | Purpose |
 |---|---|---|
-| `AWS::BedrockAgentCore::OAuth2CredentialProvider` | `{prefix}-gateway-m2m` | Always. `CustomOauth2` vendor pointed at the Cognito OIDC discovery URL; the token vault performs the `client_credentials` exchange |
+| `AWS::BedrockAgentCore::OAuth2CredentialProvider` | `{prefix}-gateway-m2m` | Always. `CustomOauth2` vendor pointed at the issuer's OIDC discovery URL — Cognito's, or Entra ID's in `identity.mode: direct`; the token vault performs the `client_credentials` exchange (with the scope agents pass from `GATEWAY_TOKEN_SCOPES`, required by Entra) |
 | `AWS::BedrockAgentCore::OAuth2CredentialProvider` (optional) | `{prefix}-google-oauth` | 3LO, `GoogleOauth2` vendor — only when `google_client_id` is set |
 | `AWS::BedrockAgentCore::OAuth2CredentialProvider` (optional) | `{prefix}-github-oauth` | 3LO, `GithubOauth2` vendor — only when `github_client_id` is set |
 | `AWS::BedrockAgentCore::OAuth2CredentialProvider` (optional) | `{prefix}-notion-oauth` | 3LO, `CustomOauth2` with explicit endpoints (Notion publishes no OIDC discovery document) — only when `notion_client_id` is set |

@@ -6,6 +6,7 @@ import os
 
 from bedrock_agentcore.identity.auth import requires_access_token
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from shared.jwt_claims import gateway_token_scopes
 from shared.ssm import get_ssm_parameter
 
 logger = logging.getLogger(__name__)
@@ -67,7 +68,7 @@ async def _fetch_gateway_token() -> str:
     @requires_access_token(
         provider_name=_PROVIDER_NAME,
         auth_flow="M2M",
-        scopes=[],
+        scopes=gateway_token_scopes(),
     )
     async def _get_token(access_token: str) -> str:
         return access_token

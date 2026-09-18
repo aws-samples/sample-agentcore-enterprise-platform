@@ -18,6 +18,7 @@ from aws_cdk import (
 )
 from constructs import Construct
 
+from infra_utils.jwt_authorizer import custom_jwt_authorizer
 from infra_utils.policy_loader import load_control, load_control_text
 
 
@@ -31,6 +32,7 @@ class GatewayStack(cdk.Stack):
         environment: str,
         cognito_issuer_url: str,
         cognito_allowed_clients: list[str],
+        allowed_audience: list[str] | None = None,
         tool_configs: dict | None = None,
         enable_web_search: bool = False,
         enable_egress_filter: bool = False,
@@ -200,12 +202,9 @@ class GatewayStack(cdk.Stack):
             authorizer_type="CUSTOM_JWT",
             protocol_type="MCP",
             exception_level="DEBUG",
-            authorizer_configuration={
-                "customJwtAuthorizer": {
-                    "discoveryUrl": f"{cognito_issuer_url}/.well-known/openid-configuration",
-                    "allowedClients": cognito_allowed_clients,
-                },
-            },
+            authorizer_configuration=custom_jwt_authorizer(
+                cognito_issuer_url, cognito_allowed_clients, allowed_audience
+            ),
             protocol_configuration={
                 "mcp": {"supportedVersions": ["2025-03-26", "2025-06-18"]},
             },
