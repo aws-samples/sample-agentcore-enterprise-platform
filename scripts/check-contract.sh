@@ -23,6 +23,10 @@ export CDK_DEFAULT_REGION="${CDK_DEFAULT_REGION:-us-east-1}"
 # policies without an org id. Env beats platform.yaml, so this satisfies the
 # synth; real deploys still prompt.
 export ORG_ID="${ORG_ID:-o-paritycheck123}"
+# The shipped presets carry placeholders (REPLACE_ME client ids, sentinel
+# account ids) on purpose; a real deploy refuses them. The gate only proves the
+# presets synthesize, so it downgrades those refusals to warnings.
+export PLATFORM_ALLOW_PLACEHOLDERS=1
 export JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1
 
 # The networking VPC's AZ lookup needs context to synth offline; CDK only
@@ -41,24 +45,65 @@ restore_context() {
 }
 # PIPE included: `check-contract.sh | head` must not skip the restore.
 trap restore_context EXIT INT TERM PIPE
-printf '{ "availability-zones:account=%s:region=%s": ["%sa","%sb"] }\n' \
-    "$CDK_DEFAULT_ACCOUNT" "$CDK_DEFAULT_REGION" \
-    "$CDK_DEFAULT_REGION" "$CDK_DEFAULT_REGION" > cdk.context.json
-
 # Presets are the shipped profiles; tests/fixtures/contract/ holds extra
 # footprints worth pinning (e.g. a use case enabled), same parity rules.
 CONFIGS=(presets/*.yaml)
 [ -d tests/fixtures/contract ] && CONFIGS+=(tests/fixtures/contract/*.yaml)
+# A federated preset is synthesized from BOTH of its accounts (below), so the
+# AZ context covers every account id a preset names, not just the default.
+preset_accounts() {
+    "$PY" - "$@" <<'PYEOF'
+import sys, yaml
+seen = []
+for f in sys.argv[1:]:
+    dep = (yaml.safe_load(open(f)) or {}).get("deployment") or {}
+    for a in [dep.get("platform_account", ""), *(dep.get("workload_accounts") or [])]:
+        if a and a not in seen:
+            seen.append(a)
+print(" ".join(seen))
+PYEOF
+}
+{
+    echo '{'
+    for acct in "$CDK_DEFAULT_ACCOUNT" $(preset_accounts "${CONFIGS[@]}"); do
+        printf '  "availability-zones:account=%s:region=%s": ["%sa","%sb"],\n' \
+            "$acct" "$CDK_DEFAULT_REGION" "$CDK_DEFAULT_REGION" "$CDK_DEFAULT_REGION"
+    done
+    echo '  "_": null'
+    echo '}'
+} > cdk.context.json
+
+# The account you deploy into decides a federated footprint, so a federated
+# preset is checked once per side; every other preset once, from the default.
+sides_of() {
+    "$PY" - "$1" <<'PYEOF'
+import sys, yaml
+dep = (yaml.safe_load(open(sys.argv[1])) or {}).get("deployment") or {}
+if dep.get("strategy") == "federated":
+    print(" ".join([dep.get("platform_account", ""), *(dep.get("workload_accounts") or [])]))
+PYEOF
+}
+RUNS=()
+for preset in "${CONFIGS[@]}"; do
+    sides="$(sides_of "$preset")"
+    if [ -n "$sides" ]; then
+        for acct in $sides; do RUNS+=("$preset:$acct"); done
+    else
+        RUNS+=("$preset:$CDK_DEFAULT_ACCOUNT")
+    fi
+done
 
 fail=0
-for preset in "${CONFIGS[@]}"; do
+for run in "${RUNS[@]}"; do
+    preset="${run%%:*}"; acct="${run##*:}"
     name="$(basename "$preset" .yaml)"
+    [ "$acct" != "$CDK_DEFAULT_ACCOUNT" ] && name="$name@$acct"
     workdir="$(mktemp -d)"
 
-    "$PY" -m infra_utils.platform_config --stacks "$preset" | sort > "$workdir/expected"
+    CDK_DEFAULT_ACCOUNT="$acct" "$PY" -m infra_utils.platform_config --stacks "$preset" 2>/dev/null | sort > "$workdir/expected"
 
-    if ! npx --no-install cdk ls \
-        --app "env PLATFORM_CONFIG=$preset $PY app.py" \
+    if ! CDK_DEFAULT_ACCOUNT="$acct" npx --no-install cdk ls \
+        --app "env PLATFORM_CONFIG=$preset CDK_DEFAULT_ACCOUNT=$acct $PY app.py" \
         --output "$workdir/cdk.out" 2> "$workdir/synth.log" \
         | sort > "$workdir/actual"; then
         echo "FAIL: $name — synth broke:" >&2

@@ -113,6 +113,14 @@ def test_every_preset_produces_a_footprint():
     assert PRESETS, "presets/ directory is empty?"
     for preset in PRESETS:
         config = load_platform_config(preset)
-        stacks = config.expected_stacks()
-        assert stacks, f"{preset.name} yields no stacks"
-        assert len(stacks) == len(set(stacks)), f"{preset.name} has duplicates"
+        dep = config.deployment
+        # A federated file has a footprint per SIDE; every other file has one.
+        accounts = (
+            [dep.platform_account, *dep.workload_accounts]
+            if dep.strategy == "federated"
+            else [""]
+        )
+        for account in accounts:
+            stacks = config.expected_stacks(account)
+            assert stacks, f"{preset.name} yields no stacks for {account or 'default'}"
+            assert len(stacks) == len(set(stacks)), f"{preset.name} has duplicates"

@@ -27,13 +27,47 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 # Where the Web Search built-in gateway connector exists (launch regions).
 WEB_SEARCH_REGIONS = {"us-east-1", "eu-west-1", "ap-northeast-1"}
 
 _ACCOUNT_RE = r"^\d{12}$"
 _REGION_RE = r"^[a-z]{2}(-[a-z]+)+-\d$"
+
+# ── Placeholders ──
+# A sentinel that validates deploys green and fails at the first sign-in, an
+# hour later, with an IdP error that says nothing about the config. Every
+# check below names the field and says what belongs there. The parity gate
+# (scripts/check-contract.sh) synthesizes the shipped presets WITH their
+# placeholders in place, so it exports PLATFORM_ALLOW_PLACEHOLDERS=1: the same
+# messages then surface as PlatformConfig.warnings instead of errors. Nothing
+# in deploy.sh sets it — a real deploy always fails closed.
+_SENTINEL_RE = re.compile(
+    r"replace|change.?me|\btodo\b|^<.*>$|example\.com", re.IGNORECASE
+)
+_UUID_RE = re.compile(r"^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$", re.IGNORECASE)
+# Secrets Manager NAMES: alphanumerics and /_+=.@- only. A pasted secret VALUE
+# fails this (whitespace, '~'), or the JWT/base64-blob shapes below.
+_SECRET_NAME_RE = re.compile(r"^[A-Za-z0-9/_+=.@-]{1,200}$")
+_JWT_RE = re.compile(r"^eyJ[A-Za-z0-9_-]+\.")
+# ponytail: a 32+ char run with no separator is called a value, not a name —
+# a real name that long without any of /_.-@ is refused too. Upgrade path:
+# an allow-list of known-good names, if one ever exists.
+_BLOB_RE = re.compile(r"^[A-Za-z0-9+=]{32,}$")
+# 111111111111 is deliberately NOT here: it is the parity gate's fake account
+# (check-contract.sh) and a real customer cannot be allocated a
+# repeating-digit id, so accepting it costs nothing.
+_ACCOUNT_SENTINELS = {"000000000000", "123456789012"}
+
+
+def placeholders_allowed() -> bool:
+    return os.environ.get("PLATFORM_ALLOW_PLACEHOLDERS") == "1"
+
+
+def _refuse_placeholders(messages: list[str]) -> None:
+    if messages and not placeholders_allowed():
+        raise ValueError("\n".join(messages))
 
 
 class FederationConfig(BaseModel):
@@ -93,16 +127,15 @@ class DeploymentConfig(BaseModel):
     @field_validator("platform_account")
     @classmethod
     def _platform_account_shape(cls, v: str) -> str:
-        if v and not re.fullmatch(_ACCOUNT_RE, v):
-            raise ValueError(f"not a 12-digit AWS account id: {v!r}")
+        if v:
+            _account_shape("deployment.platform_account", v)
         return v
 
     @field_validator("workload_accounts")
     @classmethod
     def _workload_account_shapes(cls, v: list[str]) -> list[str]:
-        bad = [a for a in v if not re.fullmatch(_ACCOUNT_RE, a)]
-        if bad:
-            raise ValueError(f"not 12-digit AWS account ids: {bad}")
+        for i, a in enumerate(v):
+            _account_shape(f"deployment.workload_accounts[{i}]", a)
         return v
 
     @model_validator(mode="after")
@@ -116,7 +149,63 @@ class DeploymentConfig(BaseModel):
                 raise ValueError(
                     "strategy 'federated' requires deployment.workload_accounts"
                 )
+        # One account cannot be both sides: federated_role() would call it
+        # "platform" and silently deploy no agent runtimes there.
+        both = sorted(set(self.workload_accounts) & {self.platform_account})
+        if both:
+            raise ValueError(
+                f"account {both[0]} is both deployment.platform_account and in "
+                "deployment.workload_accounts — an account is one side of the "
+                "federation, not both"
+            )
+        _refuse_placeholders(deployment_placeholders(self))
         return self
+
+
+def _account_placeholder_msg(field: str, value: str) -> str:
+    return (
+        f"{field} is a placeholder ({value!r}): put the 12-digit AWS account id "
+        "here (aws sts get-caller-identity --query Account)"
+    )
+
+
+def _account_shape(field: str, v: str) -> None:
+    # A word-shaped placeholder (REPLACE_ME) can never synthesize, so it is a
+    # hard error even for the parity gate; the digit-shaped sentinels below
+    # pass here and are handled by deployment_placeholders().
+    if _SENTINEL_RE.search(v):
+        raise ValueError(_account_placeholder_msg(field, v))
+    if not re.fullmatch(_ACCOUNT_RE, v):
+        raise ValueError(f"{field}: not a 12-digit AWS account id: {v!r}")
+
+
+def deployment_placeholders(deployment: DeploymentConfig) -> list[str]:
+    """Sentinel account ids (see the Placeholders block above)."""
+    named = [("deployment.platform_account", deployment.platform_account)]
+    named += [
+        (f"deployment.workload_accounts[{i}]", a)
+        for i, a in enumerate(deployment.workload_accounts)
+    ]
+    out = [
+        _account_placeholder_msg(field, value)
+        for field, value in named
+        if value in _ACCOUNT_SENTINELS
+    ]
+    # The federation block is what the platform team hands the workload teams;
+    # a preset ships it as placeholders so the shape is visible. Any sentinel
+    # left in place means the hand-over has not happened.
+    fed = deployment.federation
+    for field, value in (
+        ("deployment.federation.gateway_url", fed.gateway_url),
+        ("deployment.federation.issuer_url", fed.issuer_url),
+        ("deployment.federation.m2m_client_id", fed.m2m_client_id),
+    ):
+        if value and _SENTINEL_RE.search(value):
+            out.append(
+                f"{field} is a placeholder ({value!r}): copy the value from the "
+                "platform account's `deploy.sh export` output"
+            )
+    return out
 
 
 class IdentityConfig(BaseModel):
@@ -138,7 +227,51 @@ class IdentityConfig(BaseModel):
                 f"idp {self.idp!r} requires identity.client_secret_name "
                 "(a Secrets Manager secret name — never the secret itself)"
             )
+        if self.idp != "cognito" and not self.client_id:
+            raise ValueError(
+                f"idp {self.idp!r} requires identity.client_id (the IdP app "
+                "registration's client id)"
+            )
+        _refuse_placeholders(identity_placeholders(self))
         return self
+
+
+def identity_placeholders(identity: IdentityConfig) -> list[str]:
+    """Sentinel IdP values (see the Placeholders block above). Empty fields
+    are not placeholders — whether they are REQUIRED is the model's job."""
+    out: list[str] = []
+    t = identity.tenant_id
+    if t and (not _UUID_RE.match(t) or set(t) <= set("0-")):
+        out.append(
+            f"identity.tenant_id is a placeholder ({t!r}): put your Entra tenant "
+            "(directory) id here — the UUID under Entra admin center > Overview"
+        )
+    c = identity.client_id
+    if c and _SENTINEL_RE.search(c):
+        out.append(
+            f"identity.client_id is a placeholder ({c!r}): put your IdP app "
+            "registration's client id here"
+        )
+    u = identity.issuer_url
+    if u and (not u.startswith("https://") or _SENTINEL_RE.search(u)):
+        out.append(
+            f"identity.issuer_url is a placeholder ({u!r}): put your IdP's https "
+            "issuer URL here (Okta: https://<org>.okta.com/oauth2/default)"
+        )
+    s = identity.client_secret_name
+    if s and (
+        _SENTINEL_RE.search(s)
+        or not _SECRET_NAME_RE.match(s)
+        or _JWT_RE.match(s)
+        or _BLOB_RE.match(s)
+    ):
+        # The value is deliberately not echoed: it may BE the secret.
+        out.append(
+            "identity.client_secret_name is a placeholder or looks like a secret "
+            "VALUE (not shown): it must be the Secrets Manager NAME of a secret "
+            "you created, e.g. agentcore/idp-client-secret"
+        )
+    return out
 
 
 class MemoryConfig(BaseModel):
@@ -603,6 +736,19 @@ class PlatformConfig(BaseModel):
         return self
 
     @property
+    def warnings(self) -> list[str]:
+        """Everything non-fatal about this file: placeholders that validation
+        let through because PLATFORM_ALLOW_PLACEHOLDERS=1 (otherwise they are
+        errors and the model never exists), plus the migration warnings."""
+        out = identity_placeholders(self.identity) + deployment_placeholders(
+            self.deployment
+        )
+        # The migration block (PR #63) carries its own warnings; getattr keeps
+        # this property valid on a tree where that field does not exist yet.
+        migration = getattr(self, "migration", None)
+        return out + (migration.warnings if migration else [])
+
+    @property
     def web_search_enabled(self) -> bool:
         """Resolve gateway.web_search 'auto' against the launch regions."""
         if self.gateway.web_search == "auto":
@@ -925,9 +1071,24 @@ def _main() -> int:
         return 2
     try:
         config = load_platform_config(args[0])
-    except Exception as exc:  # noqa: BLE001 — the point is printing them all
+    except ValidationError as exc:
+        # Messages only — pydantic's str() echoes the offending input, and for
+        # identity.client_secret_name the input may BE the secret.
+        print(f"INVALID: {args[0]}", file=sys.stderr)
+        for err in exc.errors():
+            where = ".".join(str(x) for x in err["loc"]) or "platform.yaml"
+            print(
+                f"  {where}: {err['msg'].removeprefix('Value error, ')}",
+                file=sys.stderr,
+            )
+        return 1
+    except Exception as exc:  # noqa: BLE001 — YAML syntax, missing file: print it all
         print(f"INVALID: {args[0]}\n{exc}", file=sys.stderr)
         return 1
+    if "--export" not in flags:
+        # --export is machine-read by deploy.sh with 2>&1; keep it key=value only.
+        for warning in config.warnings:
+            print(f"WARNING: {warning}", file=sys.stderr)
     if "--export" in flags:
         for key, value in to_env(config).items():
             print(f"{key}={value}")

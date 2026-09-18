@@ -25,6 +25,8 @@ PRESETS = sorted((REPO / "presets").glob("*.yaml"))
 def test_presets_exist():
     names = {p.stem for p in PRESETS}
     assert names == {
+        "distributed",
+        "federated",
         "greenfield",
         "migration",
         "multi-agent",
