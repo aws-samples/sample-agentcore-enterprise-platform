@@ -5,6 +5,7 @@ Start here
 - [Overview](home.md)
 - [How it works](how-it-works.md)
 - [Getting started](https://github.com/aws-samples/sample-agentcore-enterprise-platform#getting-started)
+- [platform.yaml reference](PLATFORM_YAML.md)
 
 Modules
 
