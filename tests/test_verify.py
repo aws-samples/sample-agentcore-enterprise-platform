@@ -5,15 +5,21 @@ in main). The predecessor scripts/test.py could not fail — these tests pin
 the properties that made replacing it worthwhile.
 """
 
+import os
+import subprocess  # nosec B404 — running our own verify scripts, no shell
 import sys
 from pathlib import Path
+
+import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
 
 from verify import checks_for
 
-from infra_utils.platform_config import PlatformConfig
+from infra_utils.platform_config import PlatformConfig, discover_use_cases
+
+USE_CASES = sorted(discover_use_cases())
 
 
 def suffixes(**overrides) -> set[str]:
@@ -63,14 +69,71 @@ def test_alarms_flag_selects_the_alarm_check():
     assert "alarms" not in off
 
 
+def test_enabled_use_cases_are_verified_last():
+    # A broken platform must fail on the platform check, not on the use case
+    # riding on it — so use cases come after every core check, in order.
+    got = names(
+        checks_for(
+            suffixes(use_cases={"hello-platform": {}}),
+            "orchestrator",
+            use_cases=["hello-platform"],
+        )
+    )
+    assert got[-1] == "use case hello-platform"
+    assert got[:-1] == ["gateway", "memory", "observability", "orchestrator invoke"]
+
+
+def test_disabled_use_cases_add_no_check():
+    assert not [
+        n for n in names(checks_for(suffixes(), "orchestrator")) if "use case" in n
+    ]
+
+
 def test_every_check_maps_to_an_existing_tool():
     # A selected check must never point at a script that does not exist —
     # that is exactly the silent-success class this command replaces.
     all_suffixes = suffixes(agents={"a2a": True}, security={"networking": True})
     for _, argv in checks_for(
-        all_suffixes, "orchestrator", require_guardrails=True, alarms=True
+        all_suffixes,
+        "orchestrator",
+        require_guardrails=True,
+        alarms=True,
+        use_cases=USE_CASES,
     ):
         assert (REPO / "scripts" / argv[0]).is_file(), argv[0]
+
+
+def test_every_use_case_ships_a_verify():
+    # CONTRIBUTING_USE_CASES.md: verify.py is REQUIRED, not a suggestion.
+    for name in USE_CASES:
+        assert (REPO / "use-cases" / name / "verify.py").is_file(), name
+
+
+@pytest.mark.parametrize("name", USE_CASES)
+def test_use_case_verify_fails_fast_without_a_deployment(name):
+    # No credentials, no config, no metadata endpoint: the script must say
+    # FAIL and exit 1 within seconds — never hang, never print a traceback.
+    # The scrubbed env also keeps the laptop's own profiles (and any SSO
+    # login prompt) out of the test.
+    env = {
+        "PATH": os.environ["PATH"],
+        "HOME": os.environ.get("HOME", "/tmp"),
+        "AWS_CONFIG_FILE": os.devnull,
+        "AWS_SHARED_CREDENTIALS_FILE": os.devnull,
+        "AWS_EC2_METADATA_DISABLED": "true",
+        "AWS_REGION": "us-east-1",
+    }
+    result = subprocess.run(  # nosec B603
+        [sys.executable, str(REPO / "use-cases" / name / "verify.py")],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "FAIL:" in result.stderr, result.stderr
+    assert "Traceback" not in result.stderr, result.stderr
 
 
 def test_the_unfailable_health_check_stays_dead():

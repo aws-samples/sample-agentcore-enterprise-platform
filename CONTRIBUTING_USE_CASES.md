@@ -22,7 +22,7 @@ Copy `use-cases/hello-platform/` and keep all four parts:
 use-cases/<your-name>/
   manifest.yaml     # the ONLY file the platform reads about you (validated)
   stack.py          # CDK; build(app, ctx, config) is the entry point
-  verify.py         # one runnable proof; exits non-zero on any failed claim
+  verify.py         # REQUIRED: one real invocation; OK/exit 0 or FAIL/exit 1
   walkthrough.md    # enable → deploy → verify, written for a participant
 ```
 
@@ -46,6 +46,32 @@ with a core stack.
   Cognito tokens), never by importing core stacks. `stack.py` gets a small
   context dict (project, environment, prefix, ssm_prefix, region, cdk_env) —
   that and SSM is everything you need.
+
+## The verify contract
+
+`verify.py` is REQUIRED (a test fails when a discovered use case has none),
+and `deploy.sh verify` runs it automatically — after every core check, so a
+broken platform fails on the platform's own check, not on yours — whenever
+your use case is enabled in `platform.yaml`.
+
+- It MUST perform one real invocation of what the use case deploys: call the
+  Lambda, hit the endpoint, ask the gateway for its tools. Checking that a
+  resource exists only proves CloudFormation ran; the point is to prove the
+  thing works. `hello-platform/verify.py` is the reference: it takes the URL
+  out of the parameter it published and actually calls that gateway.
+- Exit `0` and print one `OK: ...` line on success; exit `1` and print
+  `FAIL: <cause>` otherwise. When the stack is absent, when there are no
+  credentials, when the network is down: `FAIL:`, never a traceback (a test
+  runs every `verify.py` with a scrubbed environment and expects exactly that,
+  within 20 seconds).
+- It receives the same environment as `deploy.sh verify`: AWS credentials,
+  `PROJECT_NAME`, `ENVIRONMENT`, `AWS_REGION`, plus the `platform.yaml` values
+  exported by `scripts/verify.py`. Read those; do not hardcode a project name.
+- It runs with `scripts/` as the working directory. Import the helpers there
+  rather than copying them (`sys.path.insert(0, <repo>/scripts)`, then
+  `from utils import get_m2m_token`, `from test_gateway import mcp_request`).
+- It MUST also work standalone: `python use-cases/<name>/verify.py` — that is
+  what your walkthrough tells participants to run.
 
 ## The rules a reviewer enforces
 
