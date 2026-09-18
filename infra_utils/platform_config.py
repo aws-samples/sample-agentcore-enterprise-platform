@@ -512,6 +512,10 @@ def discover_use_cases(root: Path = USE_CASES_DIR) -> dict[str, UseCaseManifest]
     if not root.is_dir():
         return found
     for mf in sorted(root.glob("*/manifest.yaml")):
+        # use-cases/_template/ is what `deploy.sh usecase new` copies from; its
+        # manifest holds {{tokens}} and is not a use case.
+        if mf.parent.name.startswith("_"):
+            continue
         manifest = UseCaseManifest.model_validate(yaml.safe_load(mf.read_text()))
         if manifest.name != mf.parent.name:
             raise ValueError(
