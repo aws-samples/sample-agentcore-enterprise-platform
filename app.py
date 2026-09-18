@@ -140,6 +140,51 @@ org_id = cfg("org_id", "ORG_ID", "")
 #          agui-strands-agent, agui-langgraph-agent
 agent_pattern = cfg("agent_pattern", "AGENT_PATTERN", "orchestrator")
 
+# ── Migration mode (platform.yaml `migration:` block / MIGRATION_* env) ──
+# An existing customer container replaces the agent pattern on the
+# runtime-orchestrator stack: the migration adapter (migration-adapter/) is
+# built ON TOP of the customer's image and serves the AgentCore contract in
+# front of it. A2A stacks are untouched. Env names match platform_config's
+# to_env(); the stack args mirror them 1:1.
+migration_enabled = cfg("migration_enabled", "MIGRATION_ENABLED", "false") == "true"
+migration_kwargs: dict = {}
+if migration_enabled:
+    _migration_env_pairs = cfg("migration_env", "MIGRATION_ENV", "")
+    migration_kwargs = {
+        "source_image": cfg("migration_source_image", "MIGRATION_SOURCE_IMAGE", ""),
+        "build_context": cfg("migration_build_context", "MIGRATION_BUILD_CONTEXT", ""),
+        "build_dockerfile": cfg(
+            "migration_build_dockerfile", "MIGRATION_BUILD_DOCKERFILE", "Dockerfile"
+        ),
+        "registry_secret_name": cfg(
+            "migration_registry_secret_name", "MIGRATION_REGISTRY_SECRET_NAME", ""
+        ),
+        "adapter_dir": "migration-adapter",
+        "migration_env": dict(
+            pair.split("=", 1)
+            for pair in _migration_env_pairs.split(",")
+            if "=" in pair
+        ),
+        "migration_secret_names": [
+            s.strip()
+            for s in cfg("migration_secrets", "MIGRATION_SECRETS", "").split(",")
+            if s.strip()
+        ],
+        "migration_port": cfg("migration_port", "MIGRATION_PORT", "8000"),
+        "migration_invoke_path": cfg(
+            "migration_invoke_path", "MIGRATION_INVOKE_PATH", "/invocations"
+        ),
+        "migration_health_path": cfg(
+            "migration_health_path", "MIGRATION_HEALTH_PATH", ""
+        ),
+    }
+    if not (migration_kwargs["source_image"] or migration_kwargs["build_context"]):
+        raise ValueError(
+            "migration is enabled but neither migration_source_image nor "
+            "migration_build_context is set — the platform needs to know where "
+            "the customer's container comes from (migration.source in platform.yaml)."
+        )
+
 # Optional Bedrock model ID override (cross-region inference profile, e.g.
 # us.anthropic.claude-sonnet-5). When unset, MODEL_ID is NOT injected into the
 # runtimes and each agent pattern falls back to its in-code DEFAULT_MODEL_ID —
@@ -451,6 +496,7 @@ if not is_fed_platform:
             "LTM_RELEVANCE_SCORE": str(ltm_relevance_score),
             **model_env,
         },
+        **migration_kwargs,
         **runtime_network,
         env=cdk_env,
     )
