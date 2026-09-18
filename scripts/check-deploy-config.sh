@@ -491,4 +491,36 @@ grep -q "bogus" <<<"$out" || fail "bad sub-action not named: $out"
 out=$(run_migrate plan --stack x 2>&1) && fail "migrate accepted a deploy option"
 echo "PASS: migrate plan renders the contract, reads AWS only, fails closed otherwise"
 
+# (u) Design → Build → Verify glue. `design --profile X` materializes the
+# preset and prints the plan without deploying; a preset with placeholders is
+# refused with the field named and the plan is NOT printed; `build` is `deploy`
+# (reaches the same flow — here, the credentials gate under the stub); `usecase`
+# routes to scripts/usecase.py. Same stub aws, no mutating call anywhere.
+DESIGN_DIR="$TMP/design"; mkdir -p "$DESIGN_DIR"
+run_design() {
+    (cd "$REPO_ROOT" && PATH="$STUB3:$PATH" PLATFORM_CONFIG="$DESIGN_DIR/platform.yaml" \
+        "$BASH" scripts/deploy.sh "$@")
+}
+out=$(run_design design 2>&1) && fail "design without a manifest succeeded"
+grep -q "design --profile greenfield" <<<"$out" || fail "design did not point at a profile: $out"
+: > "$AWS_ARGS"
+out=$(run_design design --profile greenfield 2>&1) || fail "design --profile greenfield failed: $out"
+head -1 "$DESIGN_DIR/platform.yaml" | grep -q "Generated from presets/greenfield" \
+    || fail "design did not materialize the preset"
+grep -q "Stacks (6):" <<<"$out" || fail "design plan missing the stack count: $out"
+grep -q "Nothing has been deployed" <<<"$out" || fail "design did not say nothing was deployed: $out"
+! grep -vE "get-caller-identity|configure get" "$AWS_ARGS" | grep -q . \
+    || fail "design made a non-read AWS call: $(cat "$AWS_ARGS")"
+rm -f "$DESIGN_DIR/platform.yaml"
+out=$(run_design design --profile migration 2>&1) && fail "design accepted the migration preset's placeholders"
+grep -q "identity.tenant_id is a placeholder" <<<"$out" || fail "placeholder not named: $out"
+! grep -q "Stacks (" <<<"$out" || fail "design printed a plan for an undeployable manifest"
+out=$(run_design design --stack x 2>&1) && fail "design accepted a deploy option"
+out=$(run_design usecase list 2>&1) || fail "usecase list failed: $out"
+grep -q "hello-platform" <<<"$out" || fail "usecase list did not reach scripts/usecase.py: $out"
+printf 'project: glue-check\n' > "$DESIGN_DIR/platform.yaml"
+out=$(NON_INTERACTIVE=1 run_design build --dry-run 2>&1) || true
+grep -q "Credentials\|credentials" <<<"$out" || fail "build did not route into the deploy flow: $out"
+echo "PASS: design materializes + plans without deploying, refuses placeholders; build = deploy; usecase routes"
+
 echo "OK: all deploy-config checks passed"

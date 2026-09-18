@@ -27,6 +27,9 @@ fi
 #   ./deploy.sh export
 #   ./deploy.sh config [--reset]
 #   ./deploy.sh migrate plan [--profile PROFILE]
+#   ./deploy.sh design [--profile PROFILE]    # Design: manifest + plan, nothing deployed
+#   ./deploy.sh build                          # Build:  = deploy
+#   ./deploy.sh usecase new NAME | list        # Build:  scaffold a use case
 #
 # Profiles: greenfield, migration, multi-agent, platform-team, security-focused
 # Teams: platform, agent, security
@@ -153,16 +156,19 @@ apply_platform_config() {
     local exports key value
     # cd: infra_utils must be importable; this runs before the main-flow cd.
     if ! exports=$(cd "$PROJECT_DIR" && "$py" -m infra_utils.platform_config --export "$PLATFORM_CONFIG" 2>&1); then
-        log_warn "platform.yaml present but not loadable yet (missing venv?) — continuing without it."
-        log_warn "Validate it with: python -m infra_utils.platform_config $PLATFORM_CONFIG"
-        # A malformed file must not silently deploy defaults: hard-stop when the
-        # parse failed for a reason other than missing dependencies.
-        if ! echo "$exports" | grep -q "ModuleNotFoundError"; then
-            log_error "platform.yaml is invalid:"
-            echo "$exports" >&2
-            exit 1
+        # Two different failures, two different messages. Missing dependencies:
+        # continue without the file. Anything else is the manifest itself
+        # (placeholders, a typo'd key): a malformed file must not silently
+        # deploy defaults, so stop and show the validator's own words.
+        if echo "$exports" | grep -q "ModuleNotFoundError"; then
+            log_warn "platform.yaml present but not loadable yet (missing venv?) — continuing without it."
+            log_warn "Validate it with: python -m infra_utils.platform_config $PLATFORM_CONFIG"
+            return 0
         fi
-        return 0
+        log_error "$PLATFORM_CONFIG is not deployable:"
+        echo "$exports" | sed 's/^/    /' >&2
+        log_error "Fix the fields above, then run: $0 design"
+        exit 1
     fi
     local applied=0
     while IFS='=' read -r key value; do
@@ -175,6 +181,16 @@ apply_platform_config() {
     done <<< "$exports"
     log_info "Applied $applied value(s) from $PLATFORM_CONFIG (env vars override)"
 }
+# ── 'usecase' action: scaffold / list use cases (scripts/usecase.py) ──
+# Before apply_platform_config on purpose: scaffolding and listing must work
+# on a manifest that is not deployable yet (placeholders, a half-written
+# use_cases: block) — that is exactly when a customer runs them.
+if [ "${1:-}" = "usecase" ]; then
+    shift
+    py="$PROJECT_DIR/.venv/bin/python"; [ -x "$py" ] || py="python3"
+    cd "$PROJECT_DIR" && exec "$py" scripts/usecase.py --manifest "$PLATFORM_CONFIG" "$@"
+fi
+
 apply_platform_config
 load_config
 
@@ -1040,6 +1056,39 @@ require_flag_value() {
     fi
 }
 
+# ── 'design' action: the manifest and what it means, nothing deployed ──
+# Design → Build → Verify. `--profile X` has already been materialized as the
+# manifest by the pre-scan; here the file is validated (placeholders are
+# errors: the operator sees the field and the fix) and the plan is printed
+# from the contract. Read-only; the only AWS call is get-caller-identity, and
+# only to pick the side of a federated deployment.
+if [ "$ACTION" = "design" ]; then
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --profile) require_flag_value "--profile" "$#"; shift 2 ;;
+            *) log_error "Unknown option for design: '$1' (valid: --profile PROFILE)"; exit 1 ;;
+        esac
+    done
+    if [ ! -f "$PLATFORM_CONFIG" ]; then
+        log_error "No $PLATFORM_CONFIG yet. Start from a profile:  $0 design --profile greenfield"
+        log_error "Profiles: $(valid_profiles)"
+        exit 1
+    fi
+    py="$PROJECT_DIR/.venv/bin/python"; [ -x "$py" ] || py="python3"
+    if ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null); then
+        export CDK_DEFAULT_ACCOUNT="$ACCOUNT_ID"
+    fi
+    log_step "Design: $PLATFORM_CONFIG"
+    (cd "$PROJECT_DIR" && "$py" -m infra_utils.platform_config --design "$PLATFORM_CONFIG") || {
+        log_error "Fix the manifest above, then run: $0 design"
+        exit 1
+    }
+    exit 0
+fi
+
+# ── 'build' is 'deploy' by its Design → Build → Verify name ──
+[ "$ACTION" = "build" ] && ACTION="deploy"
+
 # ── 'migrate' action: plan only, before any prerequisite/credential gate ──
 # Read-only by construction (see migrate_plan), so it takes no --yes. Fails
 # closed on anything but `plan`; --profile is accepted because the pre-scan
@@ -1289,9 +1338,12 @@ case "$ACTION" in
         ;;
 
     *)
-        echo "Usage: $0 [deploy|workshop|destroy|synth|diff|export|ls|config|migrate] [OPTIONS]"
+        echo "Usage: $0 [design|build|verify|usecase|deploy|workshop|destroy|synth|diff|export|ls|config|migrate] [OPTIONS]"
         echo ""
-        echo "Actions:"
+        echo "Actions (Design → Build → Verify):"
+        echo "  design [--profile P]  Write platform.yaml from a preset, validate it, print the plan; deploys nothing"
+        echo "  build              Deploy what platform.yaml describes (same as deploy)"
+        echo "  usecase new NAME   Scaffold use-cases/NAME/ and enable it in platform.yaml; usecase list"
         echo "  workshop           Guided module-by-module deploy: explain → deploy → verify → pause"
         echo "  verify             Run every check this configuration promises; non-zero on failure"
         echo "  migrate plan       Print the migration: plan (source → target, adapter mapping, secrets); read-only"

@@ -1024,6 +1024,78 @@ def migration_plan(config: PlatformConfig, account: str = "") -> list[str]:
     return lines
 
 
+def design_plan(config: PlatformConfig, account: str = "") -> list[str]:
+    """The Design-phase read-back: everything this manifest will make the
+    platform do, as plain text, before anything exists. Pure — no I/O, no AWS
+    — so `deploy.sh design`, tests and docs print the same thing.
+
+    Composes the pieces that already know their part (expected_stacks, the
+    migration plan, warnings) rather than growing a second opinion of any.
+    """
+    dep = config.deployment
+    try:
+        role = config.federated_role(account)
+    except Exception:  # noqa: BLE001 — an unlisted account is reported in the plan, not raised
+        role = None
+    stacks = (
+        config.expected_stacks(account) if (dep.strategy != "federated" or role) else []
+    )
+    lines = [
+        f"Design: {config.project}-{config.environment} in {config.region}",
+        f"  Topology: {dep.strategy}"
+        + (f", this account is the {role} side" if role else "")
+        + (f" (account {account})" if account else ""),
+        f"  Sign-in: {config.identity.idp}",
+        f"  Agent pattern: {config.agents.pattern}"
+        + (f", model {config.agents.model_id}" if config.agents.model_id else "")
+        + (" (allow-listed)" if config.agents.allowed_models else ""),
+        "",
+        f"Stacks ({len(stacks)}):"
+        if stacks
+        else "Stacks: (federated — deploy from a listed account to see a side)",
+    ]
+    lines += [f"  {s}" for s in stacks]
+
+    on = [
+        name
+        for name, flag in (
+            ("private networking (VPC mode)", config.security.networking),
+            ("CloudTrail + alerting", config.security.cloudtrail_alerting),
+            ("resource policies", config.security.resource_policies),
+            ("egress filter", config.security.egress_filter),
+            ("guardrail-enforced inference", config.security.require_guardrails),
+            ("Cedar authorization", config.security.cedar.enabled),
+            ("traceability", config.security.traceability),
+            ("alarms + dashboard", config.observability.alarms),
+        )
+        if flag
+    ]
+    lines += [
+        "",
+        "Controls on: " + (", ".join(on) if on else "none (every control is opt-in)"),
+    ]
+
+    if config.use_cases:
+        lines += ["", "Use cases:"]
+        lines += [f"  {name}  (uc-{name})" for name in sorted(config.use_cases)]
+    else:
+        lines += ["", "Use cases: none yet (deploy.sh usecase new <name>)"]
+
+    if config.migration:
+        # migration_plan() prints the migration block's own warnings; the
+        # identity/deployment ones are added below so none is lost.
+        mig = migration_plan(config, account)
+        cut = mig.index("Warnings:") if "Warnings:" in mig else len(mig)
+        lines += [""] + mig[: cut - 1 if cut else 0]
+    if config.warnings:
+        lines += ["", "Warnings:"] + [f"  - {w}" for w in config.warnings]
+    lines += [
+        "",
+        "Nothing has been deployed. Next: deploy.sh build, then deploy.sh verify.",
+    ]
+    return lines
+
+
 def resolve_region(root: Path | None = None) -> str:
     """Resolve the deployment region the way deploy.sh does, so every tool
     (verify, invoke, monitor, check_*) reports on the region the deploy
@@ -1058,18 +1130,18 @@ def resolve_region(root: Path | None = None) -> str:
 def _main() -> int:
     flags = {a for a in sys.argv[1:] if a.startswith("--")}
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    if "--plan" in flags and not args:
+    if flags & {"--plan", "--design"} and not args:
         # --plan alone reads the deployment manifest, like deploy.sh does.
         root = Path(__file__).resolve().parents[1]
         args = [os.environ.get("PLATFORM_CONFIG") or str(root / "platform.yaml")]
     if (
         len(args) != 1
         or len(flags) > 1
-        or not flags <= {"--export", "--stacks", "--plan"}
+        or not flags <= {"--export", "--stacks", "--plan", "--design"}
     ):
         print(
             "usage: python -m infra_utils.platform_config "
-            "[--export | --stacks | --plan] <platform.yaml>",
+            "[--export | --stacks | --plan | --design] <platform.yaml>",
             file=sys.stderr,
         )
         return 2
@@ -1102,6 +1174,9 @@ def _main() -> int:
         # the side of a federated deployment, same as app.py.
         for name in config.expected_stacks(os.environ.get("CDK_DEFAULT_ACCOUNT", "")):
             print(name)
+        return 0
+    if "--design" in flags:
+        print("\n".join(design_plan(config, os.environ.get("CDK_DEFAULT_ACCOUNT", ""))))
         return 0
     if "--plan" in flags:
         print(
