@@ -45,7 +45,7 @@ from infra_utils.platform_config import allowed_model_resources
 from infra_utils.policy_loader import load_control
 from infra_utils.runtime_network import build_network_config
 from infra_utils.runtime_protocol import needs_jwt_authorizer, resolve_protocol
-from infra_utils.source_hash import component_image_tag
+from infra_utils.source_hash import component_image_tag, compute_source_hash
 
 
 class RuntimeStack(cdk.Stack):
@@ -75,9 +75,26 @@ class RuntimeStack(cdk.Stack):
         dockerfile_pattern: str = "",
         allowed_models: list[str] | None = None,
         require_guardrails: bool = False,
+        # ── Migration (image-source) mode ──
+        # Set source_image (registry ref) or build_context (local dir) and the
+        # stack builds the migration adapter (migration-adapter/) ON TOP of the
+        # customer's image instead of an agent pattern. Defaults preserve the
+        # pattern path byte-for-byte. See docs in migration-adapter/README.md.
+        source_image: str = "",
+        build_context: str = "",
+        build_dockerfile: str = "Dockerfile",
+        registry_secret_name: str = "",
+        adapter_dir: str = "",
+        migration_env: dict[str, str] | None = None,
+        migration_secret_names: list[str] | None = None,
+        migration_port: str = "",
+        migration_invoke_path: str = "",
+        migration_health_path: str = "",
         **kwargs,
     ):
         super().__init__(scope, id, **kwargs)
+
+        migration_mode = bool(source_image or build_context)
 
         prefix = f"{project_name}-{environment}"
         # AgentCore names must use underscores, not hyphens
@@ -88,7 +105,23 @@ class RuntimeStack(cdk.Stack):
         abs_source_dir = os.path.join(repo_root, source_dir)
 
         # ── Source Hash ──
-        source_hash = component_image_tag(abs_source_dir, dockerfile_pattern)
+        if migration_mode:
+            # Adapter content + what it wraps. For a registry image the STRING
+            # is hashed, so a re-push of the same tag upstream is not detected
+            # — pin a digest (image@sha256:…) or bump the tag to force a
+            # rebuild. Building from source hashes the context's contents.
+            abs_adapter_dir = os.path.join(repo_root, adapter_dir)
+            abs_context_dir = (
+                os.path.join(repo_root, build_context) if build_context else ""
+            )
+            variant = (
+                f"{compute_source_hash(abs_context_dir)}:{build_dockerfile}"
+                if build_context
+                else source_image
+            )
+            source_hash = component_image_tag(abs_adapter_dir, variant)
+        else:
+            source_hash = component_image_tag(abs_source_dir, dockerfile_pattern)
         image_tag = source_hash
 
         # ── ECR Repository ──
@@ -118,7 +151,16 @@ class RuntimeStack(cdk.Stack):
         )
 
         # ── S3 Source Asset ──
-        if os.path.isdir(abs_source_dir):
+        context_asset = None
+        if migration_mode:
+            # The "source" CodeBuild sees is the adapter dir; the customer's
+            # build context (when building from source) rides along separately.
+            source_asset = s3_assets.Asset(self, "SourceAsset", path=abs_adapter_dir)
+            if build_context:
+                context_asset = s3_assets.Asset(
+                    self, "ContextAsset", path=abs_context_dir
+                )
+        elif os.path.isdir(abs_source_dir):
             source_asset = s3_assets.Asset(self, "SourceAsset", path=abs_source_dir)
         else:
             # Create a minimal placeholder so synth doesn't fail without agent code
@@ -139,6 +181,44 @@ class RuntimeStack(cdk.Stack):
         if dockerfile_pattern:
             docker_build_cmd = f"docker build --platform linux/arm64 -f {dockerfile_pattern}/Dockerfile -t $REPO_URI:$IMAGE_TAG ."
 
+        if migration_mode:
+            phases = self._migration_build_phases(
+                build_context=build_context,
+                build_dockerfile=build_dockerfile,
+                registry_secret_name=registry_secret_name,
+            )
+        else:
+            phases = {
+                "pre_build": {
+                    "commands": [
+                        "echo Logging in to Amazon ECR...",
+                        (
+                            "aws ecr get-login-password --region $AWS_DEFAULT_REGION | "
+                            "docker login --username AWS --password-stdin "
+                            "$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com"
+                        ),
+                        "echo Downloading source from S3...",
+                        "aws s3 cp $SOURCE_S3_URI source.zip",
+                        "mkdir -p source && unzip -o source.zip -d source/",
+                    ],
+                },
+                "build": {
+                    "commands": [
+                        "cd source/",
+                        docker_build_cmd,
+                        "docker tag $REPO_URI:$IMAGE_TAG $REPO_URI:latest",
+                    ],
+                },
+                "post_build": {
+                    "commands": [
+                        "echo Pushing image to ECR...",
+                        "docker push $REPO_URI:$IMAGE_TAG",
+                        "docker push $REPO_URI:latest",
+                        "echo Build completed on `date`",
+                    ],
+                },
+            }
+
         build_project = codebuild.Project(
             self,
             "Build",
@@ -153,41 +233,33 @@ class RuntimeStack(cdk.Stack):
             build_spec=codebuild.BuildSpec.from_object(
                 {
                     "version": "0.2",
-                    "phases": {
-                        "pre_build": {
-                            "commands": [
-                                "echo Logging in to Amazon ECR...",
-                                (
-                                    "aws ecr get-login-password --region $AWS_DEFAULT_REGION | "
-                                    "docker login --username AWS --password-stdin "
-                                    "$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com"
-                                ),
-                                "echo Downloading source from S3...",
-                                "aws s3 cp $SOURCE_S3_URI source.zip",
-                                "mkdir -p source && unzip -o source.zip -d source/",
-                            ],
-                        },
-                        "build": {
-                            "commands": [
-                                "cd source/",
-                                docker_build_cmd,
-                                "docker tag $REPO_URI:$IMAGE_TAG $REPO_URI:latest",
-                            ],
-                        },
-                        "post_build": {
-                            "commands": [
-                                "echo Pushing image to ECR...",
-                                "docker push $REPO_URI:$IMAGE_TAG",
-                                "docker push $REPO_URI:latest",
-                                "echo Build completed on `date`",
-                            ],
-                        },
-                    },
+                    "phases": phases,
                 }
             ),
         )
         repo.grant_push(build_project)
         source_asset.grant_read(build_project)
+        if context_asset:
+            context_asset.grant_read(build_project)
+        if migration_mode and registry_secret_name:
+            # Only CodeBuild pulls from the customer's registry, and only when
+            # a secret was declared. Secrets Manager appends a random 6-char
+            # suffix to secret ARNs, hence the -* (same shape as the token-vault
+            # statement on the runtime role).
+            build_project.add_to_role_policy(
+                iam.PolicyStatement(
+                    sid="MigrationRegistrySecret",
+                    actions=["secretsmanager:GetSecretValue"],
+                    resources=[
+                        self.format_arn(
+                            service="secretsmanager",
+                            resource="secret",
+                            resource_name=f"{registry_secret_name}-*",
+                            arn_format=cdk.ArnFormat.COLON_RESOURCE_NAME,
+                        )
+                    ],
+                )
+            )
 
         # ── Build Trigger Lambda (Custom Resource) ──
         trigger_fn = _lambda.Function(
@@ -207,6 +279,41 @@ class RuntimeStack(cdk.Stack):
             )
         )
 
+        env_overrides = [
+            {
+                "name": "SOURCE_S3_URI",
+                "value": source_asset.s3_object_url,
+                "type": "PLAINTEXT",
+            },
+            {"name": "IMAGE_TAG", "value": image_tag, "type": "PLAINTEXT"},
+            {
+                "name": "REPO_URI",
+                "value": repo.repository_uri,
+                "type": "PLAINTEXT",
+            },
+            {"name": "ACCOUNT_ID", "value": self.account, "type": "PLAINTEXT"},
+        ]
+        if source_image:
+            env_overrides.append(
+                {"name": "SOURCE_IMAGE", "value": source_image, "type": "PLAINTEXT"}
+            )
+        if context_asset:
+            env_overrides.append(
+                {
+                    "name": "CONTEXT_S3_URI",
+                    "value": context_asset.s3_object_url,
+                    "type": "PLAINTEXT",
+                }
+            )
+        if migration_mode and registry_secret_name:
+            env_overrides.append(
+                {
+                    "name": "REGISTRY_SECRET_NAME",
+                    "value": registry_secret_name,
+                    "type": "PLAINTEXT",
+                }
+            )
+
         # Custom resource triggers build only when source hash changes
         build_trigger = CustomResource(
             self,
@@ -214,20 +321,7 @@ class RuntimeStack(cdk.Stack):
             service_token=trigger_fn.function_arn,
             properties={
                 "ProjectName": build_project.project_name,
-                "EnvironmentOverrides": [
-                    {
-                        "name": "SOURCE_S3_URI",
-                        "value": source_asset.s3_object_url,
-                        "type": "PLAINTEXT",
-                    },
-                    {"name": "IMAGE_TAG", "value": image_tag, "type": "PLAINTEXT"},
-                    {
-                        "name": "REPO_URI",
-                        "value": repo.repository_uri,
-                        "type": "PLAINTEXT",
-                    },
-                    {"name": "ACCOUNT_ID", "value": self.account, "type": "PLAINTEXT"},
-                ],
+                "EnvironmentOverrides": env_overrides,
                 # Source hash change triggers rebuild
                 "SourceHash": source_hash,
             },
@@ -273,6 +367,25 @@ class RuntimeStack(cdk.Stack):
             allowed_models=allowed_models,
             guardrail=guardrail,
         )
+        if migration_secret_names:
+            # The adapter resolves each declared migration secret into the
+            # child's env at startup — exactly these, nothing else. Same -*
+            # suffix shape as the token-vault statement below.
+            runtime_role.add_to_policy(
+                iam.PolicyStatement(
+                    sid="MigrationSecrets",
+                    actions=["secretsmanager:GetSecretValue"],
+                    resources=[
+                        self.format_arn(
+                            service="secretsmanager",
+                            resource="secret",
+                            resource_name=f"{project_name}/{environment}/migration/{name}-*",
+                            arn_format=cdk.ArnFormat.COLON_RESOURCE_NAME,
+                        )
+                        for name in migration_secret_names
+                    ],
+                )
+            )
 
         # ── Protocol Configuration ──
         protocol = resolve_protocol(runtime_type, dockerfile_pattern)
@@ -291,6 +404,25 @@ class RuntimeStack(cdk.Stack):
         if guardrail is not None:
             env_vars["GUARDRAIL_ID"] = guardrail.attr_guardrail_id
             env_vars["GUARDRAIL_VERSION"] = guardrail.attr_version
+        # Migration adapter contract (migration-adapter/adapter.py), also
+        # before the extra_env_vars merge so an explicit override wins.
+        # ADAPTER_CHILD_CMD is baked into the image at build time, not set here.
+        if migration_mode:
+            env_vars["MIGRATION_PORT"] = migration_port or "8000"
+            env_vars["MIGRATION_INVOKE_PATH"] = migration_invoke_path or "/invocations"
+            # Omitted rather than set empty when the customer declared no health
+            # path: the adapter reads absent and empty identically ("any HTTP
+            # response proves the child is up"), and an empty environment value
+            # is exactly the kind of input an L1 control plane rejects at deploy
+            # time. Same convention as MODEL_ID.
+            if migration_health_path:
+                env_vars["MIGRATION_HEALTH_PATH"] = migration_health_path
+            if migration_env:
+                env_vars["MIGRATION_ENV"] = ",".join(
+                    f"{k}={v}" for k, v in migration_env.items()
+                )
+            if migration_secret_names:
+                env_vars["MIGRATION_SECRETS"] = ",".join(migration_secret_names)
         env_vars.update(extra_env_vars or {})
 
         # ── Network Configuration ──
@@ -364,6 +496,104 @@ class RuntimeStack(cdk.Stack):
         cdk.CfnOutput(self, "RuntimeId", value=self._runtime.attr_agent_runtime_id)
         cdk.CfnOutput(self, "SourceHash", value=source_hash)
         cdk.CfnOutput(self, "ImageUri", value=f"{repo.repository_uri}:{image_tag}")
+
+    @staticmethod
+    def _migration_build_phases(
+        *,
+        build_context: str,
+        build_dockerfile: str,
+        registry_secret_name: str,
+    ) -> dict:
+        """Buildspec phases for migration mode: obtain the customer's image
+        (registry pull or local source build, always linux/arm64 — AgentCore
+        Runtime accepts nothing else), capture its Entrypoint+Cmd, and build
+        the adapter (migration-adapter/) on top.
+
+        CodeBuild runs every command in one shell session, so variables set in
+        one command (SOURCE_IMAGE, CHILD_CMD) are visible to the next.
+        """
+        pre_build = [
+            "echo Logging in to Amazon ECR...",
+            (
+                "aws ecr get-login-password --region $AWS_DEFAULT_REGION | "
+                "docker login --username AWS --password-stdin "
+                "$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com"
+            ),
+            "echo Downloading adapter from S3...",
+            "aws s3 cp $SOURCE_S3_URI adapter.zip",
+            "mkdir -p adapter && unzip -o adapter.zip -d adapter/",
+        ]
+        if build_context:
+            pre_build += [
+                "echo Downloading customer build context from S3...",
+                "aws s3 cp $CONTEXT_S3_URI context.zip",
+                "mkdir -p context && unzip -o context.zip -d context/",
+            ]
+        if registry_secret_name:
+            # Secret JSON shape: {"username": "...", "password": "...",
+            # "server": "registry.example.com"} — documented in
+            # migration-adapter/README.md and the migration preset.
+            pre_build += [
+                "echo Logging in to the source registry...",
+                (
+                    'REGISTRY_CREDS=$(aws secretsmanager get-secret-value --secret-id "$REGISTRY_SECRET_NAME" '
+                    "--query SecretString --output text)"
+                ),
+                (
+                    'echo "$REGISTRY_CREDS" | jq -r .password | docker login '
+                    '--username "$(echo "$REGISTRY_CREDS" | jq -r .username)" '
+                    '--password-stdin "$(echo "$REGISTRY_CREDS" | jq -r .server)"'
+                ),
+            ]
+
+        if build_context:
+            build = [
+                "echo Building customer image from source (linux/arm64)...",
+                (
+                    f"docker build --platform linux/arm64 -f context/{build_dockerfile} "
+                    "-t migration-source:local context/"
+                ),
+                "SOURCE_IMAGE=migration-source:local",
+            ]
+        else:
+            build = [
+                'echo "Pulling source image $SOURCE_IMAGE (linux/arm64)..."',
+                (
+                    'docker pull --platform linux/arm64 "$SOURCE_IMAGE" || '
+                    '{ echo "ERROR: no linux/arm64 image available for $SOURCE_IMAGE - '
+                    "AgentCore Runtime is arm64-only. Rebuild from source "
+                    "(migration.source.build in platform.yaml) or use target "
+                    'runtime: ec2."; exit 1; }'
+                ),
+            ]
+        build += [
+            # The source image's own command, as one JSON array, becomes the
+            # adapter's child process (ADAPTER_CHILD_CMD, baked as ENV).
+            (
+                'CHILD_CMD=$(docker inspect "$SOURCE_IMAGE" | python3 -c \'import json,sys; '
+                'c=json.load(sys.stdin)[0]["Config"]; '
+                'print(json.dumps((c.get("Entrypoint") or [])+(c.get("Cmd") or [])))\')'
+            ),
+            'echo "Captured child command: $CHILD_CMD"',
+            (
+                'docker build --platform linux/arm64 --build-arg SOURCE_IMAGE="$SOURCE_IMAGE" '
+                '--build-arg CHILD_CMD="$CHILD_CMD" '
+                "-f adapter/Dockerfile -t $REPO_URI:$IMAGE_TAG adapter/"
+            ),
+            "docker tag $REPO_URI:$IMAGE_TAG $REPO_URI:latest",
+        ]
+        return {
+            "pre_build": {"commands": pre_build},
+            "build": {"commands": build},
+            "post_build": {
+                "commands": [
+                    "echo Pushing image to ECR...",
+                    "docker push $REPO_URI:$IMAGE_TAG",
+                    "docker push $REPO_URI:latest",
+                    "echo Build completed on `date`",
+                ],
+            },
+        }
 
     @property
     def runtime_arn(self) -> str:

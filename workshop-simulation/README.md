@@ -29,6 +29,10 @@ This simulates a real 2-day workshop for a customer migrating an existing EC2-ba
 | 6 | Security | KMS + CloudTrail hardening | 10 min |
 | 7 | Observability | Vended logs + X-Ray | 10 min |
 
+## The "before" agent
+
+`existing-ec2-agent/` now also ships an HTTP front (`server.py`: `POST /run`, `GET /healthz` on :8000) and a `Dockerfile`, so it can stand in for a real customer container in the migration-adapter flow (`migration-adapter/`). The interactive CLI (`agent.py`, used by `run-workshop.sh`) is unchanged.
+
 ## Quick Start
 
 ```bash
