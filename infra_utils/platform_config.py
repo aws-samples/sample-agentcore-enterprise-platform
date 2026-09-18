@@ -19,6 +19,7 @@ platform.yaml is optional — every existing flag keeps working without it.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 import sys
@@ -284,6 +285,194 @@ class ObservabilityConfig(BaseModel):
         return v
 
 
+# ── Migration ──
+# An existing agent (someone else's container) moves onto the platform. The
+# block describes where it comes from, how the platform should run it, and
+# what it must still reach privately — the contract the adapter (M2), the EC2
+# target (M3) and the docs consume. Contract-only here: app.py reads the
+# to_env() names once those land.
+_ENV_NAME_RE = r"^[A-Z][A-Z0-9_]*$"
+_SECRETISH_KEY_RE = re.compile(r"secret|password|token|key$", re.IGNORECASE)
+_HOSTNAME_RE = re.compile(
+    r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)*"
+    r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+    re.IGNORECASE,
+)
+
+
+class MigrationBuild(BaseModel):
+    context: str  # docker build context, relative to the repo root
+    dockerfile: str = "Dockerfile"  # relative to context
+
+    model_config = {"extra": "forbid"}
+
+
+class MigrationSource(BaseModel):
+    """The customer's agent as it runs today."""
+
+    platform: Literal[
+        "openshift", "kubernetes", "ec2", "ecs", "lambda", "on-prem", "other"
+    ]
+    image: str = ""  # pre-built image reference — XOR build
+    build: MigrationBuild | None = None  # build here (yields arm64 for AgentCore)
+    registry_secret_name: str = ""  # Secrets Manager NAME holding docker-login creds
+    port: int | None = Field(default=None, ge=1, le=65535)
+    invoke_path: str = ""  # where the container takes a request (adapter mode)
+    health_path: str = "/"  # what the adapter polls for /ping
+    trigger: Literal["webhook", "schedule", "http", "queue"] = "http"
+    # Plain configuration. Anything secret-shaped is refused here on purpose:
+    # env values render into the task definition / runtime config in clear.
+    env: dict[str, str] = Field(default_factory=dict)
+    # ENV NAMES only; each value lives in Secrets Manager under
+    # <project>/<environment>/migration/<NAME> (see migration_plan()).
+    secrets: list[str] = Field(default_factory=list)
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("invoke_path", "health_path")
+    @classmethod
+    def _paths_are_absolute(cls, v: str) -> str:
+        if v and not v.startswith("/"):
+            raise ValueError(f"must start with '/', got {v!r}")
+        return v
+
+    @field_validator("env")
+    @classmethod
+    def _env_keys(cls, v: dict[str, str]) -> dict[str, str]:
+        for k in v:
+            if not re.fullmatch(_ENV_NAME_RE, k):
+                raise ValueError(
+                    f"env key {k!r} is not an environment variable name "
+                    "(UPPER_SNAKE_CASE)"
+                )
+            if _SECRETISH_KEY_RE.search(k):
+                raise ValueError(
+                    f"env key {k!r} looks like a secret; list its NAME under "
+                    "migration.source.secrets instead and store the value in "
+                    "Secrets Manager (env values are rendered in clear)"
+                )
+        return v
+
+    @field_validator("secrets")
+    @classmethod
+    def _secret_names(cls, v: list[str]) -> list[str]:
+        bad = [s for s in v if not re.fullmatch(_ENV_NAME_RE, s)]
+        if bad:
+            raise ValueError(
+                f"secrets must be environment variable NAMES (UPPER_SNAKE_CASE), "
+                f"not values: {bad}"
+            )
+        return v
+
+
+class MigrationTarget(BaseModel):
+    # agentcore — AgentCore Runtime (arm64, the 8080 /invocations contract);
+    # ec2 — ECS on EC2 inside the platform VPC, for amd64-only images.
+    runtime: Literal["agentcore", "ec2"] = "agentcore"
+    # adapter — the platform wraps the container to speak the AgentCore
+    # contract; native — the image already does.
+    mode: Literal["adapter", "native"] = "adapter"
+
+    model_config = {"extra": "forbid"}
+
+
+class MigrationNetwork(BaseModel):
+    """What the migrated agent must still reach on the customer side."""
+
+    private_dependencies: list[str] = Field(default_factory=list)  # hostnames
+    connectivity: Literal["vpn", "transit-gateway", "none"] = "none"
+    dns_forwarders: list[str] = Field(default_factory=list)  # IPv4 resolvers
+    ca_bundle_secret_name: str = ""  # Secrets Manager NAME of a private CA bundle
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("private_dependencies")
+    @classmethod
+    def _hostnames(cls, v: list[str]) -> list[str]:
+        bad = [h for h in v if not _HOSTNAME_RE.match(h)]
+        if bad:
+            raise ValueError(
+                f"private_dependencies must be hostnames (no scheme, port or "
+                f"path): {bad}"
+            )
+        return v
+
+    @field_validator("dns_forwarders")
+    @classmethod
+    def _ipv4(cls, v: list[str]) -> list[str]:
+        for ip in v:
+            try:
+                ipaddress.IPv4Address(ip)
+            except ValueError as exc:
+                raise ValueError(
+                    f"dns_forwarders must be IPv4 addresses: {ip!r}"
+                ) from exc
+        return v
+
+
+class MigrationConfig(BaseModel):
+    """Migrate an existing agent onto the platform.
+
+    Stack names do NOT change: the migrated agent deploys as
+    `<prefix>-runtime-orchestrator` on both targets, so verify, dashboard and
+    destroy keep working with zero contract churn (owner decision, final).
+    When this block is present `agents.pattern` no longer selects the runtime
+    image — the source does — but it is still emitted as AGENT_PATTERN so
+    existing consumers keep working.
+
+    Cross-field rules that touch `security` live on PlatformConfig; the
+    non-fatal ones surface as `warnings`.
+    """
+
+    source: MigrationSource
+    target: MigrationTarget = Field(default_factory=MigrationTarget)
+    network: MigrationNetwork = Field(default_factory=MigrationNetwork)
+
+    model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def _source_and_mode(self) -> MigrationConfig:
+        src, mode = self.source, self.target.mode
+        if bool(src.image) == bool(src.build):
+            raise ValueError(
+                "migration.source needs exactly one of image (pre-built reference) "
+                "or build (context + dockerfile)"
+            )
+        if mode == "adapter" and not (src.port and src.invoke_path):
+            raise ValueError(
+                "target.mode 'adapter' requires migration.source.port and "
+                "migration.source.invoke_path (where the adapter forwards "
+                "/invocations to)"
+            )
+        if mode == "native" and (src.port or src.invoke_path):
+            raise ValueError(
+                "target.mode 'native' means the image already speaks the AgentCore "
+                "contract (8080, /invocations, /ping) — drop migration.source.port "
+                "and migration.source.invoke_path, or use mode 'adapter'"
+            )
+        return self
+
+    @property
+    def warnings(self) -> list[str]:
+        out: list[str] = []
+        if self.target.runtime == "agentcore" and self.source.image:
+            out.append(
+                "AgentCore Runtime is arm64-only and a pre-built image "
+                f"({self.source.image}) cannot be verified for it before deploy. "
+                "Prefer migration.source.build (built arm64 here) or "
+                "migration.target.runtime: ec2 for an amd64-only image."
+            )
+        net = self.network
+        if not net.private_dependencies and (
+            net.dns_forwarders or net.ca_bundle_secret_name
+        ):
+            out.append(
+                "migration.network.dns_forwarders / ca_bundle_secret_name are set "
+                "but private_dependencies is empty — nothing will use them."
+            )
+        return out
+
+
 # ── Use cases ──
 # A use case is a self-contained product integration under use-cases/<name>/:
 # a manifest (this model), a CDK stack, a verify script, and a walkthrough.
@@ -351,6 +540,8 @@ class PlatformConfig(BaseModel):
     # build() untouched; {} to enable with defaults). Names must exist under
     # use-cases/ — validated below so a typo cannot silently deploy nothing.
     use_cases: dict[str, dict] = Field(default_factory=dict)
+    # Absent = no migration; everything behaves exactly as before.
+    migration: MigrationConfig | None = None
 
     model_config = {"extra": "forbid"}  # a typo'd key is an error, not a no-op
 
@@ -382,6 +573,33 @@ class PlatformConfig(BaseModel):
                 "Bedrock Guardrail to its inference calls, so the IAM deny would "
                 "block every inference from this pattern"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _migration_needs_the_vpc(self) -> PlatformConfig:
+        # Validation rather than a new expected_stacks() branch: networking is
+        # already in the footprint whenever security.networking is true, so
+        # requiring the flag keeps the contract to one rule per stack.
+        m = self.migration
+        if m is None:
+            return self
+        if m.target.runtime == "ec2" and not self.security.networking:
+            raise ValueError(
+                "migration.target.runtime 'ec2' runs in the platform VPC: set "
+                "security.networking: true"
+            )
+        if m.network.private_dependencies:
+            if not self.security.networking:
+                raise ValueError(
+                    "migration.network.private_dependencies needs the agent in the "
+                    "VPC: set security.networking: true"
+                )
+            if m.network.connectivity == "none":
+                raise ValueError(
+                    "migration.network.private_dependencies needs a path to the "
+                    "customer network: set migration.network.connectivity to "
+                    "'vpn' or 'transit-gateway'"
+                )
         return self
 
     @property
@@ -538,8 +756,122 @@ def to_env(config: PlatformConfig) -> dict[str, str]:
         ).lower(),
         "ENABLE_ALARMS": str(config.observability.alarms).lower(),
         "ALARM_EMAIL": config.observability.alarm_email,
+        "MIGRATION_ENABLED": str(config.migration is not None).lower(),
     }
+    if config.migration:
+        m = config.migration
+        build = m.source.build
+        pairs.update(
+            {
+                "MIGRATION_SOURCE_PLATFORM": m.source.platform,
+                "MIGRATION_SOURCE_IMAGE": m.source.image,
+                "MIGRATION_BUILD_CONTEXT": build.context if build else "",
+                "MIGRATION_BUILD_DOCKERFILE": build.dockerfile if build else "",
+                "MIGRATION_REGISTRY_SECRET_NAME": m.source.registry_secret_name,
+                "MIGRATION_PORT": str(m.source.port or ""),
+                "MIGRATION_INVOKE_PATH": m.source.invoke_path,
+                "MIGRATION_HEALTH_PATH": m.source.health_path,
+                "MIGRATION_TRIGGER": m.source.trigger,
+                # ponytail: comma-joined KEY=VALUE — a value containing ',' would
+                # split wrong on the shell side; upgrade path is a JSON blob.
+                "MIGRATION_ENV": ",".join(f"{k}={v}" for k, v in m.source.env.items()),
+                "MIGRATION_SECRETS": ",".join(m.source.secrets),
+                "MIGRATION_TARGET_RUNTIME": m.target.runtime,
+                "MIGRATION_TARGET_MODE": m.target.mode,
+                "MIGRATION_PRIVATE_DEPENDENCIES": ",".join(
+                    m.network.private_dependencies
+                ),
+                "MIGRATION_CONNECTIVITY": m.network.connectivity,
+                "MIGRATION_DNS_FORWARDERS": ",".join(m.network.dns_forwarders),
+                "MIGRATION_CA_BUNDLE_SECRET_NAME": m.network.ca_bundle_secret_name,
+            }
+        )
     return {k: v for k, v in pairs.items() if v != ""}
+
+
+def migration_secret_name(config: PlatformConfig, env_name: str) -> str:
+    """Secrets Manager name for one migration.source.secrets entry."""
+    return f"{config.project}/{config.environment}/migration/{env_name}"
+
+
+def migration_plan(config: PlatformConfig, account: str = "") -> list[str]:
+    """Render the migration as plain text: what moves where, what the operator
+    must create first, and how to check each private dependency. Pure — no
+    I/O, no AWS — so deploy.sh and tests print the same thing."""
+    m = config.migration
+    if m is None:
+        return ["No migration: block in this manifest — nothing to plan."]
+    src, tgt, net = m.source, m.target, m.network
+    origin = (
+        f"image {src.image}"
+        if src.image
+        else f"build {src.build.context} ({src.build.dockerfile})"
+    )
+    lines = [
+        f"Migration plan: {config.project}-{config.environment} ({config.region})",
+        f"  Source: {src.platform}, {origin}, trigger {src.trigger}",
+        (
+            f"  Target: {tgt.runtime} runtime, {tgt.mode} mode "
+            f"(deploys as {config.project}-{config.environment}-runtime-orchestrator)"
+        ),
+        (
+            f"  agents.pattern {config.agents.pattern!r} is ignored: the runtime "
+            "image comes from migration.source"
+        ),
+        "",
+        "Stacks:",
+    ]
+    lines += [f"  {s}" for s in config.expected_stacks(account)]
+    if tgt.mode == "adapter":
+        base = f"http://127.0.0.1:{src.port}"
+        lines += [
+            "",
+            "Adapter mapping (AgentCore contract -> your container):",
+            f"  POST /invocations -> {base}{src.invoke_path}",
+            f"  GET  /ping        -> {base}{src.health_path}",
+        ]
+    if src.env:
+        lines += ["", "Environment (in clear):"]
+        lines += [f"  {k}={v}" for k, v in src.env.items()]
+    if src.secrets or src.registry_secret_name:
+        lines += ["", "Secrets Manager (create these BEFORE deploying):"]
+        lines += [
+            f"  {name} <- {migration_secret_name(config, name)}" for name in src.secrets
+        ]
+        if src.registry_secret_name:
+            lines.append(f"  registry login <- {src.registry_secret_name}")
+    if net.private_dependencies:
+        lines += [
+            "",
+            (
+                f"Private dependencies (connectivity: {net.connectivity}); "
+                "reachability check for each:"
+            ),
+        ]
+        lines += [
+            (
+                f"  {host}: from a host in the VPC: "
+                f"curl -sS -o /dev/null -w '%{{http_code}}' https://{host}/"
+            )
+            for host in net.private_dependencies
+        ]
+        if net.dns_forwarders:
+            lines.append(f"  DNS forwarders: {', '.join(net.dns_forwarders)}")
+        if net.ca_bundle_secret_name:
+            lines.append(f"  CA bundle secret: {net.ca_bundle_secret_name}")
+    if config.security.networking:
+        lines += [
+            "",
+            (
+                "Networking: VPC mode is on. Outbound traffic leaves through the "
+                "NAT gateway EIP (networking stack output) — allow-list it on "
+                "the customer side."
+            ),
+        ]
+    if m.warnings:
+        lines += ["", "Warnings:"]
+        lines += [f"  - {w}" for w in m.warnings]
+    return lines
 
 
 def resolve_region(root: Path | None = None) -> str:
@@ -576,10 +908,18 @@ def resolve_region(root: Path | None = None) -> str:
 def _main() -> int:
     flags = {a for a in sys.argv[1:] if a.startswith("--")}
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    if len(args) != 1 or not flags <= {"--export", "--stacks"}:
+    if "--plan" in flags and not args:
+        # --plan alone reads the deployment manifest, like deploy.sh does.
+        root = Path(__file__).resolve().parents[1]
+        args = [os.environ.get("PLATFORM_CONFIG") or str(root / "platform.yaml")]
+    if (
+        len(args) != 1
+        or len(flags) > 1
+        or not flags <= {"--export", "--stacks", "--plan"}
+    ):
         print(
             "usage: python -m infra_utils.platform_config "
-            "[--export | --stacks] <platform.yaml>",
+            "[--export | --stacks | --plan] <platform.yaml>",
             file=sys.stderr,
         )
         return 2
@@ -597,6 +937,11 @@ def _main() -> int:
         # the side of a federated deployment, same as app.py.
         for name in config.expected_stacks(os.environ.get("CDK_DEFAULT_ACCOUNT", "")):
             print(name)
+        return 0
+    if "--plan" in flags:
+        print(
+            "\n".join(migration_plan(config, os.environ.get("CDK_DEFAULT_ACCOUNT", "")))
+        )
         return 0
     print(f"OK: {args[0]}")
     print(config.model_dump_json(indent=2))

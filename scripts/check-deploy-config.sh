@@ -441,4 +441,54 @@ upsert_line=$(first_call_line upsert_idp_secret)
     || fail "prompt_region (line $region_line) runs after upsert_idp_secret (line $upsert_line): a region change would strand the secret"
 echo "PASS: region is final before the first secret upsert"
 
+# (t) `migrate plan` renders the migration contract and only READS AWS:
+# adapter mapping + secret names printed, found/missing per secret from a
+# stubbed describe-secret, no mutating call, and any other sub-action fails
+# closed. Real script, real contract; the aws CLI is a PATH stub.
+STUB3="$TMP/stub3"; mkdir -p "$STUB3"
+cat > "$STUB3/aws" <<'STUB_AWS'
+#!/usr/bin/env bash
+echo "$*" >> "$AWS_ARGS"
+case "$1 $2" in
+    "sts get-caller-identity")       echo 111111111111 ;;
+    "configure get")                 echo us-east-1 ;;
+    "secretsmanager describe-secret") [[ "$*" == *JIRA_TOKEN* ]] ;;
+    *) exit 0 ;;
+esac
+STUB_AWS
+chmod +x "$STUB3/aws"
+export AWS_ARGS="$TMP/aws.args"
+MIG_YAML="$TMP/migration.yaml"
+cat > "$MIG_YAML" <<'YAML'
+project: mig-check
+migration:
+  source:
+    platform: openshift
+    image: registry.example.com/team/agent:1.4.2
+    port: 8000
+    invoke_path: /run
+    health_path: /healthz
+    trigger: webhook
+    secrets: [JIRA_TOKEN, GIT_TOKEN]
+YAML
+run_migrate() {
+    (cd "$REPO_ROOT" && PATH="$STUB3:$PATH" PLATFORM_CONFIG="$MIG_YAML" \
+        "$BASH" scripts/deploy.sh migrate "$@")
+}
+: > "$AWS_ARGS"
+out=$(run_migrate plan 2>&1) || fail "migrate plan failed: $out"
+grep -q "POST /invocations -> http://127.0.0.1:8000/run" <<<"$out" \
+    || fail "adapter mapping not printed: $out"
+grep -q "mig-check/dev/migration/JIRA_TOKEN" <<<"$out" || fail "secret name not printed: $out"
+grep -q "found:.*JIRA_TOKEN" <<<"$out"   || fail "existing secret not reported found: $out"
+grep -q "missing:.*GIT_TOKEN" <<<"$out"  || fail "absent secret not reported missing: $out"
+grep -q "arm64" <<<"$out"                || fail "arm64 warning missing for a pre-built image: $out"
+! grep -vE "get-caller-identity|configure get|describe-secret" "$AWS_ARGS" | grep -q . \
+    || fail "migrate plan made a non-read AWS call: $(cat "$AWS_ARGS")"
+
+out=$(run_migrate bogus 2>&1) && fail "unknown migrate sub-action was accepted"
+grep -q "bogus" <<<"$out" || fail "bad sub-action not named: $out"
+out=$(run_migrate plan --stack x 2>&1) && fail "migrate accepted a deploy option"
+echo "PASS: migrate plan renders the contract, reads AWS only, fails closed otherwise"
+
 echo "OK: all deploy-config checks passed"
