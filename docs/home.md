@@ -7,7 +7,7 @@ platform for running AI agents under enterprise governance on
 **Amazon Bedrock AgentCore** — authentication, identity, tool gateway, memory,
 observability, and security controls, stood up from one declarative
 configuration file in under an hour, in a single AWS account. Your team
-deploys it, builds on it, and owns it.
+designs it, builds it and a first use case on it, verifies it, and owns it.
 
 > Agents are easy to prototype and hard to run. This accelerator is the part
 > that's hard: the governed platform your agents deploy onto.
@@ -23,11 +23,23 @@ deploys it, builds on it, and owns it.
 | **Governance** | Model allow-list and guardrailed-only inference **enforced by IAM**, Cedar tool authorization, audit alerting |
 | **Operations** | Vended logs, traces, CloudWatch alarms and a platform dashboard, plus a `verify` command that tests every claim your configuration makes |
 
+## Design → Build → Verify
+
+1. **Design.** Pick a profile, or write your own `platform.yaml`: single or
+   multi-account, your IdP, your agent framework, the controls you need, the
+   use cases you will build. `deploy.sh design` validates it and prints the
+   exact stacks it produces — nothing is deployed yet.
+2. **Build.** `deploy.sh build` stands up the platform and every use case in
+   the design. `deploy.sh usecase new <name>` scaffolds your application so it
+   is part of the same build.
+3. **Verify.** `deploy.sh verify` re-tests every promise the design made,
+   platform and use cases alike, and exits non-zero on any failure.
+
 ## Two ways in
 
-- **"I don't have a platform — how do I start fast?"** Deploy the greenfield
-  profile and have a working, governed agent platform before lunch. Add
-  security controls when security shows up; they're one config flag each.
+- **"I don't have a platform — how do I start fast?"** Design from the
+  greenfield profile and have a working, governed agent platform before lunch.
+  Add security controls when security shows up; they're one config flag each.
 - **"I have agents on other platforms — how do I migrate?"** Keep your
   framework. The migration profile lands your existing agent on AgentCore
   Runtime and decouples what it used to carry inside: tools to the Gateway,
