@@ -130,6 +130,80 @@ Migrate an existing agent onto the platform.
 Each preset is a complete, validated `platform.yaml`; `--profile <name>` copies it for you.
 
 <details>
+<summary><code>presets/distributed.yaml</code></summary>
+
+```yaml
+# Distributed: every team or workload account runs its own full copy of the
+# platform from this one file — auth, gateway, runtimes, all of it. Nothing is
+# shared between accounts; organisation-wide guardrails (terraform/org-guardrails)
+# are what keep the copies consistent. Pick this when teams must not depend on
+# each other's uptime or change windows. See docs/MULTI_ACCOUNT.md.
+# Modules: 3 4 5 6 9
+project: agentcore-workshop
+environment: dev
+region: us-east-1
+deployment:
+  strategy: distributed
+identity:
+  idp: cognito
+agents:
+  pattern: orchestrator
+gateway:
+  web_search: auto
+  tools: [sample-tool]
+security: {}
+observability:
+  transaction_search: true
+```
+
+</details>
+
+<details>
+<summary><code>presets/federated.yaml</code></summary>
+
+```yaml
+# Federated: shared services in a platform account, agents in workload accounts.
+# The SAME file deploys into both accounts; the account you deploy into decides
+# the role (platform: auth + identity + gateway + observability; workload:
+# identity + memory + runtimes + observability). Trust between them is pure
+# OAuth — no cross-account IAM on the data plane. See docs/MULTI_ACCOUNT.md.
+# Modules: 3 4 5 6 9 (platform side) / 4 6 9 + A (workload side)
+#
+# Order of operations: deploy in the platform account first, copy the four
+# federation values from its outputs into `deployment.federation`, then deploy
+# the same file in each workload account. `deploy.sh design` shows which side
+# the current credentials will produce.
+project: agentcore-workshop
+environment: dev
+region: us-east-1
+deployment:
+  strategy: federated
+  # Sentinel account ids: `deploy.sh design` refuses to deploy until replaced.
+  platform_account: "000000000000"
+  workload_accounts: ["123456789012"]
+  federation:                      # sentinels — copy from the platform account's `deploy.sh export`
+    gateway_url: "https://REPLACE_ME.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp"
+    issuer_url: "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_REPLACEME"
+    m2m_client_id: "REPLACE_ME"
+    m2m_client_secret_name: "agentcore/platform-m2m"   # pragma: allowlist secret — a NAME in the workload account
+identity:
+  idp: entra_id
+  tenant_id: "00000000-0000-0000-0000-000000000000"   # sentinel — your Entra tenant id
+  client_id: "REPLACE_ME"                             # sentinel — the app registration's client id
+  client_secret_name: "agentcore/idp-client-secret"   # pragma: allowlist secret — a NAME, not a value
+agents:
+  pattern: strands-agent
+gateway:
+  web_search: auto
+  tools: [sample-tool]
+security: {}                     # every control opt-in; enable deliberately
+observability:
+  transaction_search: true
+```
+
+</details>
+
+<details>
 <summary><code>presets/greenfield.yaml</code></summary>
 
 ```yaml
