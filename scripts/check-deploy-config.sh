@@ -523,4 +523,23 @@ out=$(NON_INTERACTIVE=1 run_design build --dry-run 2>&1) || true
 grep -q "Credentials\|credentials" <<<"$out" || fail "build did not route into the deploy flow: $out"
 echo "PASS: design materializes + plans without deploying, refuses placeholders; build = deploy; usecase routes"
 
+# (v) switching a live platform to identity.mode direct deploys the auth
+# CONSUMERS before auth: they import Cognito values as CloudFormation exports
+# and CloudFormation refuses to update auth while an export is imported (hit
+# live: "Cannot delete export ... in use by gateway, identity, runtime").
+# Source-order assertion: the switch runs after the footprint confirmation
+# and before the --all deploy; it excludes exactly the auth stack; and the
+# mode reaches CDK as context.
+switch_line=$(first_call_line switch_issuer_consumers_first || true)
+all_line=$(grep -n 'npx cdk deploy --all' "$SCRIPT_DIR/deploy.sh" | head -1 | cut -d: -f1 || true)
+confirm_line=$(grep -n 'confirm_footprint deploy' "$SCRIPT_DIR/deploy.sh" | head -1 | cut -d: -f1 || true)
+[ -n "$switch_line" ] && [ -n "$all_line" ] && [ -n "$confirm_line" ] \
+    || fail "could not locate the issuer-switch call site"
+[ "$confirm_line" -lt "$switch_line" ] && [ "$switch_line" -lt "$all_line" ] \
+    || fail "switch_issuer_consumers_first (line $switch_line) must run after confirm_footprint ($confirm_line) and before cdk deploy --all ($all_line)"
+grep -q -- 'grep -v -- "-auth\$"' "$SCRIPT_DIR/deploy.sh" \
+    || fail "the issuer switch must exclude exactly the auth stack"
+grep -q -- '-c "idp_mode=\${IDP_MODE:-brokered}"' "$SCRIPT_DIR/deploy.sh" \
+    || fail "IDP_MODE is not passed to CDK as idp_mode context"
+echo "PASS: brokered → direct switch deploys auth consumers first; idp_mode reaches CDK"
 echo "OK: all deploy-config checks passed"

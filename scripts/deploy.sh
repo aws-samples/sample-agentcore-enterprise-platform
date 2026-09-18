@@ -815,6 +815,41 @@ sweep_leftovers() {
 # ═══════════════════════════════════════════════════════════════
 # Stack Deploy Loop (shared by the deploy and workshop actions)
 # ═══════════════════════════════════════════════════════════════
+deployed_idp_mode() {
+    # "brokered" | "direct" for the auth stack in the account, "" when there is
+    # no auth stack yet (fresh deploy). Older brokered stacks predate the
+    # IdPMode output and report brokered.
+    local out
+    out=$(aws cloudformation describe-stacks --stack-name "${PREFIX}-auth" \
+            --query "Stacks[0].Outputs[?OutputKey=='IdPMode'].OutputValue" \
+            --output text 2>/dev/null) || { echo ""; return 0; }
+    case "$out" in direct) echo direct ;; *) echo brokered ;; esac
+}
+
+switch_issuer_consumers_first() {
+    # Switching a LIVE platform from brokered to direct: the gateway, identity
+    # and runtime stacks import Cognito values as CloudFormation exports, and
+    # CloudFormation refuses to update auth while any export is still imported
+    # ("Cannot delete export ... as it is in use by", hit live). Their new
+    # templates carry literal IdP values instead, so deploying them first
+    # drops the imports; the --all pass that follows then updates auth and
+    # no-ops the rest. A fresh deploy has no exports to drop, and the reverse
+    # switch needs auth first (its exports must exist) — the default order.
+    [ "${IDP_MODE:-brokered}" = "direct" ] || return 0
+    local deployed consumers
+    deployed=$(deployed_idp_mode)
+    [ -n "$deployed" ] && [ "$deployed" != "direct" ] || return 0
+    log_info "Switching issuer brokered → direct: deploying the auth consumers before auth"
+    consumers=$(JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+        npx cdk ls "${CONTEXT_ARGS[@]}" 2>/dev/null | grep -v -- "-auth$" | tr '\n' ' ')
+    # shellcheck disable=SC2086  # stack list is space-separated by design
+    JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+        npx cdk deploy $consumers --exclusively --require-approval never "${CONTEXT_ARGS[@]}" 2>&1 || {
+        log_error "Failed to deploy the auth consumers ahead of the issuer switch."
+        exit 1
+    }
+}
+
 deploy_stacks() {
     local stack
     for stack in "$@"; do
@@ -1235,6 +1270,7 @@ case "$ACTION" in
             deploy_stacks $CDK_STACKS
         else
             confirm_footprint deploy
+            switch_issuer_consumers_first
             log_step "Deploying all stacks..."
             JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
                 npx cdk deploy --all --require-approval never "${CONTEXT_ARGS[@]}" 2>&1 || {
