@@ -1,6 +1,6 @@
 # Architecture
 
-This is the AI landing zone as actually implemented by this repo, layer by
+This is the agent platform as actually implemented by this repo, layer by
 layer: governance (org SCPs from the control library), identity (Cognito +
 AgentCore Identity Token Vault), platform services (gateway, memory, SSM
 registry), agent workloads (runtimes + Bedrock), the deploy golden path,
