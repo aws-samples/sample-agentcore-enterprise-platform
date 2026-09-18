@@ -28,7 +28,14 @@ def names(checks) -> list[str]:
 
 def test_default_footprint_gets_core_checks_only():
     got = names(checks_for(suffixes(), "orchestrator"))
-    assert got == ["gateway", "memory", "observability", "orchestrator invoke"]
+    # identity first: every later check mints a token through that issuer.
+    assert got == [
+        "identity",
+        "gateway",
+        "memory",
+        "observability",
+        "orchestrator invoke",
+    ]
 
 
 def test_a2a_footprint_adds_live_suba_invokes():

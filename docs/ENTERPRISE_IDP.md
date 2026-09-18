@@ -22,6 +22,89 @@ Two consequences worth understanding before you start:
 - **The client secret lives in Secrets Manager**, never in CDK context or
   `platform.yaml`. Only the secret's *name* is configuration.
 
+That is `identity.mode: brokered`, the default. If your organisation
+standardises on Entra ID as *the* OAuth authorization server and does not
+want a second token issuer in the path, see
+[Direct mode: Entra ID issues the tokens](#direct-mode-entra-id-issues-the-tokens)
+below — no user pool is deployed at all.
+
+---
+
+## Direct mode: Entra ID issues the tokens
+
+```yaml
+identity:
+  idp: entra_id
+  mode: direct
+  tenant_id: "<directory (tenant) id>"
+  client_id: "<app registration client id>"
+  client_secret_name: agentcore/idp-client-secret
+```
+
+```
+Client (human or machine) → Entra ID → access token (aud = client_id)
+        → Gateway / Runtime validate against Entra's discovery document
+```
+
+What changes, and what does not:
+
+| | brokered (default) | direct |
+|---|---|---|
+| Token issuer | Cognito | `https://login.microsoftonline.com/<tenant>/v2.0` |
+| Cognito user pool | deployed; Entra federated into it | **not deployed** — the `auth` stack only publishes the issuer facts |
+| Authorizers pin | `client_id` claim (Cognito clients) | `aud` claim = your app's client id |
+| Machine tokens | Cognito M2M client (`agentcore/invoke`) | the same app registration, `client_credentials`, scope `<client_id>/.default` |
+| Client secret | Entra federation only | Entra federation **and** the M2M credential (same secret, read from Secrets Manager) |
+| Redirect URI on the Entra app | Cognito's `/oauth2/idpresponse` | none for the platform; your own client's |
+| Works with no IdP | yes | no — direct mode *is* the IdP |
+| `/auth/*` SSM interface | same shape | same shape (`auth/mode` says which) |
+
+### Entra-side prerequisites (both fail silently at build, loudly at first invoke)
+
+1. **A service principal for the app in your tenant.** Cognito federation
+   creates it lazily at first sign-in; `client_credentials` does not, and
+   fails with `AADSTS7000229 ... missing service principal`:
+   ```bash
+   az ad sp create --id <client-id>
+   ```
+2. **v2 access tokens.** Without `requestedAccessTokenVersion: 2` the app's
+   tokens carry the v1 issuer `https://sts.windows.net/<tenant>/` while the
+   discovery document advertises `.../v2.0`, and every authorizer rejects
+   them on issuer:
+   ```bash
+   OID=$(az ad app show --id <client-id> --query id -o tsv)
+   az rest --method PATCH --url "https://graph.microsoft.com/v1.0/applications/$OID" \
+     --headers "Content-Type=application/json" \
+     --body '{"api":{"requestedAccessTokenVersion":2}}'
+   ```
+
+`deploy.sh design` prints both under `Sign-in:`; `deploy.sh verify` runs
+`scripts/check_identity.py`, which mints a token exactly as the agents do and
+fails with the specific fix if either prerequisite is missing.
+
+### Humans in direct mode
+
+Register *your application's* redirect URI on the same app registration (or
+a second app in the tenant) and run the authorization-code flow against
+Entra, requesting scope `<client_id>/.default` (or an exposed API scope of
+that app) so the token's `aud` is the platform's audience. The Gateway and the
+Runtime accept it directly; there is no hosted UI to go through.
+
+### Machines in direct mode
+
+`scripts/utils.py get_m2m_token` reads `auth/mode` and switches to
+`client_credentials` against Entra's token endpoint (taken from the discovery
+document — it is not derivable from the issuer by concatenation), using the
+client secret from Secrets Manager under `auth/m2m-client-secret-name` and the
+scope in `auth/m2m-scope`. Agents do the same through the AgentCore Identity
+credential provider; `GATEWAY_TOKEN_SCOPES` on the runtime carries the scope.
+
+### Not in direct mode yet
+
+Okta and Ping stay brokered (`identity.mode: direct` with those IdPs is a
+validation error). Federated multi-account topologies synthesize in direct
+mode but have not been exercised live.
+
 ---
 
 ## Entra ID, end to end

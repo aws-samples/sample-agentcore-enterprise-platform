@@ -10,6 +10,32 @@ clients, and an identity to act as.
 """
 
 
+def gateway_token_scopes(env: dict | None = None) -> list[str]:
+    """Scopes an agent requests for its Gateway M2M token.
+
+    Empty (the Cognito default) means "whatever the client is assigned". An
+    IdP issuing directly (Entra) refuses a client_credentials request with no
+    scope, so app.py sets GATEWAY_TOKEN_SCOPES to the app's own `.default`.
+    """
+    import os
+
+    raw = (env if env is not None else os.environ).get("GATEWAY_TOKEN_SCOPES", "")
+    return [s for s in raw.split(",") if s]
+
+
+def jwks_uri(issuer_url: str, discovery: dict | None = None) -> str:
+    """Where the issuer publishes its signing keys.
+
+    Cognito's is `<issuer>/.well-known/jwks.json`; Entra's is
+    `.../discovery/v2.0/keys`, so the only honest source is the `jwks_uri`
+    field of the OIDC discovery document. The Cognito shape is the fallback
+    for callers that could not fetch discovery.
+    """
+    if discovery and discovery.get("jwks_uri"):
+        return discovery["jwks_uri"]
+    return f"{issuer_url.rstrip('/')}/.well-known/jwks.json"
+
+
 class TokenRejected(ValueError):
     """The token was well-formed and signed but must not be trusted."""
 

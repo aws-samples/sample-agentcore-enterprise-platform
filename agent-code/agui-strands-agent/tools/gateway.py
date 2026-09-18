@@ -6,6 +6,7 @@ import os
 
 from bedrock_agentcore.identity.auth import requires_access_token
 from mcp.client.streamable_http import streamablehttp_client
+from shared.jwt_claims import gateway_token_scopes
 from shared.ssm import get_ssm_parameter
 from strands.tools.mcp import MCPClient
 
@@ -68,7 +69,7 @@ def _fetch_gateway_token() -> str:
     @requires_access_token(
         provider_name=_PROVIDER_NAME,
         auth_flow="M2M",
-        scopes=[],
+        scopes=gateway_token_scopes(),
     )
     def _get_token(access_token: str) -> str:
         return access_token

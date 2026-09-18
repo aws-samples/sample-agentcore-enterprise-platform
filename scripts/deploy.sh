@@ -59,7 +59,7 @@ log_explain(){ echo -e "${YELLOW}📖${NC} $*"; }
 # ponytail: flat sourceable KEY=value file; upgrade path is the
 # declarative Pydantic/YAML config task on the board.
 CONFIG_FILE="$PROJECT_DIR/workshop.env"
-CONFIG_KEYS=(AWS_REGION IDP_TYPE IDP_TENANT_ID IDP_CLIENT_ID IDP_ISSUER_URL
+CONFIG_KEYS=(AWS_REGION IDP_TYPE IDP_MODE IDP_TENANT_ID IDP_CLIENT_ID IDP_ISSUER_URL
              MODEL_ID ORG_ID PROJECT_NAME ENVIRONMENT AGENT_PATTERN)
 
 save_config() {
@@ -648,6 +648,7 @@ build_context_args() {
     CONTEXT_ARGS+=(-c "environment=${ENVIRONMENT}")
     CONTEXT_ARGS+=(-c "region=${AWS_REGION:-us-east-1}")
     CONTEXT_ARGS+=(-c "idp_type=${IDP_TYPE:-cognito}")
+    CONTEXT_ARGS+=(-c "idp_mode=${IDP_MODE:-brokered}")
 
     # IdP config — the client secret itself is never passed; only the name of
     # the Secrets Manager secret set by upsert_idp_secret (see above).

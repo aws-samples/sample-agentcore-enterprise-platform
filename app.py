@@ -96,6 +96,9 @@ enable_web_search = (
     == "true"
 )
 idp_type = cfg("idp_type", "IDP_TYPE", "cognito")
+# brokered: Cognito issues tokens (the IdP federates through it). direct: the
+# IdP issues them and no user pool exists — see IdentityConfig.
+idp_mode = cfg("idp_mode", "IDP_MODE", "brokered")
 
 
 # Security control feature flags (control-library / scope-split model).
@@ -319,24 +322,42 @@ if not is_fed_workload:
         project_name=project,
         environment=env_name,
         idp_type=idp_type,
+        idp_mode=idp_mode,
         idp_config=idp_config,
         env=cdk_env,
     )
 
 # Where runtimes/gateway find the issuer and M2M client: the local auth stack,
 # or the platform account's (via the federation block) in a workload account.
+# Cognito tokens are pinned by `client_id`; an IdP issuing directly (Entra)
+# emits `aud`/`azp` and no client_id, so direct mode pins the audience instead
+# (infra_utils/jwt_authorizer.py). The M2M token then needs an explicit scope
+# — the app's own `.default` — which agents read from GATEWAY_TOKEN_SCOPES.
+allowed_audience: list[str] = []
+gateway_token_scopes = ""
 if is_fed_workload:
     issuer_url = fed.issuer_url
     discovery_url = fed.discovery_url
     m2m_client_id = fed.m2m_client_id
     m2m_client_secret = cdk.SecretValue.secrets_manager(fed.m2m_client_secret_name)
     allowed_clients = [fed.m2m_client_id]
+    if idp_mode == "direct":
+        allowed_clients, allowed_audience = [], [fed.m2m_client_id]
+        gateway_token_scopes = f"{fed.m2m_client_id}/.default"
 else:
     issuer_url = auth_stack.issuer_url
     discovery_url = auth_stack.discovery_url
     m2m_client_id = auth_stack.m2m_client_id
     m2m_client_secret = auth_stack.m2m_client_secret
-    allowed_clients = [auth_stack.app_client_id, auth_stack.m2m_client_id]
+    if auth_stack.is_direct:
+        allowed_clients, allowed_audience = [], [auth_stack.app_client_id]
+        gateway_token_scopes = f"{auth_stack.app_client_id}/.default"
+    else:
+        allowed_clients = [auth_stack.app_client_id, auth_stack.m2m_client_id]
+# Omitted when empty: an empty environment value is an L1 deploy-time reject.
+gateway_scope_env = (
+    {"GATEWAY_TOKEN_SCOPES": gateway_token_scopes} if gateway_token_scopes else {}
+)
 
 # ── Identity (gateway M2M provider + 3LO OAuth providers) ──
 # Deployed on BOTH sides of a federation: token vaults are account-local, so a
@@ -402,6 +423,7 @@ if not is_fed_workload:
         environment=env_name,
         cognito_issuer_url=issuer_url,
         cognito_allowed_clients=allowed_clients,
+        allowed_audience=allowed_audience,
         enable_web_search=enable_web_search,
         tool_configs={
             "sample-tool": {
@@ -480,16 +502,18 @@ if not is_fed_platform:
         allowed_models=allowed_models,
         cognito_issuer_url=issuer_url,
         cognito_allowed_clients=allowed_clients,
+        allowed_audience=allowed_audience,
         require_guardrails=require_guardrails,
         extra_env_vars={
             "GATEWAY_URL": gateway_url_for_runtimes,
             "GATEWAY_CREDENTIAL_PROVIDER_NAME": identity_stack.gateway_credential_provider_name,
+            **gateway_scope_env,
             "MEMORY_ID": memory_stack.memory_id,
             # shared/auth.py verifies the caller's JWT against this issuer's JWKS
             # instead of trusting that the runtime authorizer ran. Without these the
             # agent refuses the request rather than decoding it unverified.
             "COGNITO_ISSUER_URL": issuer_url,
-            "COGNITO_ALLOWED_CLIENTS": ",".join(allowed_clients),
+            "COGNITO_ALLOWED_CLIENTS": ",".join(allowed_clients or allowed_audience),
             "STACK_NAME": prefix,
             "USE_LONG_TERM_MEMORY": str(use_long_term_memory).lower(),
             "LTM_TOP_K": str(ltm_top_k),
@@ -531,6 +555,7 @@ if enable_a2a and not is_fed_platform:
         allowed_models=allowed_models,
         cognito_issuer_url=issuer_url,
         cognito_allowed_clients=allowed_clients,
+        allowed_audience=allowed_audience,
         require_guardrails=require_guardrails,
         extra_env_vars=model_env,
         **runtime_network,
@@ -556,10 +581,12 @@ if enable_a2a and not is_fed_platform:
         allowed_models=allowed_models,
         cognito_issuer_url=issuer_url,
         cognito_allowed_clients=allowed_clients,
+        allowed_audience=allowed_audience,
         require_guardrails=require_guardrails,
         extra_env_vars={
             "GATEWAY_URL": gateway_url_for_runtimes,
             "GATEWAY_CREDENTIAL_PROVIDER_NAME": identity_stack.gateway_credential_provider_name,
+            **gateway_scope_env,
             **model_env,
         },
         **runtime_network,

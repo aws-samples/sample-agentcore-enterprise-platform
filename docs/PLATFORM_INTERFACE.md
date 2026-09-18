@@ -17,11 +17,14 @@ All parameters live under `/{project}/{environment}/` (default:
 
 | Parameter | Meaning |
 |---|---|
-| `auth/issuer-url` | Cognito issuer; append `/.well-known/openid-configuration` for OIDC discovery |
-| `auth/user-pool-id` | The user pool everything authenticates against |
+| `auth/mode` | `brokered` (Cognito issues tokens — the default) or `direct` (the IdP does; no user pool). Absent on platforms deployed before it existed: read absent as `brokered` |
+| `auth/issuer-url` | Token issuer (Cognito, or Entra's `.../v2.0` in direct mode); append `/.well-known/openid-configuration` for OIDC discovery |
+| `auth/user-pool-id` | The user pool everything authenticates against (brokered only) |
 | `auth/app-client-id` | Authorization-code + PKCE client (humans; has a secret, readable via `cognito-idp describe-user-pool-client`) |
-| `auth/web-client-id` | Implicit-grant client (browser dashboards; no secret) |
-| `auth/m2m-client-id` | client_credentials client (machines; scope `agentcore/invoke`) |
+| `auth/web-client-id` | Implicit-grant client (browser dashboards; no secret; brokered only) |
+| `auth/m2m-client-id` | client_credentials client (machines). Direct mode: the same app registration as `app-client-id` |
+| `auth/m2m-scope` | Scope to request for a machine token: `agentcore/invoke` (brokered) or `<client_id>/.default` (direct) |
+| `auth/m2m-client-secret-name` | Direct mode only: Secrets Manager NAME of the client secret (brokered keeps it in Cognito) |
 | `gateway/url` | MCP gateway endpoint — `tools/list` / `tools/call` with a Bearer JWT |
 | `identity/gateway-credential-provider-name` | Token-vault provider agents use via `@requires_access_token` |
 | `memory/memory-id`, `memory/memory-arn` | AgentCore Memory for this deployment |
@@ -38,7 +41,12 @@ gateway_url = ssm.StringParameter.value_for_string_parameter(
 )
 ```
 
-## Authentication — Cognito tokens, two shapes
+## Authentication — one issuer, two shapes
+
+Read `auth/mode` first. Brokered (the default) is described below; in direct
+mode the issuer is the customer's IdP and the same two shapes apply with
+`auth/m2m-scope` and Entra's token endpoint (from OIDC discovery) — see
+[Direct mode](ENTERPRISE_IDP.md#direct-mode-entra-id-issues-the-tokens).
 
 - **Humans**: authorization-code + PKCE against the hosted UI using
   `auth/app-client-id`. With an enterprise IdP federated in (`IDP_TYPE=...`),
