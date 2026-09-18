@@ -13,7 +13,7 @@ three commands.
 
 ```bash
 ./scripts/deploy.sh design --profile greenfield   # 1. Design  — nothing deployed
-./scripts/deploy.sh usecase new release-notes      #    (add a use case to the design)
+./scripts/deploy.sh usecase new release-notes      #    add your use case to the design
 ./scripts/deploy.sh build                          # 2. Build   — platform + use cases
 ./scripts/deploy.sh verify                         # 3. Verify  — tests every claim
 ```
@@ -53,6 +53,8 @@ region: us-east-1
 
 identity:
   idp: entra_id            # or cognito, okta, ping
+  mode: brokered           # Cognito issues tokens, the IdP signs users in.
+                           # direct: Entra ID issues them — no Cognito deployed
 
 agents:
   pattern: langgraph-agent # bring your framework — 7 patterns
@@ -70,6 +72,12 @@ use_cases:
   release-notes: {}        # your application, built on the platform
 ```
 
+Identity is a Design decision, not a deployment detail: `brokered` keeps one
+issuer (Cognito) whatever the IdP and works with no IdP on day one; `direct`
+makes your Entra ID tenant the issuer and deploys no user pool at all. Either
+way the rest of the platform is identical — see
+[Enterprise IdP federation](ENTERPRISE_IDP.md).
+
 Validation is strict and errors are actionable: a typo'd key is an error, not
 a silent no-op, every failure in the file is reported at once, and a preset
 placeholder you forgot to replace (an IdP tenant id, an organization id) stops
@@ -83,6 +91,20 @@ From this file the platform derives its **deployment contract**: the exact
 list of CloudFormation stacks your design produces. Build plans, verification,
 the dashboard, and destroy all consume that contract — and CI fails if the
 contract and the CDK app ever drift apart.
+
+### Your use case is part of the design
+
+```bash
+./scripts/deploy.sh usecase new release-notes
+```
+
+scaffolds `use-cases/release-notes/` — a manifest, a CDK stack, a verify
+script, and a walkthrough — and enables it in `platform.yaml`, so it appears
+in the plan above. The use case consumes the platform only through its
+[published interface](PLATFORM_INTERFACE.md) (SSM parameters for the gateway
+URL, the issuer, the memory id, ...), so it deploys with `build` and is torn
+down with `destroy`, with no changes to the platform itself.
+`deploy.sh usecase list` shows what is discovered and what the design enables.
 
 ## 2. Build — platform and use case, one command
 
@@ -110,20 +132,6 @@ Manager and only their *names* travel through configuration.
 Each stack has a technical reference page — resources, configuration keys,
 interfaces, IAM shape, verification hooks, and known gotchas — in the
 [module reference](modules/README.md).
-
-### Your use case is part of the build
-
-```bash
-./scripts/deploy.sh usecase new release-notes
-```
-
-scaffolds `use-cases/release-notes/` — a manifest, a CDK stack, a verify
-script, and a walkthrough — and enables it in `platform.yaml`. The use case
-consumes the platform only through its
-[published interface](PLATFORM_INTERFACE.md) (SSM parameters for the gateway
-URL, the user pool, the memory id, ...), so it deploys with the next `build`
-and is torn down with `destroy`, with no changes to the platform itself.
-`deploy.sh usecase list` shows what is discovered and what the design enables.
 
 ## 3. Verify — verification is a feature
 

@@ -16,7 +16,7 @@ designs it, builds it and a first use case on it, verifies it, and owns it.
 
 | Layer | What's deployed |
 |---|---|
-| **Identity** | Amazon Cognito with optional federation to your corporate IdP (Entra ID, Okta, Ping) |
+| **Identity** | Your choice, declared in Design: Amazon Cognito as the token issuer with your corporate IdP (Entra ID, Okta, Ping) federated in — or Entra ID as the issuer directly, with no Cognito deployed |
 | **Agents** | AgentCore Runtime hosting your framework — 7 patterns: Strands, LangGraph, Claude Agent SDK (single + multi), AG-UI, orchestrator |
 | **Tools** | AgentCore Gateway (MCP): tools become governed platform citizens, not code baked into agents |
 | **Memory** | AgentCore Memory — conversation state that survives restarts, with optional long-term memory |
@@ -26,12 +26,12 @@ designs it, builds it and a first use case on it, verifies it, and owns it.
 ## Design → Build → Verify
 
 1. **Design.** Pick a profile, or write your own `platform.yaml`: single or
-   multi-account, your IdP, your agent framework, the controls you need, the
-   use cases you will build. `deploy.sh design` validates it and prints the
-   exact stacks it produces — nothing is deployed yet.
+   multi-account, your IdP and who issues tokens, your agent framework, the
+   controls you need. `deploy.sh usecase new <name>` scaffolds your
+   application into the same file. `deploy.sh design` validates it and prints
+   the exact stacks it produces — nothing is deployed yet.
 2. **Build.** `deploy.sh build` stands up the platform and every use case in
-   the design. `deploy.sh usecase new <name>` scaffolds your application so it
-   is part of the same build.
+   the design, with one command.
 3. **Verify.** `deploy.sh verify` re-tests every promise the design made,
    platform and use cases alike, and exits non-zero on any failure.
 
