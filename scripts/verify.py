@@ -21,6 +21,8 @@ if any claim fails:
                                                        agui-* agent patterns)
     runtime-code-agent          invoke.py --a2a code-agent
     runtime-research-agent      invoke.py --a2a research-agent
+    uc-<name> (enabled use case) use-cases/<name>/verify.py, run LAST so a
+                                broken platform fails on the platform check
 
 Configuration comes from platform.yaml when present (env vars win, same
 precedence as everywhere else). Run it directly or via `deploy.sh verify`.
@@ -29,6 +31,7 @@ precedence as everywhere else). Run it directly or via `deploy.sh verify`.
 import os
 import subprocess  # nosec B404 — composing our own scripts, no shell
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -36,6 +39,7 @@ sys.path.insert(0, str(REPO))
 
 from infra_utils.platform_config import (
     PlatformConfig,
+    discover_use_cases,
     load_platform_config,
     resolve_region,
     to_env,
@@ -63,8 +67,13 @@ def checks_for(
     agent_pattern: str,
     require_guardrails: bool = False,
     alarms: bool = False,
+    use_cases: Sequence[str] = (),
 ) -> list[tuple[str, list[str]]]:
-    """Map a footprint onto the tools that verify it. Pure — unit-tested."""
+    """Map a footprint onto the tools that verify it. Pure — unit-tested.
+
+    `use_cases` are the names of enabled use cases; each contributes its own
+    verify.py (CONTRIBUTING_USE_CASES.md), appended after the core checks.
+    Paths are relative to scripts/, which is where main() runs every tool."""
     checks: list[tuple[str, list[str]]] = []
     if "gateway" in suffixes:
         checks.append(("gateway", ["test_gateway.py"]))
@@ -92,6 +101,8 @@ def checks_for(
                 ["invoke.py", "--a2a", "research-agent", HEALTH_PROMPT],
             )
         )
+    for name in use_cases:
+        checks.append((f"use case {name}", [f"../use-cases/{name}/verify.py"]))
     return checks
 
 
@@ -116,7 +127,16 @@ def main() -> int:
         == "true"
     )
 
-    checks = checks_for(suffixes, pattern, require_guardrails, alarms)
+    # Enabled use cases whose stacks are actually in this footprint (in a
+    # federation, expected_stacks already placed them on the right side).
+    manifests = discover_use_cases() if config.use_cases else {}
+    use_cases = [
+        name
+        for name in sorted(config.use_cases)
+        if any(s in suffixes for s in manifests[name].stacks)
+    ]
+
+    checks = checks_for(suffixes, pattern, require_guardrails, alarms, use_cases)
     print(f"Verifying {config.project}/{config.environment} in account {account}")
     print(f"Footprint: {' '.join(sorted(suffixes))}\n")
 
