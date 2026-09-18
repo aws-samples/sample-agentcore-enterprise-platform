@@ -524,27 +524,6 @@ prompt_idp() {
     log_info "IdP set to: ${IDP_TYPE:-cognito}"
 }
 
-prompt_api_keys() {
-    if [ "${NON_INTERACTIVE:-0}" = "1" ]; then return; fi
-    log_header "API Keys (Optional)"
-
-    for key_name in tavily google-search google-maps; do
-        local secret_name="${PREFIX}-${key_name}-api-key"
-        if aws secretsmanager describe-secret --secret-id "$secret_name" \
-            --region "$AWS_REGION" &>/dev/null; then
-            log_info "✓ ${key_name}: already configured"
-        else
-            read -rp "  ${key_name} API key (Enter to skip): " api_key
-            if [ -n "$api_key" ]; then
-                aws secretsmanager create-secret --name "$secret_name" \
-                    --secret-string "$api_key" --region "$AWS_REGION" &>/dev/null
-                log_info "✓ ${key_name}: stored in Secrets Manager"
-            else
-                log_info "○ ${key_name}: skipped"
-            fi
-        fi
-    done
-}
 
 # ═══════════════════════════════════════════════════════════════
 # IdP Client Secret → Secrets Manager
@@ -786,8 +765,7 @@ sweep_leftovers() {
     # only — a bring-your-own secret name is the operator's, never swept.
     local orphaned=()
     for s in idp-client-secret google-oauth-secret github-oauth-secret \
-             notion-oauth-secret tavily-api-key google-search-api-key \
-             google-maps-api-key; do
+             notion-oauth-secret; do
         aws secretsmanager describe-secret --secret-id "${PREFIX}-${s}" \
             --region "$AWS_REGION" &>/dev/null && orphaned+=("${PREFIX}-${s}")
     done
@@ -1256,7 +1234,6 @@ case "$ACTION" in
         if [ "${NON_INTERACTIVE:-0}" != "1" ]; then
             prompt_agent_pattern
             prompt_idp
-            prompt_api_keys
             upsert_idp_secret   # Store any newly prompted IdP secret; sets IDP_CLIENT_SECRET_NAME
             build_context_args  # Rebuild with new values
             save_config         # Persist answers for the next run (secrets excluded)
@@ -1299,7 +1276,6 @@ case "$ACTION" in
         if [ "$DRY_RUN" != "1" ] && [ "${NON_INTERACTIVE:-0}" != "1" ]; then
             prompt_agent_pattern
             prompt_idp
-            prompt_api_keys
             upsert_idp_secret   # Store any newly prompted IdP secret; sets IDP_CLIENT_SECRET_NAME
             build_context_args  # Rebuild with new values
             save_config         # Persist answers for the next run (secrets excluded)

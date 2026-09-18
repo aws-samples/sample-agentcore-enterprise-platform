@@ -65,9 +65,13 @@ test-controls:
 # Homebrew's when it is there. Override with: make check-shell BASH=/path/to/bash
 BASH ?= $(shell command -v /opt/homebrew/bin/bash 2>/dev/null || command -v bash)
 
+# The platform.yaml reference is generated from the pydantic models; this fails
+# when docs/PLATFORM_YAML.md is stale. CI wiring is a follow-up.
+check-docs:
+	python scripts/gen_platform_reference.py --check
 check-shell:
 	shellcheck --severity=warning $$(git ls-files '*.sh')
 	$(BASH) scripts/check-deploy-config.sh
 	$(BASH) scripts/check-workshop-flow.sh
 
-.PHONY: all lint ruff-lint format lint-cicd deploy synth test-agent test-gateway test-memory validate-controls test-controls check-shell
+.PHONY: all lint ruff-lint format lint-cicd deploy synth test-agent test-gateway test-memory validate-controls test-controls check-docs check-shell
