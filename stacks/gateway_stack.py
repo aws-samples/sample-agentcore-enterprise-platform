@@ -38,6 +38,8 @@ class GatewayStack(cdk.Stack):
         enable_egress_filter: bool = False,
         enable_cedar: bool = False,
         cedar_mode: str = "LOG_ONLY",
+        debug_exceptions: bool = True,
+        kms_key_arn: str = "",
         **kwargs,
     ):
         super().__init__(scope, id, **kwargs)
@@ -194,23 +196,31 @@ class GatewayStack(cdk.Stack):
             )
 
         # Gateway
-        self._gateway = agentcore.CfnGateway(
-            self,
-            "Gateway",
-            name=gw_name,
-            role_arn=gw_role.role_arn,
-            authorizer_type="CUSTOM_JWT",
-            protocol_type="MCP",
-            exception_level="DEBUG",
-            authorizer_configuration=custom_jwt_authorizer(
+        gateway_props = {
+            "name": gw_name,
+            "role_arn": gw_role.role_arn,
+            "authorizer_type": "CUSTOM_JWT",
+            "protocol_type": "MCP",
+            "authorizer_configuration": custom_jwt_authorizer(
                 cognito_issuer_url, cognito_allowed_clients, allowed_audience
             ),
-            protocol_configuration={
+            "protocol_configuration": {
                 "mcp": {"supportedVersions": ["2025-03-26", "2025-06-18"]},
             },
-            interceptor_configurations=interceptor_configurations,
-            policy_engine_configuration=policy_engine_configuration,
-        )
+            "interceptor_configurations": interceptor_configurations,
+            "policy_engine_configuration": policy_engine_configuration,
+        }
+        if debug_exceptions:
+            gateway_props["exception_level"] = "DEBUG"
+        if kms_key_arn:
+            gateway_props["kms_key_arn"] = kms_key_arn
+            gw_role.add_to_policy(
+                iam.PolicyStatement(
+                    actions=["kms:Decrypt", "kms:DescribeKey", "kms:GenerateDataKey"],
+                    resources=[kms_key_arn],
+                )
+            )
+        self._gateway = agentcore.CfnGateway(self, "Gateway", **gateway_props)
 
         # Allow the Gateway to invoke the interceptor Lambda (after gateway ARN is known).
         if self._interceptor_fn is not None:

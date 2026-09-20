@@ -78,6 +78,7 @@ class RuntimeStack(cdk.Stack):
         dockerfile_pattern: str = "",
         allowed_models: list[str] | None = None,
         require_guardrails: bool = False,
+        retain_data: bool = False,
         # ── Migration (image-source) mode ──
         # Set source_image (registry ref) or build_context (local dir) and the
         # stack builds the migration adapter (migration-adapter/) ON TOP of the
@@ -134,8 +135,10 @@ class RuntimeStack(cdk.Stack):
             self,
             "ECR",
             repository_name=f"{prefix}-{component_name}",
-            removal_policy=cdk.RemovalPolicy.DESTROY,
-            empty_on_delete=True,
+            removal_policy=(
+                cdk.RemovalPolicy.RETAIN if retain_data else cdk.RemovalPolicy.DESTROY
+            ),
+            empty_on_delete=not retain_data,
             # Scan every pushed image: the agent images pull in a large Python
             # dependency tree, and this is the only automatic signal that a base
             # image or package has a known CVE (Checkov CKV_AWS_163).

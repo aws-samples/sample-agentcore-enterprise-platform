@@ -107,8 +107,11 @@ class FederationConfig(BaseModel):
 
 
 class DeploymentConfig(BaseModel):
-    """Multi-account strategy. See docs/MULTI_ACCOUNT.md.
+    """Deployment posture and multi-account strategy. See docs/MULTI_ACCOUNT.md.
 
+    mode — workshop preserves the accelerator's disposable defaults;
+        production enables retained state and requires the controls enforced
+        by PlatformConfig._production_controls_are_complete.
     centralized — everything in one account (the default; today's behavior).
     distributed — each team/workload account runs its own full copy of this
         file; org guardrails (terraform/org-guardrails) apply org-wide.
@@ -119,6 +122,7 @@ class DeploymentConfig(BaseModel):
         same file works in both.
     """
 
+    mode: Literal["workshop", "production"] = "workshop"
     strategy: Literal["centralized", "distributed", "federated"] = "centralized"
     platform_account: str = ""
     workload_accounts: list[str] = Field(default_factory=list)
@@ -316,6 +320,7 @@ def identity_placeholders(identity: IdentityConfig) -> list[str]:
 
 class MemoryConfig(BaseModel):
     long_term: bool = False
+    event_expiry_days: int = Field(default=30, ge=1, le=365)
     top_k: int = Field(default=10, ge=1, le=100)
     relevance_score: float = Field(default=0.3, ge=0.0, le=1.0)
 
@@ -414,17 +419,14 @@ class SecurityConfig(BaseModel):
     @field_validator("org_id")
     @classmethod
     def _org_id_shape(cls, v: str) -> str:
-        # Empty is fine — deploy.sh prompts for it. A placeholder is not:
-        # "o-REPLACEME" used to validate as a plain string and render into
-        # IAM policies against an organization that does not exist.
-        if v and (
-            re.search(r"replace|example|changeme", v, re.IGNORECASE)
-            or not re.fullmatch(r"o-[a-z0-9]{10,32}", v)
-        ):
+        # Shape is always enforced. Sentinel values with a valid shape are
+        # warnings only for the parity gate and remain hard errors on deploy.
+        if v and not re.fullmatch(r"o-[a-z0-9]{10,32}", v):
             raise ValueError(
                 f"not an AWS Organizations id: {v!r}. Find yours with: "
                 "aws organizations describe-organization --query Organization.Id"
             )
+        _refuse_placeholders(security_org_placeholders(v))
         return v
 
     @model_validator(mode="after")
@@ -439,11 +441,30 @@ class SecurityConfig(BaseModel):
         return self
 
 
+def security_org_placeholders(org_id: str) -> list[str]:
+    if org_id and re.search(r"replace|example|changeme", org_id, re.IGNORECASE):
+        return [
+            (
+                f"security.org_id is a placeholder ({org_id!r}): find yours with "
+                "`aws organizations describe-organization --query Organization.Id`"
+            )
+        ]
+    return []
+
+
 class ObservabilityConfig(BaseModel):
     transaction_search: bool = True
     # CloudWatch alarms + SNS ops topic + the platform dashboard.
     alarms: bool = False
     alarm_email: str = ""  # empty = topic exists, no email subscription
+    log_retention_days: int = 30
+
+    @field_validator("log_retention_days")
+    @classmethod
+    def _log_retention_supported(cls, v: int) -> int:
+        if v not in {30, 90, 180, 365}:
+            raise ValueError("must be one of 30, 90, 180, or 365 days")
+        return v
 
     @field_validator("alarm_email")
     @classmethod
@@ -451,17 +472,24 @@ class ObservabilityConfig(BaseModel):
         # Empty is fine — the topic still deploys for manual subscription.
         # A placeholder is not: SNS mails a confirmation link to an inbox
         # nobody reads and every alarm after that goes nowhere.
-        if v and (
-            re.search(r"replace|example|changeme", v, re.IGNORECASE)
-            or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", v)
-        ):
+        if v and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", v):
             raise ValueError(
-                f"not a subscribable email address: {v!r}. Placeholders "
-                "(replace/example/changeme) are rejected — deliberately "
-                "including 'user@example.com'. Use a real inbox or leave "
-                "it empty."
+                f"not a subscribable email address: {v!r}. Use a real inbox "
+                "or leave it empty."
             )
+        _refuse_placeholders(observability_placeholders(v))
         return v
+
+
+def observability_placeholders(alarm_email: str) -> list[str]:
+    if alarm_email and _SENTINEL_RE.search(alarm_email):
+        return [
+            (
+                "observability.alarm_email is a placeholder: use a real monitored "
+                "inbox; SNS confirmation and alarm delivery must reach an operator"
+            )
+        ]
+    return []
 
 
 # ── Migration ──
@@ -785,13 +813,86 @@ class PlatformConfig(BaseModel):
                 )
         return self
 
+    @model_validator(mode="after")
+    def _production_controls_are_complete(self) -> PlatformConfig:
+        if self.deployment.mode != "production":
+            return self
+
+        missing: list[str] = []
+
+        def require(condition: bool, field: str, expectation: str) -> None:
+            if not condition:
+                missing.append(f"{field}: {expectation}")
+
+        require(
+            self.identity.idp != "cognito",
+            "identity.idp",
+            "use an enterprise IdP (entra_id, okta, or ping)",
+        )
+        require(self.security.networking, "security.networking", "set true")
+        require(
+            self.security.cloudtrail_alerting,
+            "security.cloudtrail_alerting",
+            "set true",
+        )
+        require(
+            self.security.resource_policies,
+            "security.resource_policies",
+            "set true",
+        )
+        require(self.security.egress_filter, "security.egress_filter", "set true")
+        require(
+            self.security.require_guardrails,
+            "security.require_guardrails",
+            "set true",
+        )
+        require(self.security.cedar.enabled, "security.cedar.enabled", "set true")
+        require(
+            self.security.cedar.mode == "ENFORCE",
+            "security.cedar.mode",
+            "set ENFORCE",
+        )
+        require(self.security.traceability, "security.traceability", "set true")
+        require(bool(self.security.org_id), "security.org_id", "provide the AWS Org id")
+        require(bool(self.agents.model_id), "agents.model_id", "select a model")
+        require(
+            bool(self.agents.allowed_models),
+            "agents.allowed_models",
+            "provide a non-empty model allow-list",
+        )
+        require(
+            self.gateway.web_search != "auto",
+            "gateway.web_search",
+            "choose on or off explicitly",
+        )
+        require(
+            self.observability.transaction_search,
+            "observability.transaction_search",
+            "set true",
+        )
+        require(self.observability.alarms, "observability.alarms", "set true")
+        require(
+            bool(self.observability.alarm_email),
+            "observability.alarm_email",
+            "provide a monitored inbox",
+        )
+        if missing:
+            raise ValueError(
+                "deployment.mode 'production' requires all production controls:\n- "
+                + "\n- ".join(missing)
+            )
+        return self
+
     @property
     def warnings(self) -> list[str]:
         """Everything non-fatal about this file: placeholders that validation
         let through because PLATFORM_ALLOW_PLACEHOLDERS=1 (otherwise they are
         errors and the model never exists), plus the migration warnings."""
-        out = identity_placeholders(self.identity) + deployment_placeholders(
-            self.deployment
+        out = (
+            identity_placeholders(self.identity)
+            + deployment_placeholders(self.deployment)
+            + security_org_placeholders(self.security.org_id)
+            + observability_placeholders(self.observability.alarm_email)
         )
         # The migration block (PR #63) carries its own warnings; getattr keeps
         # this property valid on a tree where that field does not exist yet.
@@ -913,6 +1014,7 @@ def apply_environment_overrides(
         "PROJECT_NAME": ("project",),
         "ENVIRONMENT": ("environment",),
         "AWS_REGION": ("region",),
+        "DEPLOYMENT_MODE": ("deployment", "mode"),
         "DEPLOYMENT_STRATEGY": ("deployment", "strategy"),
         "PLATFORM_ACCOUNT": ("deployment", "platform_account"),
         "IDP_TYPE": ("identity", "idp"),
@@ -972,6 +1074,8 @@ def apply_environment_overrides(
         ),
         "LTM_TOP_K": ("agents", "memory", "top_k"),
         "LTM_RELEVANCE_SCORE": ("agents", "memory", "relevance_score"),
+        "MEMORY_EVENT_EXPIRY_DAYS": ("agents", "memory", "event_expiry_days"),
+        "LOG_RETENTION_DAYS": ("observability", "log_retention_days"),
     }.items():
         if env.get(key):
             put(path, env[key])
@@ -1013,6 +1117,7 @@ def to_env(config: PlatformConfig) -> dict[str, str]:
         "PROJECT_NAME": config.project,
         "ENVIRONMENT": config.environment,
         "AWS_REGION": config.region,
+        "DEPLOYMENT_MODE": config.deployment.mode,
         "DEPLOYMENT_STRATEGY": config.deployment.strategy,
         "PLATFORM_ACCOUNT": config.deployment.platform_account,
         "IDP_TYPE": config.identity.idp,
@@ -1029,6 +1134,7 @@ def to_env(config: PlatformConfig) -> dict[str, str]:
         "ALLOWED_MODELS": ",".join(config.agents.allowed_models),
         "ENABLE_A2A": str(config.agents.a2a).lower(),
         "USE_LONG_TERM_MEMORY": str(config.agents.memory.long_term).lower(),
+        "MEMORY_EVENT_EXPIRY_DAYS": str(config.agents.memory.event_expiry_days),
         "LTM_TOP_K": str(config.agents.memory.top_k),
         "LTM_RELEVANCE_SCORE": str(config.agents.memory.relevance_score),
         "ENABLE_WEB_SEARCH": str(config.web_search_enabled).lower(),
@@ -1046,6 +1152,7 @@ def to_env(config: PlatformConfig) -> dict[str, str]:
         ).lower(),
         "ENABLE_ALARMS": str(config.observability.alarms).lower(),
         "ALARM_EMAIL": config.observability.alarm_email,
+        "LOG_RETENTION_DAYS": str(config.observability.log_retention_days),
         "MIGRATION_ENABLED": str(config.migration is not None).lower(),
     }
     if config.migration:
@@ -1211,6 +1318,7 @@ def design_plan(config: PlatformConfig, account: str = "") -> list[str]:
     )
     lines = [
         f"Design: {config.project}-{config.environment} in {config.region}",
+        f"  Mode: {dep.mode}",
         f"  Topology: {dep.strategy}"
         + (f", this account is the {role} side" if role else "")
         + (f" (account {account})" if account else ""),
@@ -1249,6 +1357,13 @@ def design_plan(config: PlatformConfig, account: str = "") -> list[str]:
     lines += [
         "",
         "Controls on: " + (", ".join(on) if on else "none (every control is opt-in)"),
+        (
+            "Lifecycle: retained stateful resources; "
+            f"{config.observability.log_retention_days}-day logs; "
+            f"{config.agents.memory.event_expiry_days}-day memory events"
+            if dep.mode == "production"
+            else "Lifecycle: disposable workshop resources"
+        ),
     ]
 
     if config.use_cases:

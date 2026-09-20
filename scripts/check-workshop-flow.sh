@@ -3,6 +3,7 @@
 # (a) every module in every PROFILE_MODULES sequence has MAP/EXPLAIN/VERIFY entries
 # (b) `workshop --dry-run --profile greenfield` prints 3 4 5 6 9 in order, no AWS call
 # (c) `--from 6` starts at module 6   (d) unknown --profile errors with the valid list
+# (e) the long-lived production profile is refused by the disposable runner
 set -euo pipefail
 [ "${BASH_VERSINFO[0]:-0}" -ge 4 ] || { echo "needs bash 4+ (brew install bash)" >&2; exit 1; }
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -62,5 +63,13 @@ echo "PASS: --from 6 starts at module 6"
 if out="$(run workshop --dry-run --profile nope)"; then fail "unknown profile did not error"; fi
 grep -q 'Valid profiles' <<<"$out" || fail "unknown profile error lacks the valid list"
 echo "PASS: unknown --profile rejected with valid list"
+
+# (e) production is a design/build profile, never a guided disposable run.
+if out="$(run workshop --dry-run --profile production)"; then
+    fail "production profile was accepted by the guided workshop runner"
+fi
+grep -q 'cannot run deployment.mode=production' <<<"$out" \
+    || fail "production refusal did not explain the mode boundary: $out"
+echo "PASS: production profile is refused by the disposable workshop runner"
 
 echo "OK: all workshop-flow checks passed"

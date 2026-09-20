@@ -61,11 +61,21 @@ class ObservabilityStack(cdk.Stack):
         enable_transaction_search: bool = True,
         enable_alarms: bool = False,
         alarm_email: str = "",
+        log_retention_days: int = 30,
+        retain_data: bool = False,
         **kwargs,
     ):
         super().__init__(scope, id, **kwargs)
 
         prefix = f"{project_name}-{environment}"
+        retention_by_days = {
+            30: logs.RetentionDays.ONE_MONTH,
+            90: logs.RetentionDays.THREE_MONTHS,
+            180: logs.RetentionDays.SIX_MONTHS,
+            365: logs.RetentionDays.ONE_YEAR,
+        }
+        if log_retention_days not in retention_by_days:
+            raise ValueError("log_retention_days must be one of 30, 90, 180, or 365")
 
         # ── CloudWatch Transaction Search (prerequisite for any tracing) ──
         # The runtimes emit OTLP spans whether or not this is configured; with
@@ -147,8 +157,12 @@ class ObservabilityStack(cdk.Stack):
                 self,
                 f"Logs{safe_name}",
                 log_group_name=f"/aws/bedrock-agentcore/{prefix}/{resource_name}",
-                retention=logs.RetentionDays.ONE_MONTH,
-                removal_policy=cdk.RemovalPolicy.DESTROY,
+                retention=retention_by_days[log_retention_days],
+                removal_policy=(
+                    cdk.RemovalPolicy.RETAIN
+                    if retain_data
+                    else cdk.RemovalPolicy.DESTROY
+                ),
             )
 
             # Vended log delivery source
