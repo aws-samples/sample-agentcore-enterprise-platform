@@ -294,7 +294,8 @@ Never copy credential values into this file.
   that job now installs the repository's declared requirements before Checkov.
 - The new secret-boundary job also exposed that the repository-local
   `cdk.json` expects a developer virtual environment. CI now explicitly invokes
-  the runner's installed `python3` for synthesis.
+  the runner's installed `python3` and the same credential-free placeholder
+  account/region used by the existing contract gate for offline synthesis.
 - The failing label job is a repository baseline issue: its workflow references
   a missing `.github/labeler.yml`; recent merged pull requests show the same
   result. The aggregate CodeQL status is likewise separate from the passing
