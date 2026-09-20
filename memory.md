@@ -291,5 +291,5 @@ Never copy credential values into this file.
 
 ## Commits and pull request
 
-No milestone commit or pull request yet. This section will be updated after the
-review branch is published.
+- `3ef164d` — `Harden G0 production-readiness boundaries`
+- Pull request: [#74 — Harden G0 production-readiness boundaries](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/74)
