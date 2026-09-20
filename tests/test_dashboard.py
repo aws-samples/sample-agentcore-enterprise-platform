@@ -618,7 +618,6 @@ def test_documented_dashboard_servers_are_loopback_only():
     for relative in (
         "README.md",
         "docs/PARTICIPANT_GUIDE.md",
-        "local/DEMO_RUNBOOK.md",
     ):
         text = (REPO / relative).read_text()
         commands = [

@@ -296,6 +296,9 @@ Never copy credential values into this file.
   `cdk.json` expects a developer virtual environment. CI now explicitly invokes
   the runner's installed `python3` and the same credential-free placeholder
   account/region used by the existing contract gate for offline synthesis.
+- Clean-checkout CI then caught a test that included an intentionally untracked
+  local facilitator runbook. The loopback-only documentation contract now
+  covers only the tracked README and participant guide.
 - The failing label job is a repository baseline issue: its workflow references
   a missing `.github/labeler.yml`; recent merged pull requests show the same
   result. The aggregate CodeQL status is likewise separate from the passing
