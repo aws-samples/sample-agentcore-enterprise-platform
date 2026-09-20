@@ -153,7 +153,26 @@ for _a in "$@"; do
     _prev="$_a"
 done
 if [ -n "$PRESCAN_PROFILE" ] && [ "${1:-}" != "config" ] && [ "$PRESCAN_DRY" != "1" ]; then
-    materialize_preset "$PRESCAN_PROFILE"
+    if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "plan" ]; then
+        # Planning a shipped migration preset must be genuinely read-only:
+        # inspect it in place instead of replacing a customer's platform.yaml.
+        PLATFORM_CONFIG="$PROJECT_DIR/presets/$PRESCAN_PROFILE.yaml"
+        [ -f "$PLATFORM_CONFIG" ] || {
+            log_error "Unknown profile: '$PRESCAN_PROFILE'. Valid profiles: $(valid_profiles)"
+            exit 1
+        }
+        log_info "Profile '$PRESCAN_PROFILE' selected for read-only migration planning"
+    else
+        materialize_preset "$PRESCAN_PROFILE"
+    fi
+fi
+
+# Placeholders are useful discovery warnings in a read-only migration plan,
+# but no build/deploy/design path may inherit the parity gate's escape hatch.
+if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "plan" ]; then
+    export PLATFORM_ALLOW_PLACEHOLDERS=1
+else
+    unset PLATFORM_ALLOW_PLACEHOLDERS
 fi
 
 apply_platform_config() {
@@ -1590,7 +1609,8 @@ migrate_plan() {
             log_info "found:   $secret_name"
         else
             log_warn "missing: $secret_name"
-            log_warn "         aws secretsmanager create-secret --name $secret_name --region $AWS_REGION --secret-string '<value>'"
+            log_warn "         Read the value from stdin (keeps plaintext out of shell history):"
+            log_warn "         aws secretsmanager create-secret --name $secret_name --region $AWS_REGION --secret-string file:///dev/stdin"
         fi
     done
 }

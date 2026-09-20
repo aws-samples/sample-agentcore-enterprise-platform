@@ -13,9 +13,9 @@ operational readiness review.
 
 ## Current milestone
 
-**G1 — production design baseline merged; live evidence closure in progress**
+**G1 — production design baseline merged; migration EBA hardening in progress**
 
-Branch: `chore/final-live-evidence`
+Branch: `fix/migration-contract`
 
 G0 merged through PR #74 after prerequisite PR #75. G1 implementation merged
 through PR #76. The current branch closes a deployment-account boundary found
@@ -42,10 +42,38 @@ Open evidence and ownership work:
   available 90-day CloudTrail history.
 - [ ] Complete the Entra authorization-code callback with the account holder's
   physical passkey and retain sanitized result evidence.
-- [ ] After the 65-minute token drain, run the next locked deployment to remove
+- [x] After the 65-minute token drain, run the next locked deployment to remove
   the retired client allow-list/checkpoints and verify the final state.
 - [ ] Populate, review, and approve the five G1 governance artifacts for the
   specific customer; draft templates and green synthesis do not close G1.
+
+### 2026-09-21 — migration profile implementation audit
+
+- The supported migration slice is real: a local Docker build context or
+  pre-built arm64 image is built by CodeBuild, wrapped with the migration
+  adapter, and deployed to AgentCore Runtime. Focused contract/adapter tests
+  and an offline synthesis exercise this path.
+- The audit found that `migration.target.runtime: ec2` and
+  `migration.target.mode: native` were accepted and documented but never
+  consumed by the CDK application. Both paths always produced an adapter on
+  AgentCore Runtime. They now fail validation with explicit unsupported-path
+  messages instead of silently deploying a different architecture.
+- Trigger, VPN/Transit Gateway, and private DNS fields describe customer-side
+  discovery and external prerequisites; the accelerator does not provision
+  or cut over those systems. The plan and generated reference must state this
+  boundary directly.
+- The read-only `migrate plan --profile migration` path previously failed on
+  the preset's deliberate placeholders and its missing-secret hint put
+  plaintext on the command line. Planning now treats placeholders as warnings,
+  never overwrites the active manifest, and uses stdin-based secret guidance.
+- Follow-on stacked work preserves the source image user after adapter
+  installation, replaces lossy comma-separated environment transport with
+  JSON, checks child health before every invoke, makes verification migration
+  aware, and adds an EBA runbook.
+- No live migration deployment has yet been accepted as evidence. The next
+  gate is an isolated rehearsal under a unique project/environment in the
+  authorized development account, followed by live invoke, observability,
+  rollback, and cleanup evidence.
 
 ### 2026-09-20 — live evidence run exposed an unbound deployment account
 

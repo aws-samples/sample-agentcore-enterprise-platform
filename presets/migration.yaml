@@ -19,7 +19,7 @@ agents:
 gateway:
   web_search: auto
   tools: [sample-tool]
-security: {}                  # target ec2 or private_dependencies need networking: true
+security: {}                  # private_dependencies need networking: true
 observability:
   transaction_search: true
 migration:
@@ -31,12 +31,12 @@ migration:
     port: 8000                # what the container listens on
     invoke_path: /run         # the adapter forwards POST /invocations here
     health_path: /healthz     # ...and GET /ping here
-    trigger: webhook          # how work arrives today (webhook|schedule|http|queue)
+    trigger: webhook          # discovery metadata; trigger/cutover stays external and is not deployed
     env: {}                   # plain config only; secret-looking keys are refused
     secrets: [JIRA_TOKEN, GIT_TOKEN]   # ENV NAMES; values in Secrets Manager under <project>/<env>/migration/<NAME>
   target:
-    runtime: agentcore        # ec2 (ECS on EC2 in the VPC) for amd64-only images
-    mode: adapter             # native when the image already speaks /invocations + /ping on 8080
+    runtime: agentcore        # only deployable runtime today; ec2 fails closed
+    mode: adapter             # only deployable mode today; native fails closed
   network:
     private_dependencies: []  # customer-side hostnames the agent must reach (needs networking + connectivity)
     connectivity: none        # vpn|transit-gateway once private_dependencies is filled

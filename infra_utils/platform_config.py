@@ -20,6 +20,7 @@ platform.yaml is optional — every existing flag keeps working without it.
 from __future__ import annotations
 
 import ipaddress
+import json
 import os
 import re
 import sys
@@ -574,14 +575,33 @@ class MigrationSource(BaseModel):
 
 
 class MigrationTarget(BaseModel):
-    # agentcore — AgentCore Runtime (arm64, the 8080 /invocations contract);
-    # ec2 — ECS on EC2 inside the platform VPC, for amd64-only images.
+    # Keep the planned values in the schema so an existing draft gets a useful
+    # "not deployed" diagnostic instead of an opaque enum error. Only
+    # AgentCore + adapter has infrastructure behind it today.
     runtime: Literal["agentcore", "ec2"] = "agentcore"
-    # adapter — the platform wraps the container to speak the AgentCore
-    # contract; native — the image already does.
     mode: Literal["adapter", "native"] = "adapter"
 
     model_config = {"extra": "forbid"}
+
+    @field_validator("runtime")
+    @classmethod
+    def _runtime_is_deployed(cls, v: str) -> str:
+        if v != "agentcore":
+            raise ValueError(
+                "migration.target.runtime 'ec2' is not deployed by this "
+                "accelerator; only 'agentcore' is currently supported"
+            )
+        return v
+
+    @field_validator("mode")
+    @classmethod
+    def _mode_is_deployed(cls, v: str) -> str:
+        if v != "adapter":
+            raise ValueError(
+                "migration.target.mode 'native' is not deployed by this "
+                "accelerator; only 'adapter' is currently supported"
+            )
+        return v
 
 
 class MigrationNetwork(BaseModel):
@@ -667,8 +687,9 @@ class MigrationConfig(BaseModel):
             out.append(
                 "AgentCore Runtime is arm64-only and a pre-built image "
                 f"({self.source.image}) cannot be verified for it before deploy. "
-                "Prefer migration.source.build (built arm64 here) or "
-                "migration.target.runtime: ec2 for an amd64-only image."
+                "Prefer migration.source.build, which is built arm64 here. "
+                "If using a pre-built image, pin image@sha256:<digest>; "
+                "same-tag repushes are not detected."
             )
         net = self.network
         if not net.private_dependencies and (
@@ -795,11 +816,6 @@ class PlatformConfig(BaseModel):
         m = self.migration
         if m is None:
             return self
-        if m.target.runtime == "ec2" and not self.security.networking:
-            raise ValueError(
-                "migration.target.runtime 'ec2' runs in the platform VPC: set "
-                "security.networking: true"
-            )
         if m.network.private_dependencies:
             if not self.security.networking:
                 raise ValueError(
@@ -1196,8 +1212,12 @@ def to_env(config: PlatformConfig) -> dict[str, str]:
                 "MIGRATION_INVOKE_PATH": m.source.invoke_path,
                 "MIGRATION_HEALTH_PATH": m.source.health_path,
                 "MIGRATION_TRIGGER": m.source.trigger,
-                # ponytail: comma-joined KEY=VALUE — a value containing ',' would
-                # split wrong on the shell side; upgrade path is a JSON blob.
+                "MIGRATION_ENV_JSON": json.dumps(
+                    m.source.env, separators=(",", ":"), sort_keys=True
+                ),
+                # Compatibility for app.py/runtime_stack.py until they consume
+                # MIGRATION_ENV_JSON. New consumers must use the JSON transport:
+                # the legacy comma format cannot represent every valid value.
                 "MIGRATION_ENV": ",".join(f"{k}={v}" for k, v in m.source.env.items()),
                 "MIGRATION_SECRETS": ",".join(m.source.secrets),
                 "MIGRATION_TARGET_RUNTIME": m.target.runtime,
@@ -1235,6 +1255,10 @@ def migration_plan(config: PlatformConfig, account: str = "") -> list[str]:
         f"Migration plan: {config.project}-{config.environment} ({config.region})",
         f"  Source: {src.platform}, {origin}, trigger {src.trigger}",
         (
+            f"  Cutover: source trigger {src.trigger!r} is discovery metadata only; "
+            "trigger/cutover infrastructure is external and is not deployed"
+        ),
+        (
             f"  Target: {tgt.runtime} runtime, {tgt.mode} mode "
             f"(deploys as {config.project}-{config.environment}-runtime-orchestrator)"
         ),
@@ -1270,6 +1294,11 @@ def migration_plan(config: PlatformConfig, account: str = "") -> list[str]:
             (
                 f"Private dependencies (connectivity: {net.connectivity}); "
                 "reachability check for each:"
+            ),
+            (
+                "  External prerequisite: this plan records the VPN/Transit "
+                "Gateway, DNS, and CA requirements; it does not provision or "
+                "inject them."
             ),
         ]
         lines += [

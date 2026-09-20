@@ -239,6 +239,15 @@ def test_every_preset_loads_for_the_parity_gate(preset, monkeypatch):
     load_platform_config(PRESETS / preset)
 
 
+def test_migration_preset_placeholders_become_plan_warnings(monkeypatch):
+    monkeypatch.setenv("PLATFORM_ALLOW_PLACEHOLDERS", "1")
+    config = load_platform_config(PRESETS / "migration.yaml")
+    warnings = "\n".join(config.warnings)
+    assert "deployment.platform_account is a placeholder" in warnings
+    assert "identity.tenant_id is a placeholder" in warnings
+    assert "identity.client_id is a placeholder" in warnings
+
+
 def test_federated_preset_splits_by_account(monkeypatch):
     monkeypatch.setenv("PLATFORM_ALLOW_PLACEHOLDERS", "1")
     c = load_platform_config(PRESETS / "federated.yaml")
