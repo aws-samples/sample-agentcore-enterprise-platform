@@ -305,8 +305,12 @@ Never copy credential values into this file.
   synthesized templates remain fully scanned.
 - The failing label job is a repository baseline issue: its workflow references
   a missing `.github/labeler.yml`; recent merged pull requests show the same
-  result. The aggregate CodeQL status is likewise separate from the passing
-  language analysis jobs and is present on recent merged pull requests.
+  result.
+- A final check-run audit found that the aggregate CodeQL failure represented a
+  new high-severity alert even though every language analysis job passed. The
+  alert was an incomplete-URL-sanitization finding on a substring assertion in
+  a test; the test now parses the generated JSON and compares the exact
+  allow-listed output structure instead.
 
 ## Commits and pull request
 

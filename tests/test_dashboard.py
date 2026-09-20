@@ -563,7 +563,10 @@ def test_written_dashboard_artifact_excludes_unreviewed_secret_output(tmp_path):
     write_status(destination, status)
 
     serialized = destination.read_text()
-    assert "https://gateway.example" in serialized
+    written = json.loads(serialized)
+    assert written["stacks"]["project-dev-gateway"]["outputs"] == {
+        "GatewayUrl": "https://gateway.example"
+    }
     assert generated_secret not in serialized
 
 
