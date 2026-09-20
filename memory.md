@@ -15,7 +15,7 @@ operational readiness review.
 
 **G1 — production design baseline merged; live evidence closure in progress**
 
-Branch: `fix/deployment-account-secret-guard`
+Branch: `chore/final-live-evidence`
 
 G0 merged through PR #74 after prerequisite PR #75. G1 implementation merged
 through PR #76. The current branch closes a deployment-account boundary found
@@ -104,6 +104,16 @@ Open evidence and ownership work:
   trace/log delivery, orchestrator invocation, and both A2A runtimes. The
   partial deployment therefore preserved the customer-facing footprint while
   the automated handoff change is reviewed.
+- PR #78 merged the automated runtime/Observability handoff. On the first
+  retry, phase 1 completed and released Observability's generated export
+  import, but the deploy script stopped because CloudFormation reports an
+  existing export with zero consumers as a `ValidationError` instead of an
+  empty import list. No runtime replacement had started.
+- The import helper now recognizes only CloudFormation's exact no-consumer
+  response as an empty result and preserves every other API failure. The
+  handoff regression simulates the real non-zero CLI response; deployment
+  configuration checks, shell syntax, ShellCheck warnings, and diff whitespace
+  checks pass before the resumable live retry.
 
 ## Decisions
 
@@ -485,3 +495,4 @@ Never copy credential values into this file.
 - `b48da8d` — `Automate runtime observability handoff`
 - Pull request:
   [#78 — Automate runtime observability handoff](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/78)
+- PR #78 merged to `main` on 2026-09-20.
