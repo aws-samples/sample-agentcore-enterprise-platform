@@ -250,6 +250,61 @@ Never copy credential values into this file.
   must attribute these five events and record the conclusion in the incident
   review.
 
+### G0 Entra live validation — 2026-09-20
+
+- The authorized Azure tenant now has a single-tenant `AgentCore Accelerator`
+  app registration with the exact Cognito callback, explicit ownership, v2
+  access-token issuance, ID-token issuance, no implicit access-token grant, and
+  user assignment restricted to the authorized test user.
+- Its one-year credential was streamed directly into the authorized AWS
+  development account's Secrets Manager. Only the secret name is configured;
+  a non-disclosing check confirmed that the stored value is non-empty and
+  whitespace-trimmed.
+- The first brokered deployment failed safely before changing Entra identity.
+  A prior partial rotation had left Identity on a secret reference while Auth
+  was back on its pre-V2 resource shape, with neither safe V2 export nor a
+  rotation checkpoint. The migration guard had treated the absent unsafe
+  export as sufficient and skipped recreating the replacement.
+- The guard now considers migration complete only when the unsafe export is
+  absent and both safe V2 handoff exports exist. An unreadable live Auth state
+  fails closed, and a regression test pins this partial-retry case.
+- The retry completed the three-phase secret migration and deployed the Entra
+  provider, then exposed a pre-existing Runtime whose authorizer referenced a
+  deleted Cognito pool. AgentCore validated that stale discovery URL even on
+  reads and updates, leaving the Runtime stack in `UPDATE_ROLLBACK_FAILED`.
+- The stack was restored with only the broken Runtime skipped. A durable
+  `agents.orchestrator_runtime_generation` control now performs a
+  create-before-delete replacement without replacing healthy A2A runtimes.
+  Observability can temporarily pin the old ARN as a literal to release its
+  generated CloudFormation import, then uses a generation-specific Logs
+  delivery source because that resource also rejects in-place ARN changes.
+- Live recovery created a generation-2 Runtime with the current issuer and
+  dual-client allow-list, moved the SSM interface, removed the stale
+  generation, and rebound log delivery to the replacement. The normal locked
+  rotation then moved Identity to the replacement M2M credential, deleted the
+  old Cognito client, and entered the 65-minute cached-token drain.
+- `deploy.sh verify` passed all seven checks for the live footprint: brokered
+  identity, Gateway token/tool call, Memory API, trace/log acceptance,
+  orchestrator invocation, and both A2A runtimes. A focused follow-up found
+  the observability verifier read only the first paginated Logs API page; it
+  now reads every page and reports all five active deliveries.
+- Browser validation confirmed Cognito redirects to the exact Entra tenant and
+  app callback, and the assigned user reaches the account's FIDO/passkey
+  challenge. Completing the authorization-code callback still requires the
+  account holder's physical passkey interaction.
+- The live local dashboard reports 8/8 deployed and 106 resources. Desktop and
+  mobile views have no document-width overflow or console errors; stack
+  details, Architecture, and Parameters work, and no M2M/IdP secret reference
+  appears in the DOM.
+- Design and config read-backs now apply and validate explicit environment
+  overrides instead of showing file-only identity values that differ from the
+  deployment CDK receives.
+- The final local gate passed 390 project tests, 58 secret-boundary tests, all
+  preset-to-synth contract checks, deploy-config checks, targeted Ruff and
+  formatting checks, shell syntax validation, generated-reference drift, and
+  Git diff whitespace validation. GitHub's pinned Gitleaks and ASH jobs remain
+  the authoritative scanners after push.
+
 ### Independent G0 review corrections — 2026-09-20
 
 - The live rotation did not report an outage, but it had no continuous

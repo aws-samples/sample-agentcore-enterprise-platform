@@ -155,6 +155,13 @@ org_id = cfg("org_id", "ORG_ID", "")
 # Options: strands-agent, langgraph-agent, claude-sdk-agent, claude-sdk-multi-agent,
 #          agui-strands-agent, agui-langgraph-agent
 agent_pattern = cfg("agent_pattern", "AGENT_PATTERN", "orchestrator")
+orchestrator_runtime_generation = int(
+    cfg(
+        "orchestrator_runtime_generation",
+        "ORCHESTRATOR_RUNTIME_GENERATION",
+        "1",
+    )
+)
 
 # ── Migration mode (platform.yaml `migration:` block / MIGRATION_* env) ──
 # An existing customer container replaces the agent pattern on the
@@ -545,6 +552,7 @@ if not is_fed_platform:
         source_dir="agent-code",
         dockerfile_pattern=agent_pattern,
         runtime_type="orchestrator",
+        runtime_generation=orchestrator_runtime_generation,
         allowed_models=allowed_models,
         cognito_issuer_url=issuer_url,
         cognito_allowed_clients=allowed_clients,
@@ -657,7 +665,17 @@ if gateway_stack:
 if memory_stack:
     monitored_resources["memory"] = memory_stack.memory_arn
 if runtime_orchestrator:
-    monitored_resources["runtime-orchestrator"] = runtime_orchestrator.runtime_arn
+    # Recovery-only context: pin the currently exported ARN as a literal
+    # before a create-only Runtime name change. The resolved value is
+    # identical, but removing Observability's cross-stack import lets
+    # CloudFormation update the RuntimeArn export during replacement. Omit
+    # this context on the immediate follow-up Observability deploy so it binds
+    # to the replacement. This is intentionally not an environment or
+    # platform.yaml setting: steady state must always consume the live export.
+    monitored_resources["runtime-orchestrator"] = (
+        app.node.try_get_context("runtime_observability_arn_override")
+        or runtime_orchestrator.runtime_arn
+    )
 if runtime_code_agent:
     monitored_resources["runtime-code-agent"] = runtime_code_agent.runtime_arn
 if runtime_research_agent:
@@ -669,6 +687,7 @@ obs_stack = ObservabilityStack(
     project_name=project,
     environment=env_name,
     monitored_resources=monitored_resources,
+    orchestrator_runtime_generation=orchestrator_runtime_generation,
     enable_traceability=enable_traceability,
     enable_transaction_search=enable_transaction_search,
     enable_alarms=enable_alarms,

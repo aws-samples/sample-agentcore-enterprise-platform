@@ -169,6 +169,22 @@ def test_deploy_script_orders_and_scopes_legacy_migration():
     assert "must review and delete" in script
 
 
+def test_migration_requires_safe_v2_exports_after_partial_rollback():
+    script = (Path(__file__).parents[1] / "scripts" / "deploy.sh").read_text()
+    migration = script.split("migrate_legacy_m2m_secret_export() {", 1)[1].split(
+        "rotate_legacy_m2m_client() {", 1
+    )[0]
+
+    assert "replacement_export_count" in migration
+    assert "'${PREFIX}:auth:m2m-client-id-v2'" in migration
+    assert "'${PREFIX}:auth:m2m-client-secret-name-v2'" in migration
+    assert (
+        '[ "$legacy_count" = "0" ] && [ "$replacement_export_count" = "2" ]'
+        in migration
+    )
+    assert "its M2M migration state could not be read" in migration
+
+
 def test_federated_workloads_can_drain_the_previous_client_id():
     root = Path(__file__).parents[1]
     app = (root / "app.py").read_text()

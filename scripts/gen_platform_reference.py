@@ -60,6 +60,7 @@ DESCRIPTIONS: dict[str, str] = {
     "agents.model_id": "Bedrock model or cross-region inference profile injected as `MODEL_ID` into every agent. Empty = each pattern's baked-in default.",
     "agents.allowed_models": "Model allow-list. When set, the runtime roles' Bedrock IAM is scoped to exactly these and `model_id` must be one of them (otherwise the containers' defaults would bypass the list). Empty = unrestricted, today's behaviour.",
     "agents.a2a": "Deploy the `code-agent` and `research-agent` sub-agent runtimes next to the orchestrator (A2A protocol).",
+    "agents.orchestrator_runtime_generation": "Controlled replacement generation for the orchestrator AgentCore Runtime. Increase only when an existing runtime is unreadable or another immutable runtime property requires replacement; healthy A2A runtimes are unaffected.",
     "agents.memory.long_term": "Add the semantic long-term strategy to the AgentCore Memory store (fact extraction across sessions).",
     "agents.memory.top_k": "Long-term retrieval: how many records to pull per query.",
     "agents.memory.relevance_score": "Long-term retrieval: minimum relevance for a record to be returned.",
@@ -120,6 +121,7 @@ ENV: dict[str, str] = {
     "agents.model_id": "MODEL_ID",
     "agents.allowed_models": "ALLOWED_MODELS",
     "agents.a2a": "ENABLE_A2A",
+    "agents.orchestrator_runtime_generation": "ORCHESTRATOR_RUNTIME_GENERATION",
     "agents.memory.long_term": "USE_LONG_TERM_MEMORY",
     "agents.memory.top_k": "LTM_TOP_K",
     "agents.memory.relevance_score": "LTM_RELEVANCE_SCORE",
@@ -186,6 +188,7 @@ _FULL = {
     "agents": {
         "model_id": "us.anthropic.claude-sonnet-4-6",
         "allowed_models": ["us.anthropic.claude-sonnet-4-6"],
+        "orchestrator_runtime_generation": 2,
     },
     "security": {
         "networking": True,

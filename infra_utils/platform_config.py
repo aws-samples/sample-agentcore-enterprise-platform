@@ -334,6 +334,12 @@ AGENT_PATTERNS = (
 class AgentsConfig(BaseModel):
     pattern: Literal[AGENT_PATTERNS] = "orchestrator"  # type: ignore[valid-type]
     model_id: str = ""  # empty = the pattern's own default
+    # Generation 1 preserves the historical physical names. Increment this
+    # only for a controlled replacement when AgentCore can no longer update or
+    # even read a runtime (for example, its OIDC discovery endpoint was
+    # deleted). Keeping it in the manifest makes later deploys converge on the
+    # replacement instead of silently trying to recreate the broken name.
+    orchestrator_runtime_generation: int = Field(default=1, ge=1, le=99)
     # Empty = no restriction: the runtime roles keep wildcard Bedrock IAM and
     # any MODEL_ID works — today's behavior, byte-identical templates.
     allowed_models: list[str] = Field(default_factory=list)
@@ -883,6 +889,96 @@ def load_platform_config(path: str | Path) -> PlatformConfig:
     return PlatformConfig.model_validate(raw)
 
 
+def apply_environment_overrides(
+    config: PlatformConfig, environ: dict[str, str] | None = None
+) -> PlatformConfig:
+    """Return the effective config after deploy.sh's supported env overrides.
+
+    The Design phase used to print the manifest unchanged even when the same
+    command would pass explicit environment values to CDK. That made the
+    read-back actively misleading for identity changes. Keep this conversion
+    close to ``to_env`` so the human plan and deployment share one vocabulary.
+    Empty values are ignored, matching deploy.sh's fill-if-unset behavior.
+    """
+    env = environ if environ is not None else dict(os.environ)
+    raw = config.model_dump()
+
+    def put(path: tuple[str, ...], value: object) -> None:
+        target = raw
+        for part in path[:-1]:
+            target = target[part]
+        target[path[-1]] = value
+
+    scalar_paths = {
+        "PROJECT_NAME": ("project",),
+        "ENVIRONMENT": ("environment",),
+        "AWS_REGION": ("region",),
+        "DEPLOYMENT_STRATEGY": ("deployment", "strategy"),
+        "PLATFORM_ACCOUNT": ("deployment", "platform_account"),
+        "IDP_TYPE": ("identity", "idp"),
+        "IDP_MODE": ("identity", "mode"),
+        "IDP_TENANT_ID": ("identity", "tenant_id"),
+        "IDP_CLIENT_ID": ("identity", "client_id"),
+        "IDP_ISSUER_URL": ("identity", "issuer_url"),
+        "IDP_CLIENT_SECRET_NAME": ("identity", "client_secret_name"),
+        "AGENT_PATTERN": ("agents", "pattern"),
+        "MODEL_ID": ("agents", "model_id"),
+        "CEDAR_MODE": ("security", "cedar", "mode"),
+        "ORG_ID": ("security", "org_id"),
+        "ALARM_EMAIL": ("observability", "alarm_email"),
+    }
+    for key, path in scalar_paths.items():
+        if env.get(key):
+            put(path, env[key])
+
+    bool_paths = {
+        "ENABLE_A2A": ("agents", "a2a"),
+        "USE_LONG_TERM_MEMORY": ("agents", "memory", "long_term"),
+        "ENABLE_NETWORKING": ("security", "networking"),
+        "ENABLE_SECURITY": ("security", "cloudtrail_alerting"),
+        "ENABLE_RESOURCE_POLICIES": ("security", "resource_policies"),
+        "ENABLE_EGRESS_FILTER": ("security", "egress_filter"),
+        "REQUIRE_GUARDRAILS": ("security", "require_guardrails"),
+        "ENABLE_CEDAR": ("security", "cedar", "enabled"),
+        "ENABLE_TRACEABILITY": ("security", "traceability"),
+        "ENABLE_TRANSACTION_SEARCH": ("observability", "transaction_search"),
+        "ENABLE_ALARMS": ("observability", "alarms"),
+    }
+    for key, path in bool_paths.items():
+        if not env.get(key):
+            continue
+        normalized = env[key].lower()
+        if normalized not in {"true", "false"}:
+            raise ValueError(f"{key} must be true or false, got {env[key]!r}")
+        put(path, normalized == "true")
+
+    if env.get("ENABLE_WEB_SEARCH"):
+        normalized = env["ENABLE_WEB_SEARCH"].lower()
+        if normalized not in {"true", "false"}:
+            raise ValueError(
+                "ENABLE_WEB_SEARCH must be true or false, "
+                f"got {env['ENABLE_WEB_SEARCH']!r}"
+            )
+        put(("gateway", "web_search"), "on" if normalized == "true" else "off")
+    if env.get("ALLOWED_MODELS"):
+        put(
+            ("agents", "allowed_models"),
+            [item.strip() for item in env["ALLOWED_MODELS"].split(",") if item.strip()],
+        )
+    for key, path in {
+        "ORCHESTRATOR_RUNTIME_GENERATION": (
+            "agents",
+            "orchestrator_runtime_generation",
+        ),
+        "LTM_TOP_K": ("agents", "memory", "top_k"),
+        "LTM_RELEVANCE_SCORE": ("agents", "memory", "relevance_score"),
+    }.items():
+        if env.get(key):
+            put(path, env[key])
+
+    return PlatformConfig.model_validate(raw)
+
+
 def allowed_model_resources(models: list[str]) -> list[str]:
     """IAM resource ARNs for the runtime role's BedrockModels statement.
 
@@ -926,6 +1022,9 @@ def to_env(config: PlatformConfig) -> dict[str, str]:
         "IDP_ISSUER_URL": config.identity.issuer_url,
         "IDP_CLIENT_SECRET_NAME": config.identity.client_secret_name,
         "AGENT_PATTERN": config.agents.pattern,
+        "ORCHESTRATOR_RUNTIME_GENERATION": str(
+            config.agents.orchestrator_runtime_generation
+        ),
         "MODEL_ID": config.agents.model_id,
         "ALLOWED_MODELS": ",".join(config.agents.allowed_models),
         "ENABLE_A2A": str(config.agents.a2a).lower(),
@@ -1118,7 +1217,14 @@ def design_plan(config: PlatformConfig, account: str = "") -> list[str]:
         *sign_in_lines(config, account),
         f"  Agent pattern: {config.agents.pattern}"
         + (f", model {config.agents.model_id}" if config.agents.model_id else "")
-        + (" (allow-listed)" if config.agents.allowed_models else ""),
+        + (" (allow-listed)" if config.agents.allowed_models else "")
+        + (
+            f", orchestrator runtime generation "
+            f"{config.agents.orchestrator_runtime_generation} "
+            "(controlled replacement)"
+            if config.agents.orchestrator_runtime_generation > 1
+            else ""
+        ),
         "",
         f"Stacks ({len(stacks)}):"
         if stacks
@@ -1204,14 +1310,18 @@ def _main() -> int:
         # --plan alone reads the deployment manifest, like deploy.sh does.
         root = Path(__file__).resolve().parents[1]
         args = [os.environ.get("PLATFORM_CONFIG") or str(root / "platform.yaml")]
+    action_flags = flags & {"--export", "--stacks", "--plan", "--design"}
     if (
         len(args) != 1
-        or len(flags) > 1
-        or not flags <= {"--export", "--stacks", "--plan", "--design"}
+        or len(action_flags) > 1
+        or not flags
+        <= {"--export", "--stacks", "--plan", "--design", "--effective-env"}
+        or ("--effective-env" in flags and not action_flags)
     ):
         print(
             "usage: python -m infra_utils.platform_config "
-            "[--export | --stacks | --plan | --design] <platform.yaml>",
+            "[--export | --stacks | --plan | --design] "
+            "[--effective-env] <platform.yaml>",
             file=sys.stderr,
         )
         return 2
@@ -1231,6 +1341,12 @@ def _main() -> int:
     except Exception as exc:  # noqa: BLE001 — YAML syntax, missing file: print it all
         print(f"INVALID: {args[0]}\n{exc}", file=sys.stderr)
         return 1
+    if "--effective-env" in flags:
+        try:
+            config = apply_environment_overrides(config)
+        except (ValidationError, ValueError) as exc:
+            print(f"INVALID effective environment\n{exc}", file=sys.stderr)
+            return 1
     if "--export" not in flags:
         # --export is machine-read by deploy.sh with 2>&1; keep it key=value only.
         for warning in config.warnings:

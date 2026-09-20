@@ -65,7 +65,8 @@ log_explain(){ echo -e "${YELLOW}📖${NC} $*"; }
 # declarative Pydantic/YAML config task on the board.
 CONFIG_FILE="$PROJECT_DIR/workshop.env"
 CONFIG_KEYS=(AWS_REGION IDP_TYPE IDP_MODE IDP_TENANT_ID IDP_CLIENT_ID IDP_ISSUER_URL
-             MODEL_ID ORG_ID PROJECT_NAME ENVIRONMENT AGENT_PATTERN)
+             MODEL_ID ORG_ID PROJECT_NAME ENVIRONMENT AGENT_PATTERN
+             ORCHESTRATOR_RUNTIME_GENERATION)
 
 save_config() {
     # CI runs (NON_INTERACTIVE=1) never write the file.
@@ -639,6 +640,7 @@ build_context_args() {
     CONTEXT_ARGS+=(-c "region=${AWS_REGION:-us-east-1}")
     CONTEXT_ARGS+=(-c "idp_type=${IDP_TYPE:-cognito}")
     CONTEXT_ARGS+=(-c "idp_mode=${IDP_MODE:-brokered}")
+    CONTEXT_ARGS+=(-c "orchestrator_runtime_generation=${ORCHESTRATOR_RUNTIME_GENERATION:-1}")
 
     # IdP config — the client secret itself is never passed; only the name of
     # the Secrets Manager secret set by upsert_idp_secret (see above).
@@ -960,13 +962,38 @@ migrate_legacy_m2m_secret_export() {
     # Direct mode has no Cognito M2M client. Its issuer-switch path updates
     # consumers before auth and therefore needs no secret-export migration.
     [ "${IDP_MODE:-brokered}" = "brokered" ] || return 0
-    local legacy_count
+    local legacy_count replacement_export_count auth_stack_count
     legacy_count=$(aws cloudformation describe-stacks \
         --stack-name "${PREFIX}-auth" \
         --region "$AWS_REGION" \
         --query "length(Stacks[0].Outputs[?contains(OutputKey, 'UserPoolM2MClientDescribeCognitoUserPoolClient') && contains(OutputKey, 'ClientSecret')])" \
-        --output text 2>/dev/null) || return 0
-    [ "$legacy_count" != "0" ] || return 0
+        --output text 2>/dev/null) || {
+        auth_stack_count=$(aws cloudformation list-stacks \
+            --region "$AWS_REGION" \
+            --query "length(StackSummaries[?StackName=='${PREFIX}-auth' && StackStatus!='DELETE_COMPLETE'])" \
+            --output text) || {
+            log_error "Could not determine whether the auth stack exists."
+            exit 1
+        }
+        [ "$auth_stack_count" = "0" ] && return 0
+        log_error "The auth stack exists but its M2M migration state could not be read."
+        exit 1
+    }
+    replacement_export_count=$(aws cloudformation describe-stacks \
+        --stack-name "${PREFIX}-auth" \
+        --region "$AWS_REGION" \
+        --query "length(Stacks[0].Outputs[?ExportName=='${PREFIX}:auth:m2m-client-id-v2' || ExportName=='${PREFIX}:auth:m2m-client-secret-name-v2'])" \
+        --output text 2>/dev/null) || {
+        log_error "The auth stack exists but its V2 M2M exports could not be read."
+        exit 1
+    }
+    # A partial retry may already have moved Identity off the unsafe export
+    # while Auth later rolled back to its pre-V2 shape. The migration is
+    # complete only when the secret-bearing export is gone AND both safe V2
+    # handoff exports exist. Otherwise rerun all three idempotent phases.
+    if [ "$legacy_count" = "0" ] && [ "$replacement_export_count" = "2" ]; then
+        return 0
+    fi
 
     log_info "Migrating the legacy M2M secret export to Secrets Manager"
     log_step "Migration 1/3: create the managed secret and retain the live export"
@@ -1548,7 +1575,8 @@ if [ "$ACTION" = "config" ]; then
     if [ -f "$PLATFORM_CONFIG" ]; then
         echo "# platform.yaml → effective values (env vars override):"
         py="$PROJECT_DIR/.venv/bin/python"; [ -x "$py" ] || py="python3"
-        "$py" -m infra_utils.platform_config --export "$PLATFORM_CONFIG" || exit 1
+        "$py" -m infra_utils.platform_config \
+            --export --effective-env "$PLATFORM_CONFIG" || exit 1
         echo ""
     fi
     if [ -f "$CONFIG_FILE" ]; then
@@ -1599,7 +1627,8 @@ if [ "$ACTION" = "design" ]; then
         export CDK_DEFAULT_ACCOUNT="$ACCOUNT_ID"
     fi
     log_step "Design: $PLATFORM_CONFIG"
-    (cd "$PROJECT_DIR" && "$py" -m infra_utils.platform_config --design "$PLATFORM_CONFIG") || {
+    (cd "$PROJECT_DIR" && "$py" -m infra_utils.platform_config \
+        --design --effective-env "$PLATFORM_CONFIG") || {
         log_error "Fix the manifest above, then run: $0 design"
         exit 1
     }
@@ -1892,6 +1921,7 @@ case "$ACTION" in
         echo "  AWS_REGION         AWS region"
         echo "  IDP_TYPE           Identity provider (cognito|entra_id|okta|ping)"
         echo "  MODEL_ID           Bedrock model ID override for all agents (default: in-code per pattern)"
+        echo "  ORCHESTRATOR_RUNTIME_GENERATION  Controlled runtime replacement generation (default: 1)"
         echo "  FEDERATED_RETIRED_M2M_CLIENT_ID  Previous client ID during a federated token drain"
         echo "  FEDERATED_M2M_CONSUMERS_UPDATED  Set to 1 only after every workload uses the replacement"
         exit 1

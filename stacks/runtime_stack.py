@@ -70,6 +70,7 @@ class RuntimeStack(cdk.Stack):
         cognito_issuer_url: str = "",
         cognito_allowed_clients: list[str] | None = None,
         allowed_audience: list[str] | None = None,
+        runtime_generation: int = 1,
         network_mode: str = "PUBLIC",
         subnet_ids: list[str] | None = None,
         security_group_ids: list[str] | None = None,
@@ -101,6 +102,8 @@ class RuntimeStack(cdk.Stack):
         prefix = f"{project_name}-{environment}"
         # AgentCore names must use underscores, not hyphens
         rt_name = f"{project_name}_{environment}_{component_name}".replace("-", "_")
+        if runtime_generation > 1:
+            rt_name = f"{rt_name}_g{runtime_generation}"
 
         # Resolve absolute source path
         repo_root = os.path.dirname(os.path.dirname(__file__))
