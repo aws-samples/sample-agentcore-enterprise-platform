@@ -304,6 +304,10 @@ Never copy credential values into this file.
   formatting checks, shell syntax validation, generated-reference drift, and
   Git diff whitespace validation. GitHub's pinned Gitleaks and ASH jobs remain
   the authoritative scanners after push.
+- GitHub validation for commit `c6efa80` passed CodeQL (all languages and the
+  aggregate check), ASH, the pinned Gitleaks/secret-boundary gate, deployment
+  contract parity, Python and shell quality, and both control-library jobs.
+  The only failure is the repository-level Labeler bootstrap described below.
 
 ### Independent G0 review corrections — 2026-09-20
 
@@ -360,7 +364,11 @@ Never copy credential values into this file.
   synthesized templates remain fully scanned.
 - The failing label job is a repository baseline issue: its workflow references
   a missing `.github/labeler.yml`; recent merged pull requests show the same
-  result.
+  result. Prerequisite PR
+  [#75](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/75)
+  adds only that file with existing repository labels. Because the workflow
+  uses `pull_request_target`, #75 must land on `main` before #74's failed
+  Labeler job can be rerun successfully.
 - A final check-run audit found that the aggregate CodeQL failure represented a
   new high-severity alert even though every language analysis job passed. The
   alert was an incomplete-URL-sanitization finding on a substring assertion in
@@ -370,4 +378,7 @@ Never copy credential values into this file.
 ## Commits and pull request
 
 - `3ef164d` — `Harden G0 production-readiness boundaries`
+- `c6efa80` — `Recover stale runtimes during identity migration`
 - Pull request: [#74 — Harden G0 production-readiness boundaries](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/74)
+- Prerequisite pull request:
+  [#75 — Add missing pull request labeler configuration](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/75)
