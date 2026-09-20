@@ -153,6 +153,25 @@ def test_web_search_auto_resolves_by_region(mode, region, expected):
     assert config.web_search_enabled is expected
 
 
+@pytest.mark.parametrize(("yaml_value", "expected"), [("on", True), ("off", False)])
+def test_bare_yaml_web_search_values_keep_their_intended_enum(yaml_value, expected):
+    config = PlatformConfig.model_validate(
+        yaml.safe_load(f"gateway:\n  web_search: {yaml_value}\n")
+    )
+    assert config.web_search_enabled is expected
+
+
+def test_project_environment_prefix_fails_before_service_name_limits():
+    with pytest.raises(ValidationError) as excinfo:
+        PlatformConfig.model_validate(
+            {"project": "agentcore-migration-rehearsal", "environment": "eba"}
+        )
+    message = str(excinfo.value)
+    assert "project/environment prefix" in message
+    assert "at most 30" in message
+    assert "Memory" in message and "Logs" in message
+
+
 def test_defaults_are_a_valid_deployment():
     """An EMPTY platform.yaml must be deployable (greenfield defaults)."""
     config = PlatformConfig.model_validate({})

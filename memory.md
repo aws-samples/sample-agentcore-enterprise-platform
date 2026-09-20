@@ -110,6 +110,19 @@ Open evidence and ownership work:
   AgentCore-plus-adapter path, isolated rehearsal setup, stdin-only secret
   ingestion, external connectivity/event prerequisites, plan/build/verify
   flow, customer tests, cutover/rollback, cleanup, and an evidence checklist.
+- The first isolated rehearsal preflight exposed two design-time UX defects:
+  bare YAML `web_search: off` was parsed as boolean and rejected, and a
+  schema-valid 34-character project/environment prefix exceeded downstream
+  Memory strategy and Logs delivery name limits. Bare `on`/`off` now retain
+  their intended enum meaning, and prefixes over 30 characters fail during
+  Design with the affected service limits named.
+- The same rehearsal showed that the embedded Design view removed the
+  migration plan's final line when there were no migration warnings. The plan
+  now trims only the blank separator before an actual warnings section and
+  retains final environment/prerequisite details.
+- The aborted long-prefix run reached only an empty Auth change-set shell in
+  `REVIEW_IN_PROGRESS`; it was deleted immediately. No rehearsal resource was
+  created and the existing workshop environment was untouched.
 
 ### 2026-09-20 — live evidence run exposed an unbound deployment account
 

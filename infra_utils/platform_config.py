@@ -400,6 +400,16 @@ class GatewayConfig(BaseModel):
     web_search: Literal["auto", "on", "off"] = "auto"
     tools: list[str] = Field(default_factory=lambda: ["sample-tool"])
 
+    @field_validator("web_search", mode="before")
+    @classmethod
+    def _yaml_boolean_web_search(cls, v):
+        # PyYAML follows YAML 1.1 and parses bare `on` / `off` as booleans.
+        # Preserve the operator's intended enum instead of rejecting a common,
+        # visually correct manifest spelling.
+        if isinstance(v, bool):
+            return "on" if v else "off"
+        return v
+
 
 class CedarConfig(BaseModel):
     enabled: bool = False
@@ -777,6 +787,21 @@ class PlatformConfig(BaseModel):
     migration: MigrationConfig | None = None
 
     model_config = {"extra": "forbid"}  # a typo'd key is an error, not a no-op
+
+    @model_validator(mode="after")
+    def _derived_names_fit_service_limits(self) -> PlatformConfig:
+        # The longest fixed suffixes on generated resource names leave 30
+        # characters for "<project>-<environment>". Memory strategies allow
+        # 48 total and Logs delivery names allow 60. Catch this during Design;
+        # CloudFormation otherwise emits warnings and fails minutes later.
+        prefix = f"{self.project}-{self.environment}"
+        if len(prefix) > 30:
+            raise ValueError(
+                f"project/environment prefix {prefix!r} is {len(prefix)} "
+                "characters; use at most 30 so generated AgentCore Memory and "
+                "CloudWatch Logs delivery names fit their service limits"
+            )
+        return self
 
     @field_validator("use_cases")
     @classmethod
@@ -1432,8 +1457,13 @@ def design_plan(config: PlatformConfig, account: str = "") -> list[str]:
         # migration_plan() prints the migration block's own warnings; the
         # identity/deployment ones are added below so none is lost.
         mig = migration_plan(config, account)
-        cut = mig.index("Warnings:") if "Warnings:" in mig else len(mig)
-        lines += [""] + mig[: cut - 1 if cut else 0]
+        if "Warnings:" in mig:
+            migration_lines = mig[: mig.index("Warnings:")]
+            while migration_lines and not migration_lines[-1]:
+                migration_lines.pop()
+        else:
+            migration_lines = mig
+        lines += [""] + migration_lines
     if config.warnings:
         lines += ["", "Warnings:"] + [f"  - {w}" for w in config.warnings]
     lines += [

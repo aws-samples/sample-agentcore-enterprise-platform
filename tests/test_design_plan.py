@@ -65,6 +65,23 @@ def test_migration_plan_is_embedded(monkeypatch):
     assert "Warnings:" in t  # the placeholders, surfaced not hidden
 
 
+def test_migration_plan_keeps_its_final_non_warning_line():
+    config = PlatformConfig(
+        project="mig",
+        migration={
+            "source": {
+                "platform": "ec2",
+                "build": {"context": "./app"},
+                "port": 8000,
+                "invoke_path": "/run",
+                "env": {"FINAL_VALUE": "kept"},
+            }
+        },
+    )
+    t = text(config)
+    assert "FINAL_VALUE=kept" in t
+
+
 def test_plan_is_plain_text():
     for line in design_plan(load_platform_config(PRESETS / "greenfield.yaml")):
         assert "\x1b" not in line and "\t" not in line
