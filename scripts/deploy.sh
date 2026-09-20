@@ -36,7 +36,7 @@ fi
 #   ./deploy.sh build                          # Build:  = deploy
 #   ./deploy.sh usecase new NAME | list        # Build:  scaffold a use case
 #
-# Profiles: greenfield, migration, multi-agent, platform-team, security-focused
+# Profiles: greenfield, migration, multi-agent, platform-team, security-focused, production
 # Teams: platform, agent, security
 # Modules: 3, 4, 5, 6, 7, 8, 9, A, B, C, D, E
 # ═══════════════════════════════════════════════════════════════
@@ -64,9 +64,10 @@ log_explain(){ echo -e "${YELLOW}📖${NC} $*"; }
 # ponytail: flat sourceable KEY=value file; upgrade path is the
 # declarative Pydantic/YAML config task on the board.
 CONFIG_FILE="$PROJECT_DIR/workshop.env"
-CONFIG_KEYS=(AWS_REGION IDP_TYPE IDP_MODE IDP_TENANT_ID IDP_CLIENT_ID IDP_ISSUER_URL
+CONFIG_KEYS=(AWS_REGION DEPLOYMENT_MODE IDP_TYPE IDP_MODE IDP_TENANT_ID IDP_CLIENT_ID IDP_ISSUER_URL
              MODEL_ID ORG_ID PROJECT_NAME ENVIRONMENT AGENT_PATTERN
-             ORCHESTRATOR_RUNTIME_GENERATION)
+             ORCHESTRATOR_RUNTIME_GENERATION MEMORY_EVENT_EXPIRY_DAYS
+             LOG_RETENTION_DAYS)
 
 save_config() {
     # CI runs (NON_INTERACTIVE=1) never write the file.
@@ -161,7 +162,7 @@ apply_platform_config() {
     [ -x "$py" ] || py="python3"
     local exports key value
     # cd: infra_utils must be importable; this runs before the main-flow cd.
-    if ! exports=$(cd "$PROJECT_DIR" && "$py" -m infra_utils.platform_config --export "$PLATFORM_CONFIG" 2>&1); then
+    if ! exports=$(cd "$PROJECT_DIR" && "$py" -m infra_utils.platform_config --export --effective-env "$PLATFORM_CONFIG" 2>&1); then
         # Two different failures, two different messages. Missing dependencies:
         # continue without the file. Anything else is the manifest itself
         # (placeholders, a typo'd key): a malformed file must not silently
@@ -638,9 +639,12 @@ build_context_args() {
     CONTEXT_ARGS+=(-c "project=${PROJECT_NAME}")
     CONTEXT_ARGS+=(-c "environment=${ENVIRONMENT}")
     CONTEXT_ARGS+=(-c "region=${AWS_REGION:-us-east-1}")
+    CONTEXT_ARGS+=(-c "deployment_mode=${DEPLOYMENT_MODE:-workshop}")
     CONTEXT_ARGS+=(-c "idp_type=${IDP_TYPE:-cognito}")
     CONTEXT_ARGS+=(-c "idp_mode=${IDP_MODE:-brokered}")
     CONTEXT_ARGS+=(-c "orchestrator_runtime_generation=${ORCHESTRATOR_RUNTIME_GENERATION:-1}")
+    CONTEXT_ARGS+=(-c "memory_event_expiry_days=${MEMORY_EVENT_EXPIRY_DAYS:-30}")
+    CONTEXT_ARGS+=(-c "log_retention_days=${LOG_RETENTION_DAYS:-30}")
 
     # IdP config — the client secret itself is never passed; only the name of
     # the Secrets Manager secret set by upsert_idp_secret (see above).
@@ -1692,6 +1696,13 @@ if [ -n "$PROFILE" ] && [ ! -f "$PROJECT_DIR/presets/$PROFILE.yaml" ]; then
     log_error "Unknown profile: '$PROFILE'. Valid profiles: $(valid_profiles)"
     exit 1
 fi
+if [ "$ACTION" = "workshop" ] \
+    && { [ "$PROFILE" = "production" ] \
+        || [ "${DEPLOYMENT_MODE:-workshop}" = "production" ]; }; then
+    log_error "The guided workshop runner is intentionally disposable and cannot run deployment.mode=production."
+    log_error "Use '$0 design' to review the production plan, then '$0 build' after replacing every placeholder."
+    exit 1
+fi
 if [ -n "$TEAM" ] && [ -z "${TEAM_MAP[$TEAM]:-}" ]; then
     log_error "Unknown team: '$TEAM'. Valid teams: ${!TEAM_MAP[*]}"
     exit 1
@@ -1907,7 +1918,7 @@ case "$ACTION" in
         echo ""
         echo "Options:"
         echo "  --stack STACK      Deploy specific stack"
-        echo "  --profile PROFILE  Customer profile (greenfield|migration|multi-agent|platform-team|security-focused)"
+        echo "  --profile PROFILE  Starting profile ($(valid_profiles))"
         echo "  --team TEAM        Team workstream (platform|agent|security)"
         echo "  --module N         Workshop module number (3|4|5|6|7|8|9|A|B|C|D|E)"
         echo "  --from MODULE      (workshop) Start at this module in the profile sequence"
@@ -1919,6 +1930,7 @@ case "$ACTION" in
         echo "  PROJECT_NAME       Project name (default: agentcore-workshop)"
         echo "  ENVIRONMENT        Environment (default: dev)"
         echo "  AWS_REGION         AWS region"
+        echo "  DEPLOYMENT_MODE    Lifecycle posture (workshop|production; production requires platform.yaml)"
         echo "  IDP_TYPE           Identity provider (cognito|entra_id|okta|ping)"
         echo "  MODEL_ID           Bedrock model ID override for all agents (default: in-code per pattern)"
         echo "  ORCHESTRATOR_RUNTIME_GENERATION  Controlled runtime replacement generation (default: 1)"

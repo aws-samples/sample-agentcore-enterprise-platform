@@ -1,6 +1,6 @@
 # Production Readiness Plan
 
-Status: in execution — G0 implementation ready for review
+Status: in execution — G0 code merged; G1 implementation in progress
 
 Planning horizon: 12 weeks
 
@@ -53,8 +53,8 @@ Use two explicit deployment modes:
 | `workshop` | Disposable EBA and learning environment | Fast creation and clean removal | Safe for customer exercises, with clearly documented limitations |
 | `production` | Long-lived customer platform | Retained data, controlled changes, backups, and recovery | Secure defaults; disabling a required control needs an approved exception |
 
-Add `deployment.mode` to `platform.yaml` and ship a
-`presets/production.yaml`. The production preset becomes the target of every
+`deployment.mode` is part of `platform.yaml`, and `presets/production.yaml` is
+the secure starting point. The production preset becomes the target of every
 release gate. Existing workshop profiles remain useful but must not be used as
 evidence that the production profile is ready.
 
@@ -88,10 +88,10 @@ Owner roles: Security lead and platform lead.
 Gate G0 closes when the secret is rotated, the old credential is unusable, the
 dashboard cannot publish secrets, and the regression tests are blocking.
 
-Current progress (2026-09-20): PR-002 through PR-005 are implemented on the G0
-review branch, and the technical part of PR-001 is complete: the deployed
+Current progress (2026-09-20): PR-002 through PR-005 are merged, and the
+technical part of PR-001 is complete: the deployed
 legacy client and credential were deleted after a verified, consumer-first
-rotation. Formal closure still requires the blocking workflow to merge and the
+rotation. The blocking workflow is merged. Formal closure still requires the
 platform/security owner to record the incident and usage-review limitation.
 Detailed, non-sensitive evidence is maintained in the repository-root
 `memory.md` work log.
@@ -123,6 +123,12 @@ and customer identity representative.
 
 Gate G1 evidence: approved threat model, data classification, target SLO/RTO/RPO
 document, ownership map, risk register, and a synthesized production profile.
+
+Current progress (2026-09-20): the production mode, secure validation gate,
+retained-resource behavior, configurable retention, and production preset are
+implemented on the G1 branch with synthesis tests. The five governance
+artifacts exist as explicit DRAFT/TBD templates. They require customer-specific
+values, evidence, and accountable approvals before G1 can close.
 
 ## Phase 2 — harden identity and security
 

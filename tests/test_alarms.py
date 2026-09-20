@@ -52,7 +52,8 @@ def test_real_email_validates():
         "two words@corp.io",
     ],
 )
-def test_placeholder_and_garbage_emails_rejected(email):
+def test_placeholder_and_garbage_emails_rejected(email, monkeypatch):
+    monkeypatch.delenv("PLATFORM_ALLOW_PLACEHOLDERS", raising=False)
     with pytest.raises(ValidationError, match="email"):
         PlatformConfig.model_validate({"observability": {"alarm_email": email}})
 

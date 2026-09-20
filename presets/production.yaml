@@ -1,0 +1,48 @@
+# Production starting point: secure controls are mandatory and stateful
+# resources are retained. Replace every sentinel before deploying; synthesis
+# with placeholders is only a CI parity check, not production approval.
+project: agentcore-production
+environment: prod
+region: us-east-1
+
+deployment:
+  mode: production
+  strategy: centralized
+
+identity:
+  idp: entra_id
+  mode: brokered
+  tenant_id: 00000000-0000-0000-0000-000000000000
+  client_id: REPLACE_ME
+  client_secret_name: agentcore/idp-client-secret
+
+agents:
+  pattern: strands-agent
+  model_id: us.anthropic.claude-sonnet-4-6
+  allowed_models:
+    - us.anthropic.claude-sonnet-4-6
+  memory:
+    event_expiry_days: 30
+
+gateway:
+  # Production requires an explicit decision instead of region-dependent auto.
+  web_search: "off"
+  tools: [sample-tool]
+
+security:
+  networking: true
+  cloudtrail_alerting: true
+  resource_policies: true
+  egress_filter: true
+  require_guardrails: true
+  cedar:
+    enabled: true
+    mode: ENFORCE
+  traceability: true
+  org_id: o-example1234
+
+observability:
+  transaction_search: true
+  alarms: true
+  alarm_email: ops@REPLACE_ME.invalid
+  log_retention_days: 90

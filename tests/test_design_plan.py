@@ -73,3 +73,12 @@ def test_plan_is_plain_text():
 def test_runtime_replacement_generation_is_explicit():
     t = text(PlatformConfig(agents={"orchestrator_runtime_generation": 2}))
     assert "orchestrator runtime generation 2 (controlled replacement)" in t
+
+
+def test_production_plan_names_mode_and_retention(monkeypatch):
+    monkeypatch.setenv("PLATFORM_ALLOW_PLACEHOLDERS", "1")
+    t = text(load_platform_config(PRESETS / "production.yaml"))
+    assert "Mode: production" in t
+    assert "Lifecycle: retained stateful resources" in t
+    assert "90-day logs" in t
+    assert "30-day memory events" in t

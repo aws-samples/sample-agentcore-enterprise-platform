@@ -41,6 +41,7 @@ DESCRIPTIONS: dict[str, str] = {
     "region": "Where everything deploys. Also decides whether `gateway.web_search: auto` turns on (launch regions only).",
     "use_cases": "Opt-in use cases: name → that use case's own config block, passed to its `build()` untouched (`{}` enables with defaults). Names must exist under `use-cases/`, so a typo is an error, not a silent no-op. Their stacks ride at the end of the footprint.",
     # deployment
+    "deployment.mode": "`workshop` keeps disposable lifecycle defaults. `production` retains stateful resources and fails validation unless enterprise identity, networking, audit, authorization, guardrails, model allow-listing and monitored alarms are all configured.",
     "deployment.strategy": "`centralized` puts everything in one account. `distributed` means each team deploys its own copy of this file. `federated` splits shared services (auth, gateway) into `platform_account` from agent runtimes in `workload_accounts`; the account you deploy into decides the role, the same file works in both.",
     "deployment.platform_account": "12-digit account that hosts the shared services in a `federated` deployment. Required by that strategy, ignored by the others.",
     "deployment.workload_accounts": "12-digit accounts that run agent runtimes in a `federated` deployment. Deploying a federated file from an account in neither list is a hard error.",
@@ -62,6 +63,7 @@ DESCRIPTIONS: dict[str, str] = {
     "agents.a2a": "Deploy the `code-agent` and `research-agent` sub-agent runtimes next to the orchestrator (A2A protocol).",
     "agents.orchestrator_runtime_generation": "Controlled replacement generation for the orchestrator AgentCore Runtime. Increase only when an existing runtime is unreadable or another immutable runtime property requires replacement; healthy A2A runtimes are unaffected.",
     "agents.memory.long_term": "Add the semantic long-term strategy to the AgentCore Memory store (fact extraction across sessions).",
+    "agents.memory.event_expiry_days": "How long AgentCore Memory events remain available. Production requires an explicit bounded value and retains the Memory resource itself on stack deletion.",
     "agents.memory.top_k": "Long-term retrieval: how many records to pull per query.",
     "agents.memory.relevance_score": "Long-term retrieval: minimum relevance for a record to be returned.",
     # gateway
@@ -81,6 +83,7 @@ DESCRIPTIONS: dict[str, str] = {
     "observability.transaction_search": "Configure CloudWatch Transaction Search so runtime traces are searchable. Account-scoped, not per stack.",
     "observability.alarms": "CloudWatch alarms per deployed resource, an SNS ops topic and the platform dashboard.",
     "observability.alarm_email": "Inbox subscribed to the alarm topic (SNS sends a confirmation first). Empty = topic without subscription; placeholders are rejected.",
+    "observability.log_retention_days": "CloudWatch log retention for platform-managed log groups. Supported values map to native CloudWatch periods: 30, 90, 180, or 365 days.",
     # migration
     "migration": "Move an existing agent onto the platform. Absent = no migration, everything behaves as before. Stack names do not change: the migrated agent deploys as `…-runtime-orchestrator` on both targets.",
     "migration.source.platform": "Where the agent runs today. Shapes the docs and the plan, not the deploy.",
@@ -109,6 +112,7 @@ ENV: dict[str, str] = {
     "project": "PROJECT_NAME",
     "environment": "ENVIRONMENT",
     "region": "AWS_REGION",
+    "deployment.mode": "DEPLOYMENT_MODE",
     "deployment.strategy": "DEPLOYMENT_STRATEGY",
     "deployment.platform_account": "PLATFORM_ACCOUNT",
     "identity.idp": "IDP_TYPE",
@@ -123,6 +127,7 @@ ENV: dict[str, str] = {
     "agents.a2a": "ENABLE_A2A",
     "agents.orchestrator_runtime_generation": "ORCHESTRATOR_RUNTIME_GENERATION",
     "agents.memory.long_term": "USE_LONG_TERM_MEMORY",
+    "agents.memory.event_expiry_days": "MEMORY_EVENT_EXPIRY_DAYS",
     "agents.memory.top_k": "LTM_TOP_K",
     "agents.memory.relevance_score": "LTM_RELEVANCE_SCORE",
     "gateway.web_search": "ENABLE_WEB_SEARCH",
@@ -138,6 +143,7 @@ ENV: dict[str, str] = {
     "observability.transaction_search": "ENABLE_TRANSACTION_SEARCH",
     "observability.alarms": "ENABLE_ALARMS",
     "observability.alarm_email": "ALARM_EMAIL",
+    "observability.log_retention_days": "LOG_RETENTION_DAYS",
     "migration": "MIGRATION_ENABLED",
     "migration.source.platform": "MIGRATION_SOURCE_PLATFORM",
     "migration.source.image": "MIGRATION_SOURCE_IMAGE",

@@ -36,3 +36,8 @@ Verify
 Own
 - [Participant guide](PARTICIPANT_GUIDE.md)
 - [Production readiness plan](PRODUCTION_READINESS_PLAN.md)
+- [Threat model template](THREAT_MODEL.md)
+- [Data classification template](DATA_CLASSIFICATION.md)
+- [SLO, RTO, and RPO template](SLO_RTO_RPO.md)
+- [Operating model template](OPERATING_MODEL.md)
+- [Risk register template](RISK_REGISTER.md)

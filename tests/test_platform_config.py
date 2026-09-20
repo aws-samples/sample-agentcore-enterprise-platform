@@ -33,6 +33,7 @@ def test_presets_exist():
         "migration",
         "multi-agent",
         "platform-team",
+        "production",
         "security-focused",
     }
 
@@ -155,11 +156,84 @@ def test_web_search_auto_resolves_by_region(mode, region, expected):
 def test_defaults_are_a_valid_deployment():
     """An EMPTY platform.yaml must be deployable (greenfield defaults)."""
     config = PlatformConfig.model_validate({})
+    assert config.deployment.mode == "workshop"
     assert config.deployment.strategy == "centralized"
     assert config.agents.pattern == "orchestrator"
     assert config.agents.orchestrator_runtime_generation == 1
     assert config.security.networking is False
     assert config.observability.transaction_search is True
+
+
+def _production_config() -> dict:
+    return {
+        "deployment": {"mode": "production"},
+        "identity": {
+            "idp": "entra_id",
+            "tenant_id": "3f2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+            "client_id": "9a8b7c6d-1234-4abc-9def-000111222333",
+            "client_secret_name": "agentcore/idp-client-secret",
+        },
+        "agents": {
+            "pattern": "strands-agent",
+            "model_id": "us.anthropic.claude-sonnet-4-6",
+            "allowed_models": ["us.anthropic.claude-sonnet-4-6"],
+        },
+        "gateway": {"web_search": "off"},
+        "security": {
+            "networking": True,
+            "cloudtrail_alerting": True,
+            "resource_policies": True,
+            "egress_filter": True,
+            "require_guardrails": True,
+            "cedar": {"enabled": True, "mode": "ENFORCE"},
+            "traceability": True,
+            "org_id": "o-abc123def456",
+        },
+        "observability": {
+            "transaction_search": True,
+            "alarms": True,
+            "alarm_email": "ops@corp.internal",
+            "log_retention_days": 90,
+        },
+    }
+
+
+def test_production_mode_accepts_a_complete_secure_config():
+    config = PlatformConfig.model_validate(_production_config())
+    assert config.deployment.mode == "production"
+    assert to_env(config)["DEPLOYMENT_MODE"] == "production"
+    assert to_env(config)["LOG_RETENTION_DAYS"] == "90"
+
+
+def test_production_mode_reports_all_missing_controls_together():
+    with pytest.raises(ValidationError) as excinfo:
+        PlatformConfig.model_validate({"deployment": {"mode": "production"}})
+    msg = str(excinfo.value)
+    for field in (
+        "identity.idp",
+        "security.networking",
+        "security.cloudtrail_alerting",
+        "security.resource_policies",
+        "security.egress_filter",
+        "security.require_guardrails",
+        "security.cedar.enabled",
+        "security.cedar.mode",
+        "security.traceability",
+        "security.org_id",
+        "agents.model_id",
+        "agents.allowed_models",
+        "gateway.web_search",
+        "observability.alarms",
+        "observability.alarm_email",
+    ):
+        assert field in msg
+
+
+def test_environment_override_to_production_is_revalidated():
+    with pytest.raises(ValidationError, match="production controls"):
+        apply_environment_overrides(
+            PlatformConfig.model_validate({}), {"DEPLOYMENT_MODE": "production"}
+        )
 
 
 def test_runtime_generation_is_durable_and_bounded():

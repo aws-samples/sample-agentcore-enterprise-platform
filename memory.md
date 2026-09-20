@@ -13,39 +13,38 @@ operational readiness review.
 
 ## Current milestone
 
-**G0 — contain immediate risks (implementation ready for review)**
+**G1 — production design baseline (implementation in progress)**
 
-Branch: `security/production-readiness-g0`
+Branch: `feat/production-mode-g1`
 
-Completed on this branch:
+G0 code merged to `main` through PR #74 after prerequisite PR #75. Its
+blocking repository checks are now present. The current branch implements:
 
-- [x] Remove the Cognito M2M client secret from cross-stack CloudFormation
-  outputs.
-- [x] Prevent the local dashboard from collecting, serving, or displaying
-  secrets.
-- [x] Harden brokered enterprise identity so native Cognito signup cannot
-  bypass the corporate IdP.
-- [x] Preserve the Cognito-only workshop path.
-- [x] Add a blocking secret-boundary workflow covering Git history,
-  synthesized templates, and generated dashboard artifacts.
-- [x] Deploy and verify the migration in the authorized AWS development
-  account.
-- [x] Rotate the deployed Cognito M2M client and delete the exposed legacy
-  client and secret.
-- [x] Serialize mutating deployments and exports with an owner-checked lock;
-  fail closed on abandoned lock state.
-- [x] Apply the dashboard public-data allow-list to deployment summaries and
-  exported workshop artifacts.
-- [x] Verify the authorized Azure session and check for a test app
-  registration. No matching registration exists, so an Entra browser sign-in
-  was not possible in this milestone.
+- [x] Add explicit `workshop` and `production` deployment modes.
+- [x] Add a production preset that requires enterprise identity, networking,
+  audit, resource policies, egress controls, guardrails, Cedar enforcement,
+  traceability, model allow-listing, and monitored alarms.
+- [x] Retain production Cognito data, Secrets Manager credentials, Memory,
+  KMS keys, CloudTrail storage, ECR images, and platform log groups.
+- [x] Make the production trail multi-Region, log-file validated, versioned,
+  and KMS-encrypted; apply the CMK to Memory and Gateway.
+- [x] Omit Gateway debug exceptions in production.
+- [x] Add explicit Memory event and CloudWatch log retention settings.
+- [x] Add DRAFT threat-model, data-classification, SLO/RTO/RPO, operating
+  model, and risk-register templates without inventing customer approvals.
+- [x] Add focused schema and infrastructure synthesis tests.
 
-Before G0 is formally closed:
+Open evidence and ownership work:
 
-- [ ] Merge the blocking CI regression gate.
 - [ ] The platform/security owner must record the credential incident and
   attribute the five successful legacy-client token exchanges found in the
   available 90-day CloudTrail history.
+- [ ] Complete the Entra authorization-code callback with the account holder's
+  physical passkey and retain sanitized result evidence.
+- [ ] After the 65-minute token drain, run the next locked deployment to remove
+  the retired client allow-list/checkpoints and verify the final state.
+- [ ] Populate, review, and approve the five G1 governance artifacts for the
+  specific customer; draft templates and green synthesis do not close G1.
 
 ## Decisions
 
@@ -56,9 +55,10 @@ needs its acceptance evidence, recorded here or linked from here.
 
 ### 2026-09-20 — keep workshop and production modes distinct
 
-The accelerator will retain a disposable workshop experience and add a
-long-lived production mode. Production mode will reject insecure combinations
-and retain stateful/audit resources. This is planned after G0 containment.
+The accelerator retains a disposable workshop experience and has a long-lived
+production mode. Production mode rejects insecure combinations, retains
+stateful/audit resources, uses bounded configurable retention, and is not
+accepted by the guided workshop runner.
 
 ### 2026-09-20 — generated Cognito secret stays inside the auth stack
 
@@ -375,10 +375,42 @@ Never copy credential values into this file.
   a test; the test now parses the generated JSON and compares the exact
   allow-listed output structure instead.
 
-## Commits and pull request
+### G1 production-mode implementation — 2026-09-20
+
+- Added `deployment.mode` with backward-compatible `workshop` behavior and a
+  fail-closed `production` control gate. Environment overrides are folded back
+  into the typed model before synthesis, and resolved CDK context is checked
+  again so direct context flags cannot silently disable a required control.
+- Added `presets/production.yaml`. Its real-shaped sentinels are warnings only
+  for the offline preset parity gate and hard errors for a real design/build.
+  The guided workshop runner explicitly refuses the production profile.
+- Production synthesis retains identity data and generated Secrets Manager
+  credentials, Memory, KMS keys, CloudTrail data, runtime ECR repositories, and
+  platform log groups. The audit bucket is KMS-encrypted, versioned, and
+  retained; the trail is multi-Region with log-file validation; Gateway debug
+  exceptions are omitted and Gateway uses the platform CMK.
+- Added bounded `agents.memory.event_expiry_days` and
+  `observability.log_retention_days` settings through schema, environment,
+  deployment context, stacks, generated reference, plan output, and tests.
+- Added the DRAFT/TBD G1 threat model, data classification, SLO/RTO/RPO,
+  operating model, and risk register. These are templates for accountable
+  customer review; no approval or launch-readiness claim is inferred.
+- Verification evidence: 403 repository tests pass; all eight production
+  stacks match the declared contract; changed Python files pass Ruff and
+  formatting; shell syntax, generated-reference drift, and diff whitespace
+  checks pass. Focused synthesis tests assert retained resources, audit
+  hardening, configured retention, production Gateway encryption, and
+  sanitized errors.
+- No production deployment was performed. The shipped production preset still
+  contains deliberate tenant, client, organization, and alarm-destination
+  sentinels, so it cannot deploy until a customer replaces and approves them.
+
+## Commits and pull requests
 
 - `3ef164d` — `Harden G0 production-readiness boundaries`
 - `c6efa80` — `Recover stale runtimes during identity migration`
 - Pull request: [#74 — Harden G0 production-readiness boundaries](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/74)
 - Prerequisite pull request:
   [#75 — Add missing pull request labeler configuration](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/75)
+- PR #75 and PR #74 merged to `main` on 2026-09-20.
+- G1 branch: `feat/production-mode-g1` (pull request pending).

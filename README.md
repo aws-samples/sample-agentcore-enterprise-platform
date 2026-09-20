@@ -49,8 +49,25 @@ Pick the profile that looks most like your job today. It is a starting point, yo
 | `multi-agent` | Building specialist agents that work together | Gateway, orchestrator, A2A runtimes, and observability |
 | `platform-team` | Setting up shared infrastructure for your organization | Full platform, including memory, A2A, networking, and security |
 | `security-focused` | Starting with compliance and hardening | One-agent platform, networking, security, policy, egress, and traceability controls |
+| `production` | Preparing a long-lived customer baseline | Enterprise IdP, model allow-list, enforced Cedar and guardrails, networking, audit, alarms, encryption, and retained state |
 
-A profile is both a footprint and a lesson plan: `design --profile <name>` writes the profile's preset ([`presets/`](presets/)) to `platform.yaml` and prints the stacks it produces; `build` deploys that design in one run, while `workshop --profile <name>` walks the same scope module by module. Multi-account topologies have their own presets, `federated` and `distributed`; see [`docs/MULTI_ACCOUNT.md`](docs/MULTI_ACCOUNT.md).
+A profile defines a starting footprint: `design --profile <name>` writes the
+profile's preset ([`presets/`](presets/)) to `platform.yaml` and prints the
+stacks it produces, then `build` deploys the validated design. The disposable
+profiles also work as guided lesson plans through `workshop --profile <name>`.
+The `production` profile is intentionally design/build only and refuses the
+guided workshop runner. Multi-account topologies have their own presets,
+`federated` and `distributed`; see
+[`docs/MULTI_ACCOUNT.md`](docs/MULTI_ACCOUNT.md).
+
+The production preset is a secure template, not a launch approval. Replace all
+sentinels, complete the DRAFT governance artifacts under
+[`docs/`](docs/PRODUCTION_READINESS_PLAN.md), and pass the release gates for the
+specific customer. Production mode fails validation if enterprise identity,
+networking, audit, resource policies, egress controls, guardrails, enforced
+Cedar authorization, model allow-listing, tracing, and monitored alarms are
+not configured. Its stateful resources survive stack removal; their final
+disposition must follow the customer's approved retention and deletion plan.
 
 
 ## Getting Started
@@ -88,7 +105,7 @@ pip install -r requirements.txt
 
 # Pick a profile: writes platform.yaml, validates it, prints the stacks it produces
 ./scripts/deploy.sh design --profile greenfield
-# Other profiles: migration | multi-agent | platform-team | security-focused
+# Other profiles: migration | multi-agent | platform-team | security-focused | production
 
 # Edit platform.yaml (accounts, IdP and identity.mode, framework, controls...)
 # and re-run `design` to re-validate. Every key: docs/PLATFORM_YAML.md
@@ -274,6 +291,7 @@ Use these settings to change the platform's name, environment, identity provider
 | Context key | Environment variable | Default | Meaning |
 |-------------|----------------------|---------|---------|
 | `project` | `PROJECT_NAME` | `agentcore-workshop` | Project identifier |
+| `deployment_mode` | `DEPLOYMENT_MODE` | `workshop` | `production` enables retained lifecycle and requires the complete secure control set in `platform.yaml` |
 | `environment` | `ENVIRONMENT` | `dev` | Environment name |
 | `region` | `AWS_REGION` | `us-east-1` | AWS Region |
 | `idp_type` | `IDP_TYPE` | `cognito` | IdP: cognito/entra_id/okta/ping |
@@ -288,6 +306,8 @@ Use these settings to change the platform's name, environment, identity provider
 | `enable_transaction_search` | `ENABLE_TRANSACTION_SEARCH` | `true` | Configure CloudWatch Transaction Search. This setting is account scoped. See [details](#search-agent-traces). |
 | `enable_alarms` | `ENABLE_ALARMS` | `false` | Create CloudWatch alarms, an SNS ops topic, and the platform dashboard. See [details](#alarms-and-the-platform-dashboard). |
 | `alarm_email` | `ALARM_EMAIL` | *(none)* | Email address subscribed to the alarm topic. Requires `enable_alarms`. |
+| `agents.memory.event_expiry_days` | `MEMORY_EVENT_EXPIRY_DAYS` | `30` | Bounded AgentCore Memory event retention |
+| `observability.log_retention_days` | `LOG_RETENTION_DAYS` | `30` | Platform log retention: 30, 90, 180, or 365 days |
 
 Prefer a file you can review and commit? `platform.yaml` is the declarative manifest for the same settings and more (multi-account strategy, gateway tools, security controls). Deploying with `--profile <name>` writes it for you from [`presets/`](presets/), or copy a preset yourself and validate it offline:
 

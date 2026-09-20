@@ -36,10 +36,11 @@ before anything is created.
 
 ## `deployment:`
 
-Multi-account strategy. See docs/MULTI_ACCOUNT.md.
+Deployment posture and multi-account strategy. See docs/MULTI_ACCOUNT.md.
 
 | Key | Type | Default | Env override | Description |
 |---|---|---|---|---|
+| `deployment.mode` | one of: `workshop`, `production` | `'workshop'` | `DEPLOYMENT_MODE` | `workshop` keeps disposable lifecycle defaults. `production` retains stateful resources and fails validation unless enterprise identity, networking, audit, authorization, guardrails, model allow-listing and monitored alarms are all configured. |
 | `deployment.strategy` ✦ | one of: `centralized`, `distributed`, `federated` | `'centralized'` | `DEPLOYMENT_STRATEGY` | `centralized` puts everything in one account. `distributed` means each team deploys its own copy of this file. `federated` splits shared services (auth, gateway) into `platform_account` from agent runtimes in `workload_accounts`; the account you deploy into decides the role, the same file works in both. |
 | `deployment.platform_account` | str | `""` | `PLATFORM_ACCOUNT` | 12-digit account that hosts the shared services in a `federated` deployment. Required by that strategy, ignored by the others. |
 | `deployment.workload_accounts` | list of str | `[]` | — | 12-digit accounts that run agent runtimes in a `federated` deployment. Deploying a federated file from an account in neither list is a hard error. |
@@ -71,6 +72,7 @@ Who issues the tokens the platform trusts.
 | `agents.allowed_models` | list of str | `[]` | `ALLOWED_MODELS` | Model allow-list. When set, the runtime roles' Bedrock IAM is scoped to exactly these and `model_id` must be one of them (otherwise the containers' defaults would bypass the list). Empty = unrestricted, today's behaviour. |
 | `agents.a2a` ✦ | bool | `False` | `ENABLE_A2A` | Deploy the `code-agent` and `research-agent` sub-agent runtimes next to the orchestrator (A2A protocol). |
 | `agents.memory.long_term` | bool | `False` | `USE_LONG_TERM_MEMORY` | Add the semantic long-term strategy to the AgentCore Memory store (fact extraction across sessions). |
+| `agents.memory.event_expiry_days` | int (1–365) | `30` | `MEMORY_EVENT_EXPIRY_DAYS` | How long AgentCore Memory events remain available. Production requires an explicit bounded value and retains the Memory resource itself on stack deletion. |
 | `agents.memory.top_k` | int (1–100) | `10` | `LTM_TOP_K` | Long-term retrieval: how many records to pull per query. |
 | `agents.memory.relevance_score` | float (0.0–1.0) | `0.3` | `LTM_RELEVANCE_SCORE` | Long-term retrieval: minimum relevance for a record to be returned. |
 
@@ -102,6 +104,7 @@ Who issues the tokens the platform trusts.
 | `observability.transaction_search` | bool | `True` | `ENABLE_TRANSACTION_SEARCH` | Configure CloudWatch Transaction Search so runtime traces are searchable. Account-scoped, not per stack. |
 | `observability.alarms` | bool | `False` | `ENABLE_ALARMS` | CloudWatch alarms per deployed resource, an SNS ops topic and the platform dashboard. |
 | `observability.alarm_email` | str | `""` | `ALARM_EMAIL` | Inbox subscribed to the alarm topic (SNS sends a confirmation first). Empty = topic without subscription; placeholders are rejected. |
+| `observability.log_retention_days` | int | `30` | `LOG_RETENTION_DAYS` | CloudWatch log retention for platform-managed log groups. Supported values map to native CloudWatch periods: 30, 90, 180, or 365 days. |
 
 ## `migration:`
 
@@ -359,6 +362,62 @@ security:
 observability:
   transaction_search: true
   alarms: true                # CloudWatch alarms + the platform dashboard
+```
+
+</details>
+
+<details>
+<summary><code>presets/production.yaml</code></summary>
+
+```yaml
+# Production starting point: secure controls are mandatory and stateful
+# resources are retained. Replace every sentinel before deploying; synthesis
+# with placeholders is only a CI parity check, not production approval.
+project: agentcore-production
+environment: prod
+region: us-east-1
+
+deployment:
+  mode: production
+  strategy: centralized
+
+identity:
+  idp: entra_id
+  mode: brokered
+  tenant_id: 00000000-0000-0000-0000-000000000000
+  client_id: REPLACE_ME
+  client_secret_name: agentcore/idp-client-secret
+
+agents:
+  pattern: strands-agent
+  model_id: us.anthropic.claude-sonnet-4-6
+  allowed_models:
+    - us.anthropic.claude-sonnet-4-6
+  memory:
+    event_expiry_days: 30
+
+gateway:
+  # Production requires an explicit decision instead of region-dependent auto.
+  web_search: "off"
+  tools: [sample-tool]
+
+security:
+  networking: true
+  cloudtrail_alerting: true
+  resource_policies: true
+  egress_filter: true
+  require_guardrails: true
+  cedar:
+    enabled: true
+    mode: ENFORCE
+  traceability: true
+  org_id: o-example1234
+
+observability:
+  transaction_search: true
+  alarms: true
+  alarm_email: ops@REPLACE_ME.invalid
+  log_retention_days: 90
 ```
 
 </details>

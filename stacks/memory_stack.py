@@ -5,11 +5,10 @@ Implements Requirement 8: AgentCore Memory Configuration
 - Optional KMS CMK encryption for data at rest
 - SSM Parameters for cross-stack consumption
 """
+
 import aws_cdk as cdk
-from aws_cdk import (
-    aws_bedrockagentcore as agentcore,
-    aws_ssm as ssm,
-)
+from aws_cdk import aws_bedrockagentcore as agentcore
+from aws_cdk import aws_ssm as ssm
 from constructs import Construct
 
 from infra_utils.policy_loader import load_control_json
@@ -30,6 +29,7 @@ class MemoryStack(cdk.Stack):
         ltm_relevance_score: float = 0.3,
         enable_resource_policies: bool = False,
         org_id: str = "",
+        retain_data: bool = False,
         **kwargs,
     ):
         super().__init__(scope, id, **kwargs)
@@ -49,13 +49,16 @@ class MemoryStack(cdk.Stack):
 
         # Long-term memory (semantic fact extraction) — optional, incurs additional cost
         if use_long_term_memory:
-            strategies.insert(0, agentcore.CfnMemory.MemoryStrategyProperty(
-                semantic_memory_strategy=agentcore.CfnMemory.SemanticMemoryStrategyProperty(
-                    name=f"{name}_semantic",
-                    description="Semantic fact extraction and override strategy",
-                    namespaces=["AGENT_ID"],
+            strategies.insert(
+                0,
+                agentcore.CfnMemory.MemoryStrategyProperty(
+                    semantic_memory_strategy=agentcore.CfnMemory.SemanticMemoryStrategyProperty(
+                        name=f"{name}_semantic",
+                        description="Semantic fact extraction and override strategy",
+                        namespaces=["AGENT_ID"],
+                    ),
                 ),
-            ))
+            )
 
         # ── CfnMemory ──
         props: dict = {
@@ -68,6 +71,8 @@ class MemoryStack(cdk.Stack):
             props["encryption_key_arn"] = kms_key_arn
 
         self.memory = agentcore.CfnMemory(self, "Memory", **props)
+        if retain_data:
+            self.memory.apply_removal_policy(cdk.RemovalPolicy.RETAIN)
 
         # ── Resource-based policy (optional, control-library) ──
         # Attaches an "in-account-only" resource policy to the Memory resource so principals
@@ -88,28 +93,42 @@ class MemoryStack(cdk.Stack):
                     "org_id": org_id,
                 },
             )
-            agentcore.CfnResourcePolicy(self, "MemoryResourcePolicy",
+            agentcore.CfnResourcePolicy(
+                self,
+                "MemoryResourcePolicy",
                 resource_arn=self.memory.attr_memory_arn,
                 policy=policy_json,
             )
 
         # ── SSM Parameters ──
-        ssm.StringParameter(self, "SSMMemoryId",
+        ssm.StringParameter(
+            self,
+            "SSMMemoryId",
             parameter_name=f"/{project_name}/{environment}/memory/memory-id",
             string_value=self.memory.attr_memory_id,
             description=f"AgentCore Memory ID for {project_name}/{environment}",
         )
-        ssm.StringParameter(self, "SSMMemoryArn",
+        ssm.StringParameter(
+            self,
+            "SSMMemoryArn",
             parameter_name=f"/{project_name}/{environment}/memory/memory-arn",
             string_value=self.memory.attr_memory_arn,
             description=f"AgentCore Memory ARN for {project_name}/{environment}",
         )
 
         # ── Outputs ──
-        cdk.CfnOutput(self, "MemoryId", value=self.memory.attr_memory_id,
-                       export_name=f"{project_name}-{environment}-memory-id")
-        cdk.CfnOutput(self, "MemoryArn", value=self.memory.attr_memory_arn,
-                       export_name=f"{project_name}-{environment}-memory-arn")
+        cdk.CfnOutput(
+            self,
+            "MemoryId",
+            value=self.memory.attr_memory_id,
+            export_name=f"{project_name}-{environment}-memory-id",
+        )
+        cdk.CfnOutput(
+            self,
+            "MemoryArn",
+            value=self.memory.attr_memory_arn,
+            export_name=f"{project_name}-{environment}-memory-arn",
+        )
 
     @property
     def memory_id(self) -> str:

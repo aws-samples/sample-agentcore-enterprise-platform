@@ -23,7 +23,12 @@ import os
 
 import aws_cdk as cdk
 
-from infra_utils.platform_config import PlatformConfig, load_platform_config, to_env
+from infra_utils.platform_config import (
+    PlatformConfig,
+    apply_environment_overrides,
+    load_platform_config,
+    to_env,
+)
 from stacks.auth_stack import AuthStack
 from stacks.gateway_stack import GatewayStack
 from stacks.identity_stack import IdentityStack
@@ -49,7 +54,9 @@ _config_path = app.node.try_get_context("platform_config") or os.environ.get(
 platform_config: PlatformConfig | None = None
 _yaml_env: dict[str, str] = {}
 if os.path.exists(_config_path):
-    platform_config = load_platform_config(_config_path)
+    platform_config = apply_environment_overrides(
+        load_platform_config(_config_path), dict(os.environ)
+    )
     _yaml_env = to_env(platform_config)
 
 
@@ -76,6 +83,19 @@ account = os.environ.get("CDK_DEFAULT_ACCOUNT", "")
 
 cdk_env = cdk.Environment(account=account, region=region)
 prefix = f"{project}-{env_name}"
+deployment_mode = cfg("deployment_mode", "DEPLOYMENT_MODE", "workshop")
+if deployment_mode not in {"workshop", "production"}:
+    raise ValueError(
+        f"deployment_mode must be 'workshop' or 'production', got {deployment_mode!r}"
+    )
+production_mode = deployment_mode == "production"
+if production_mode and (
+    platform_config is None or platform_config.deployment.mode != "production"
+):
+    raise ValueError(
+        "Production mode must be declared in a validated platform.yaml; direct "
+        "context/env flags cannot bypass the production control gate."
+    )
 
 # Feature flags
 enable_networking = cfg("enable_networking", "ENABLE_NETWORKING", "false") == "true"
@@ -147,6 +167,7 @@ enable_transaction_search = (
 # a confirmation link); empty means the topic deploys without a subscription.
 enable_alarms = cfg("enable_alarms", "ENABLE_ALARMS", "false") == "true"
 alarm_email = cfg("alarm_email", "ALARM_EMAIL", "")
+log_retention_days = int(cfg("log_retention_days", "LOG_RETENTION_DAYS", "30"))
 # AWS Organizations ID (o-xxxx). Required when enable_resource_policies is on, so the
 # in-account-only resource policies can render their aws:PrincipalOrgID deny guard.
 org_id = cfg("org_id", "ORG_ID", "")
@@ -223,6 +244,41 @@ allowed_models = [
     for m in cfg("allowed_models", "ALLOWED_MODELS", "").split(",")
     if m.strip()
 ]
+if production_mode:
+    resolved_production_gaps = [
+        field
+        for field, ready in (
+            ("identity.idp", idp_type != "cognito"),
+            ("security.networking", enable_networking),
+            ("security.cloudtrail_alerting", enable_security),
+            ("security.resource_policies", enable_resource_policies),
+            ("security.egress_filter", enable_egress_filter),
+            ("security.require_guardrails", require_guardrails),
+            ("security.cedar.enabled", enable_cedar),
+            ("security.cedar.mode", cedar_mode == "ENFORCE"),
+            ("security.traceability", enable_traceability),
+            ("security.org_id", bool(org_id)),
+            ("agents.model_id", bool(model_id)),
+            ("agents.allowed_models", bool(allowed_models)),
+            (
+                "agents.model_id in agents.allowed_models",
+                bool(model_id) and model_id in allowed_models,
+            ),
+            (
+                "identity.mode",
+                idp_mode != "direct" or idp_type == "entra_id",
+            ),
+            ("observability.transaction_search", enable_transaction_search),
+            ("observability.alarms", enable_alarms),
+            ("observability.alarm_email", bool(alarm_email)),
+        )
+        if not ready
+    ]
+    if resolved_production_gaps:
+        raise ValueError(
+            "Resolved CDK context would disable production controls: "
+            + ", ".join(resolved_production_gaps)
+        )
 
 # Long-term memory configuration
 use_long_term_memory = (
@@ -230,6 +286,9 @@ use_long_term_memory = (
 )
 ltm_top_k = int(cfg("ltm_top_k", "LTM_TOP_K", "10"))
 ltm_relevance_score = float(cfg("ltm_relevance_score", "LTM_RELEVANCE_SCORE", "0.3"))
+memory_event_expiry_days = int(
+    cfg("memory_event_expiry_days", "MEMORY_EVENT_EXPIRY_DAYS", "30")
+)
 
 # IdP config from context or env.
 # The IdP client secret is NEVER accepted as plaintext context — only the name of a
@@ -276,6 +335,7 @@ notion_client_secret_name = cfg(
 cdk.Tags.of(app).add("Project", project)
 cdk.Tags.of(app).add("Environment", env_name)
 cdk.Tags.of(app).add("ManagedBy", "CDK")
+cdk.Tags.of(app).add("DeploymentMode", deployment_mode)
 
 # ═══════════════════════════════════════════════════════════════
 # FOUNDATION LAYER
@@ -304,6 +364,7 @@ if enable_security:
         environment=env_name,
         enable_kms=True,
         enable_cloudtrail=True,
+        retain_data=production_mode,
         env=cdk_env,
     )
 
@@ -352,6 +413,7 @@ if not is_fed_workload:
         publish_legacy_m2m_interface=(
             retain_legacy_m2m_export or retain_legacy_m2m_client
         ),
+        retain_data=production_mode,
         env=cdk_env,
     )
 
@@ -452,12 +514,13 @@ if not is_fed_platform:
         kms_key_arn=security_stack.kms_key.key_arn
         if (security_stack and security_stack.kms_key)
         else "",
-        event_expiry_days=30,
+        event_expiry_days=memory_event_expiry_days,
         use_long_term_memory=use_long_term_memory,
         ltm_top_k=ltm_top_k,
         ltm_relevance_score=ltm_relevance_score,
         enable_resource_policies=enable_resource_policies,
         org_id=org_id,
+        retain_data=production_mode,
         env=cdk_env,
     )
     if auth_stack:
@@ -506,6 +569,10 @@ if not is_fed_workload:
         enable_egress_filter=enable_egress_filter,
         enable_cedar=enable_cedar,
         cedar_mode=cedar_mode,
+        debug_exceptions=not production_mode,
+        kms_key_arn=security_stack.kms_key.key_arn
+        if (security_stack and security_stack.kms_key)
+        else "",
         env=cdk_env,
     )
     gateway_stack.add_dependency(auth_stack)
@@ -558,6 +625,7 @@ if not is_fed_platform:
         cognito_allowed_clients=allowed_clients,
         allowed_audience=allowed_audience,
         require_guardrails=require_guardrails,
+        retain_data=production_mode,
         extra_env_vars={
             "GATEWAY_URL": gateway_url_for_runtimes,
             "GATEWAY_CREDENTIAL_PROVIDER_NAME": identity_stack.gateway_credential_provider_name,
@@ -611,6 +679,7 @@ if enable_a2a and not is_fed_platform:
         cognito_allowed_clients=allowed_clients,
         allowed_audience=allowed_audience,
         require_guardrails=require_guardrails,
+        retain_data=production_mode,
         extra_env_vars=model_env,
         **runtime_network,
         env=cdk_env,
@@ -637,6 +706,7 @@ if enable_a2a and not is_fed_platform:
         cognito_allowed_clients=allowed_clients,
         allowed_audience=allowed_audience,
         require_guardrails=require_guardrails,
+        retain_data=production_mode,
         extra_env_vars={
             "GATEWAY_URL": gateway_url_for_runtimes,
             "GATEWAY_CREDENTIAL_PROVIDER_NAME": identity_stack.gateway_credential_provider_name,
@@ -692,6 +762,8 @@ obs_stack = ObservabilityStack(
     enable_transaction_search=enable_transaction_search,
     enable_alarms=enable_alarms,
     alarm_email=alarm_email,
+    log_retention_days=log_retention_days,
+    retain_data=production_mode,
     env=cdk_env,
 )
 for _dep in (

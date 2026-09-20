@@ -30,6 +30,7 @@ class AuthStack(cdk.Stack):
         logout_urls: list[str] | None = None,
         retain_legacy_m2m_client: bool = False,
         publish_legacy_m2m_interface: bool = False,
+        retain_data: bool = False,
         **kwargs,
     ):
         """
@@ -49,6 +50,9 @@ class AuthStack(cdk.Stack):
         super().__init__(scope, id, **kwargs)
 
         prefix = f"{project_name}-{environment}"
+        lifecycle_policy = (
+            cdk.RemovalPolicy.RETAIN if retain_data else cdk.RemovalPolicy.DESTROY
+        )
         idp_config = idp_config or {}
         external_idp_types = ("entra_id", "okta", "ping")
 
@@ -113,7 +117,8 @@ class AuthStack(cdk.Stack):
                 require_symbols=False,
             ),
             account_recovery=cognito.AccountRecovery.EMAIL_ONLY,
-            removal_policy=cdk.RemovalPolicy.DESTROY,
+            deletion_protection=retain_data,
+            removal_policy=lifecycle_policy,
         )
 
         # ── User Pool Domain ──
@@ -288,7 +293,7 @@ class AuthStack(cdk.Stack):
             "M2MClientSecretV2",
             description=f"Gateway M2M client secret for {project_name}/{environment}",
             secret_string_value=self._m2m_client.user_pool_client_secret,
-            removal_policy=cdk.RemovalPolicy.DESTROY,
+            removal_policy=lifecycle_policy,
         )
         self._m2m_client_secret_store.node.add_dependency(self._m2m_client)
         # Keep this non-sensitive reference explicit and stable. A normal CDK
@@ -331,7 +336,7 @@ class AuthStack(cdk.Stack):
                     f"{project_name}/{environment}; removed after G0 rotation"
                 ),
                 secret_string_value=self._legacy_m2m_client.user_pool_client_secret,
-                removal_policy=cdk.RemovalPolicy.DESTROY,
+                removal_policy=lifecycle_policy,
             )
             self._legacy_m2m_client_secret_store.node.add_dependency(
                 self._legacy_m2m_client

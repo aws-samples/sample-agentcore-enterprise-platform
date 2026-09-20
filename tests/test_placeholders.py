@@ -197,6 +197,8 @@ def test_env_downgrades_placeholders_to_warnings(monkeypatch):
             "platform_account": "000000000000",
             "workload_accounts": ["123456789012"],
         },
+        security={"org_id": "o-example1234"},
+        observability={"alarm_email": "ops@REPLACE_ME.invalid"},
     )
     joined = "\n".join(c.warnings)
     for field in (
@@ -204,14 +206,24 @@ def test_env_downgrades_placeholders_to_warnings(monkeypatch):
         "identity.client_id",
         "deployment.platform_account",
         "deployment.workload_accounts[0]",
+        "security.org_id",
+        "observability.alarm_email",
     ):
         assert field in joined
+
+
+def test_real_deploy_refuses_shape_valid_org_placeholder():
+    msg = err(security={"org_id": "o-example1234"})
+    assert "security.org_id is a placeholder" in msg
+    assert "describe-organization" in msg
 
 
 # ── the shipped presets ──────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("preset", ["migration.yaml", "federated.yaml"])
+@pytest.mark.parametrize(
+    "preset", ["migration.yaml", "federated.yaml", "production.yaml"]
+)
 def test_presets_with_placeholders_refuse_a_real_deploy(preset):
     # THE acceptance test: `deploy.sh deploy --profile migration` with the
     # preset untouched must stop here, not at sign-in.
