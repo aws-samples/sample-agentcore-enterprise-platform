@@ -13,13 +13,13 @@ operational readiness review.
 
 ## Current milestone
 
-**G1 — production design baseline merged; migration EBA hardening in progress**
+**G1 — production design baseline merged; migration EBA path live-validated**
 
-Branch: `fix/migration-contract`
+Branch: `feat/migration-eba-verification`
 
-G0 merged through PR #74 after prerequisite PR #75. G1 implementation merged
-through PR #76. The current branch closes a deployment-account boundary found
-during the remaining live evidence run.
+G0 merged through PR #79. G1 implementation merged through PR #76. Migration
+hardening is split across stacked PRs #80, #81, and #82; merge them in that
+order.
 
 - [x] Add explicit `workshop` and `production` deployment modes.
 - [x] Add a production preset that requires enterprise identity, networking,
@@ -70,10 +70,9 @@ Open evidence and ownership work:
   installation, replaces lossy comma-separated environment transport with
   JSON, checks child health before every invoke, makes verification migration
   aware, and adds an EBA runbook.
-- No live migration deployment has yet been accepted as evidence. The next
-  gate is an isolated rehearsal under a unique project/environment in the
-  authorized development account, followed by live invoke, observability,
-  rollback, and cleanup evidence.
+- The isolated live rehearsal is now accepted for the supported fixture path;
+  see the evidence below. A real customer source, its acceptance tests, and
+  external trigger/network cutover remain customer-specific gates.
 
 ### 2026-09-21 — migration adapter/runtime hardening
 
@@ -123,6 +122,41 @@ Open evidence and ownership work:
 - The aborted long-prefix run reached only an empty Auth change-set shell in
   `REVIEW_IN_PROGRESS`; it was deleted immediately. No rehearsal resource was
   created and the existing workshop environment was untouched.
+
+### 2026-09-21 — isolated migration live rehearsal
+
+- The rehearsal used a unique `ac-migration/eba` footprint in the authorized
+  development account, Cognito identity, no customer secrets, and the included
+  non-root EC2-agent fixture. The existing `agentcore-workshop-dev` environment
+  was never selected or modified.
+- The first runtime build failed before Runtime creation because an unquoted
+  buildspec status message contained shell-significant parentheses.
+  CloudFormation rolled the isolated Runtime stack back to
+  `ROLLBACK_COMPLETE`; the other completed rehearsal stacks remained healthy.
+- The status message is now quoted, and a synthesis regression parses every
+  generated migration build command with `bash -n`. The retry built the
+  arm64 source and adapter images and deployed all six stacks to
+  `CREATE_COMPLETE`.
+- Live control-plane evidence showed the Runtime `READY`, with
+  `MIGRATION_ENV_JSON` present and the legacy `MIGRATION_ENV` channel absent.
+  CodeBuild recorded that source uid/gid `10001:10001` was preserved.
+- `deploy.sh verify` passed all five checks: brokered identity, Gateway
+  discovery/tool invocation, Memory API behavior, active log/trace delivery,
+  and a successful migrated-runtime invocation. The strict invoke parser
+  accepted the source response rather than only the transport status.
+- No real traffic was cut over because the rehearsal used a local fixture and
+  no external event source. Failure rollback was exercised by the first build,
+  and the successful footprint was then destroyed in dependency order.
+  A residue audit confirmed no matching stacks, ECR repository, SSM
+  parameters, or Cognito pool. Five service-created test log groups were
+  explicitly deleted and a final prefix check returned none.
+- That residue exposed a cleanup gap: full destroy did not discover log groups
+  created implicitly by CodeBuild and Lambda. Non-production full-footprint
+  cleanup now lists exact-prefix service log groups and applies the existing
+  ask/`--yes` policy; production mode preserves retained logs.
+- Final local evidence: 451 repository tests pass, deployment-config checks
+  pass, focused Ruff/formatting and shell syntax pass, and Git diff whitespace
+  validation passes.
 
 ### 2026-09-20 — live evidence run exposed an unbound deployment account
 
@@ -326,8 +360,12 @@ content-addressed asset-key shape. Security findings fail the job.
   memory recall, or searchable trace correlation.
 - The live demo runbook records a broken memory demonstration caused by the
   wrong runtime image and silent degradation.
-- A real Entra authorization-code sign-in has not been tested because the
-  authorized tenant has no `AgentCore Accelerator` app registration.
+- The real Entra authorization-code callback still needs the account holder's
+  physical passkey interaction; redirect and assigned-user challenge evidence
+  do not prove a completed sign-in.
+- Migration of a real customer image still requires customer acceptance tests,
+  load/error-path evidence, and an externally owned network, trigger, cutover,
+  and traffic-rollback plan. The accelerator does not provision those systems.
 - Production mode, data classification, threat model, retained resources,
   recovery objectives, least-privilege negative tests, and operational
   ownership remain future gates in the production-readiness plan.
@@ -599,3 +637,18 @@ Never copy credential values into this file.
 - Pull request:
   [#78 — Automate runtime observability handoff](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/78)
 - PR #78 merged to `main` on 2026-09-20.
+- `3b32ec3` — `Record final live verification evidence`
+- Pull request:
+  [#79 — Close live runtime verification gaps](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/79)
+- PR #79 merged to `main` on 2026-09-20.
+- `e81f680` — `Make migration planning fail closed`
+- Pull request:
+  [#80 — Make migration planning fail closed](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/80)
+- `a682dc5` — `Harden the migration adapter runtime`
+- Stacked pull request:
+  [#81 — Harden the migration adapter runtime](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/81)
+- `e6dae9b` — `Add migration verification and EBA runbook`
+- `97ea143` — `Fail fast on generated resource name limits`
+- `1eaa1bd` — `Fix migration source image build syntax`
+- Stacked pull request:
+  [#82 — Add migration verification and EBA runbook](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/82)

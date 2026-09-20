@@ -201,6 +201,10 @@ isolated accelerator environment with:
 
 Review retained resources and external integrations separately; `destroy`
 applies only to resources managed by this accelerator.
+For non-production full-footprint cleanup, the post-destroy sweep also lists
+service-created CodeBuild and Lambda log groups under the exact project and
+environment prefix. Confirm their deletion, or use `--yes` when that cleanup
+was pre-approved. Production mode never sweeps retained service log groups.
 
 ## EBA evidence checklist
 
