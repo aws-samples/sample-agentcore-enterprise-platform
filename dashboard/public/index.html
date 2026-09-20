@@ -6,6 +6,7 @@
 <meta name="color-scheme" content="light">
 <title>Platform dashboard · AgentCore Platform Accelerator</title>
 <!-- No CDN, no fonts, no framework: `python3 -m http.server` is the whole stack. -->
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="app.css">
 <link rel="stylesheet" href="graph.css">
 </head>
@@ -57,8 +58,8 @@
     </div>
 
     <div class="empty" id="stateOffline" hidden>
-      <h2>The poller is not running</h2>
-      <p>This page reads <code>dashboard/public/status.json</code>, which <code>monitor.py</code> rewrites every 15 seconds from CloudFormation. Start it from the repository root:</p>
+      <h2 id="offlineTitle">The poller is not running</h2>
+      <p id="offlineMessage">This page reads <code>dashboard/public/status.json</code>, which <code>monitor.py</code> rewrites every 15 seconds from CloudFormation.</p>
       <pre>AWS_PROFILE=&lt;profile&gt; .venv/bin/python dashboard/monitor.py</pre>
     </div>
 
@@ -106,11 +107,11 @@
        a federated deployment shows both account boxes and the side this dashboard
        cannot poll is drawn "not observed" rather than guessed at. -->
   <section id="tab-architecture" class="tab-content" role="tabpanel" aria-labelledby="tabbtn-architecture">
-    <div class="container">
+    <div class="container arch-online">
       <div class="container-head">
         <div>
           <h2>Live architecture</h2>
-          <p>Cards are CloudFormation stacks, positioned by layer and grouped by account. Drag a card to move it, drag the background to pan, scroll to zoom, select a card for its outputs.</p>
+          <p>Cards are CloudFormation stacks, positioned by layer and grouped by account. Drag a card to move it, drag the background to pan, scroll to zoom, select a card for reviewed public outputs.</p>
         </div>
         <div class="arch-summary" id="archSummary"></div>
       </div>
@@ -118,13 +119,13 @@
            canvas). The height lives in app.css: graph.css only styles .rf-*. -->
       <div id="archFlow"></div>
     </div>
-    <div class="container">
+    <div class="container arch-online">
       <div class="container-head"><h2>Legend</h2></div>
       <div class="container-body" id="archLegend"></div>
     </div>
     <div class="empty" id="archOffline" hidden>
-      <h2>The poller is not running</h2>
-      <p>Start it from the repository root:</p>
+      <h2 id="archOfflineTitle">The poller is not running</h2>
+      <p id="archOfflineMessage">Start it from the repository root:</p>
       <pre>AWS_PROFILE=&lt;profile&gt; .venv/bin/python dashboard/monitor.py</pre>
     </div>
   </section>
@@ -196,10 +197,31 @@ const ICON = {
   'warning':        '<path d="M8 2l6.5 11.5H1.5z"/><path d="M8 6.5v3M8 12h.01"/>',
   'info':           '<circle cx="8" cy="8" r="7"/><path d="M8 7.5v4M8 5h.01"/>'
 };
-const SECRET_RE = /secret|password|token|api-?key/i;
+// Defense in depth for old or hand-written status files. monitor.py applies
+// the same allow-list before writing JSON; the browser repeats it before any
+// output can reach the DOM or graph.js.
+const SAFE_OUTPUT_KEYS = new Set([
+  'VpcId', 'PrivateSubnetIds', 'RuntimeSecurityGroupId', 'KmsKeyArn',
+  'UserPoolId', 'UserPoolArn', 'IssuerUrl', 'DiscoveryUrl', 'AppClientId',
+  'WebClientId', 'M2MClientId', 'DomainUrl', 'IdPType', 'IdPMode',
+  'GatewayCredentialProviderName', 'GoogleProviderArn', 'GithubProviderArn',
+  'NotionProviderArn', 'GatewayUrl', 'GatewayArn', 'GatewayId', 'MemoryId',
+  'MemoryArn', 'RuntimeArn', 'RuntimeId', 'SourceHash', 'ImageUri',
+  'SecurityAlertsTopicArn', 'MonitoredResources'
+]);
+const SAFE_PARAMETER_KEYS = new Set([
+  'auth/mode', 'auth/issuer-url', 'auth/user-pool-id', 'auth/app-client-id',
+  'auth/web-client-id', 'auth/m2m-client-id', 'auth/m2m-scope', 'gateway/url',
+  'identity/gateway-credential-provider-name', 'identity/google-provider-arn',
+  'identity/github-provider-arn', 'identity/notion-provider-arn',
+  'memory/memory-id', 'memory/memory-arn', 'networking/vpc-id',
+  'networking/private-subnet-ids', 'networking/runtime-security-group-id',
+  'runtimes/orchestrator/arn', 'runtimes/orchestrator/id',
+  'runtimes/code-agent/arn', 'runtimes/code-agent/id',
+  'runtimes/research-agent/arn', 'runtimes/research-agent/id'
+]);
 
 let lastStatus = null;
-let lastFetchOk = null;
 let selectedKey = null;
 let returnFocusTo = null;
 
@@ -230,16 +252,32 @@ function teamBadge(team) {
   return team ? `<span class="badge badge--${esc(team)}">${esc(team)}</span>` : '<span class="badge">—</span>';
 }
 function moduleBadge(m) { return m ? `<span class="badge">Module ${esc(m)}</span>` : '—'; }
-function copyBtn(value) {
-  return `<button class="copy" type="button" data-copy="${esc(value)}" aria-label="Copy value" title="Copy">` +
-    `<svg viewBox="0 0 16 16"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5"/></svg></button>`;
+function valueCell(value) {
+  return `<div class="val-cell"><span class="val">${esc(value)}</span></div>`;
 }
-function valueCell(key, value) {
-  const v = String(value ?? '');
-  const masked = SECRET_RE.test(key);
-  const shown = masked ? '••••••••••••' : v;
-  return `<div class="val-cell"><span class="val${masked ? ' masked' : ''}" data-full="${esc(v)}">${esc(shown)}</span>` +
-    `<span style="display:flex;align-items:center">${masked ? '<button class="link-btn reveal" type="button" data-reveal>Show</button>' : ''}${copyBtn(v)}</span></div>`;
+function sanitizeStatus(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('status.json is not an object');
+  }
+  const safe = { ...data, stacks: {}, ssm_parameters: {} };
+  const stacks = data.stacks && typeof data.stacks === 'object' && !Array.isArray(data.stacks)
+    ? data.stacks : {};
+  Object.entries(stacks).forEach(([name, stack]) => {
+    if (!stack || typeof stack !== 'object' || Array.isArray(stack)) return;
+    const outputs = stack.outputs && typeof stack.outputs === 'object' && !Array.isArray(stack.outputs)
+      ? stack.outputs : {};
+    const safeOutputs = {};
+    Object.entries(outputs).forEach(([key, value]) => {
+      if (SAFE_OUTPUT_KEYS.has(key)) safeOutputs[key] = value;
+    });
+    safe.stacks[name] = { ...stack, outputs: safeOutputs };
+  });
+  const params = data.ssm_parameters && typeof data.ssm_parameters === 'object' && !Array.isArray(data.ssm_parameters)
+    ? data.ssm_parameters : {};
+  Object.entries(params).forEach(([key, value]) => {
+    if (SAFE_PARAMETER_KEYS.has(key)) safe.ssm_parameters[key] = value;
+  });
+  return safe;
 }
 
 // Classification belongs to monitor.py, which emits `state` per stack; this
@@ -301,14 +339,9 @@ function setLive(state, text) {
   el.dataset.state = state;
   $('liveText').textContent = text;
 }
-function renderBanner(data, stale) {
+function renderBanner(data) {
   const s = (data && data.summary) || {};
   const parts = [];
-  if (lastFetchOk === false && data) {
-    parts.push(['error', 'warning', '<b>Lost contact with the poller.</b> status.json could not be read; showing the last successful poll from ' + esc(relativeTime(data.timestamp)) + '.']);
-  } else if (stale) {
-    parts.push(['warning', 'warning', '<b>Data is ' + esc(relativeTime(data.timestamp)) + '.</b> monitor.py writes every 15 seconds; it may have stopped or lost its credentials.']);
-  }
   if (s.failed > 0) {
     parts.push(['error', 'failed', `<b>${s.failed} stack${s.failed > 1 ? 's' : ''} failed.</b> Open the row for the CloudFormation status, then check the stack events in the console.`]);
   }
@@ -318,13 +351,7 @@ function renderBanner(data, stale) {
   $('banner').innerHTML = parts.map(([tone, icon, html]) =>
     `<div class="alert alert--${tone}" role="${tone === 'error' ? 'alert' : 'status'}">${svgIcon(icon)}<div>${html}</div></div>`).join('');
 }
-
-/* ── OVERVIEW ───────────────────────────────────────────────────────────── */
-function render(data) {
-  $('stateConnecting').hidden = true;
-  $('stateOffline').hidden = true;
-  $('stateOnline').hidden = false;
-
+function renderContext(data) {
   const meta = data.metadata || data;
   const dep = data.deployment || {};
   $('infoProject').textContent = meta.project || meta.projectName || '—';
@@ -333,6 +360,41 @@ function render(data) {
   $('infoAccount').textContent = meta.accountId || meta.account || '—';
   $('infoStrategy').textContent = (dep.strategy || 'centralized') + (dep.role ? ' · ' + dep.role + ' side' : '');
   $('ssmPrefix').textContent = `/${meta.project || 'project'}/${meta.environment || 'env'}/`;
+}
+function showUnavailable(title, message, data) {
+  if (data) renderContext(data);
+  $('stateConnecting').hidden = true;
+  $('stateOnline').hidden = true;
+  $('stateOffline').hidden = false;
+  $('offlineTitle').textContent = title;
+  $('offlineMessage').textContent = message;
+  document.querySelectorAll('.arch-online').forEach(el => { el.hidden = true; });
+  $('archOffline').hidden = false;
+  $('archOfflineTitle').textContent = title;
+  $('archOfflineMessage').textContent = message;
+  $('banner').innerHTML =
+    `<div class="alert alert--error" role="alert">${svgIcon('warning')}<div><b>${esc(title)}.</b> ${esc(message)}</div></div>`;
+  $('kpis').innerHTML = '';
+  $('stackRows').innerHTML = '';
+  renderParameters({ ssm_parameters: {} });
+  closeDrawer();
+  if (window.ArchGraph) {
+    window.ArchGraph.update({
+      project: data?.project || '',
+      environment: data?.environment || '',
+      deployment: data?.deployment || {},
+      stacks: {},
+      summary: {}
+    });
+  }
+}
+
+/* ── OVERVIEW ───────────────────────────────────────────────────────────── */
+function render(data) {
+  $('stateConnecting').hidden = true;
+  $('stateOffline').hidden = true;
+  $('stateOnline').hidden = false;
+  renderContext(data);
 
   // Stacks — monitor.py keys by full stack name ({project}-{env}-{short});
   // LAYERS use short names, so resolve each short name by suffix.
@@ -411,7 +473,7 @@ function renderParameters(data) {
   const shown = keys.filter(k => !q || k.toLowerCase().includes(q) || String(params[k]).toLowerCase().includes(q));
   $('ssmCount').textContent = keys.length;
   $('ssmBody').innerHTML = shown.length
-    ? shown.map(k => `<tr><td><code>${esc(k)}</code></td><td>${valueCell(k, params[k])}</td></tr>`).join('')
+    ? shown.map(k => `<tr><td><code>${esc(k)}</code></td><td>${valueCell(params[k])}</td></tr>`).join('')
     : `<tr><td colspan="2" style="color:var(--ink-3);padding:24px 20px">${keys.length ? 'No parameter matches the filter.' : 'No parameters published yet — they appear after the first stack deploys.'}</td></tr>`;
 }
 $('ssmFilter').addEventListener('input', () => { if (lastStatus) renderParameters(lastStatus); });
@@ -456,7 +518,7 @@ function fillDrawer(key, s) {
       <div><dt>Resources</dt><dd class="num">${res.length}</dd></div>
     </dl>
     <h3>Outputs<span class="count-pill">${shown.length}</span></h3>
-    ${shown.length ? `<table><tbody>${shown.map(k => `<tr><td style="width:38%"><code>${esc(k)}</code></td><td>${valueCell(k, outputs[k])}</td></tr>`).join('')}</tbody></table>` : '<p class="more">No outputs.</p>'}
+    ${shown.length ? `<table><tbody>${shown.map(k => `<tr><td style="width:38%"><code>${esc(k)}</code></td><td>${valueCell(outputs[k])}</td></tr>`).join('')}</tbody></table>` : '<p class="more">No reviewed public outputs.</p>'}
     ${hiddenExports ? `<p class="more">${hiddenExports} CDK cross-stack export${hiddenExports > 1 ? 's' : ''} hidden.</p>` : ''}
     <h3>Resources by type</h3>
     ${topTypes.length ? `<table><tbody>${topTypes.map(([t, n]) => `<tr><td><span class="res-type">${esc(t)}</span></td><td class="num" style="width:3em">${n}</td></tr>`).join('')}</tbody></table>` : '<p class="more">No resources yet.</p>'}
@@ -476,27 +538,10 @@ document.addEventListener('click', e => {
   if (!$('drawer').hidden && !e.target.closest('#drawer') && !e.target.closest('[data-key]')) closeDrawer();
 });
 
-/* Copy + reveal, delegated so re-renders never lose the handlers. */
-document.addEventListener('click', async e => {
-  const c = e.target.closest('[data-copy]');
-  if (c) {
-    try { await navigator.clipboard.writeText(c.dataset.copy); c.dataset.done = '1'; setTimeout(() => { c.dataset.done = ''; }, 1200); }
-    catch (err) { c.title = 'Copy failed: ' + err; }
-    return;
-  }
-  const r = e.target.closest('[data-reveal]');
-  if (r) {
-    const v = r.closest('.val-cell').querySelector('.val');
-    const showing = !v.classList.contains('masked');
-    v.classList.toggle('masked', showing);
-    v.textContent = showing ? '••••••••••••' : v.dataset.full;
-    r.textContent = showing ? 'Show' : 'Hide';
-  }
-});
-
 /* ── ARCHITECTURE ───────────────────────────────────────────────────────── */
 /* The graph owns its own drawing; this only feeds it and captions the header. */
 function renderArchitecture(data) {
+  document.querySelectorAll('.arch-online').forEach(el => { el.hidden = false; });
   $('archOffline').hidden = true;
   const s = data.summary || {};
   const dep = data.deployment || {};
@@ -512,30 +557,61 @@ async function fetchStatus() {
   try {
     const res = await fetch('status.json?t=' + Date.now(), { cache: 'no-store' });
     if (!res.ok) throw new Error(res.status);
-    const data = await res.json();
+    const data = sanitizeStatus(await res.json());
+    if (data.poll_error || data.available === false) {
+      lastStatus = null;
+      const problem = data.poll_error || {};
+      showUnavailable(
+        'AWS poll failed',
+        problem.message || 'The monitor could not read current AWS status. Check its terminal for details.',
+        data
+      );
+      setLive('offline', 'AWS poll failed');
+      return;
+    }
+    if (!data.timestamp || !data.summary || !data.stacks) {
+      throw new Error('status.json is incomplete');
+    }
     lastStatus = data;
-    lastFetchOk = true;
     render(data);
     renderArchitecture(data);
     tickLive();
   } catch (e) {
-    lastFetchOk = false;
-    if (lastStatus) { renderBanner(lastStatus, false); setLive('offline', 'Poller unreachable'); return; }
-    $('stateConnecting').hidden = true;
-    $('stateOnline').hidden = true;
-    $('stateOffline').hidden = false;
-    $('archOffline').hidden = false;
+    lastStatus = null;
+    showUnavailable(
+      'Poller unavailable',
+      'Current status.json could not be read. Start monitor.py or check the local web server.',
+      null
+    );
     setLive('offline', 'Poller not running');
   }
 }
 /* Freshness is recomputed every second, so a dead poller cannot keep showing
    "just now" with a green dot — the exact failure a status page must not have. */
 function tickLive() {
-  if (!lastStatus || lastFetchOk === false) return;
+  if (!lastStatus) return;
   const age = ageSeconds(lastStatus.timestamp);
+  if (!Number.isFinite(age) || age < -5) {
+    showUnavailable(
+      'Status timestamp is invalid',
+      'status.json does not contain a plausible UTC timestamp. Check the poller host clock and monitor.py output.',
+      lastStatus
+    );
+    setLive('stale', 'Invalid status timestamp');
+    return;
+  }
   const stale = age > STALE_AFTER;
-  setLive(stale ? 'stale' : 'live', (stale ? 'Stale · ' : 'Live · ') + 'updated ' + relativeTime(lastStatus.timestamp));
-  renderBanner(lastStatus, stale);
+  if (stale) {
+    showUnavailable(
+      'Status is stale',
+      'The last successful status is ' + relativeTime(lastStatus.timestamp) + '. Check monitor.py and refresh AWS credentials.',
+      lastStatus
+    );
+    setLive('stale', 'Stale · updated ' + relativeTime(lastStatus.timestamp));
+    return;
+  }
+  setLive('live', 'Live · updated ' + relativeTime(lastStatus.timestamp));
+  renderBanner(lastStatus);
 }
 function startPolling() {
   const initial = location.hash.replace('#', '');

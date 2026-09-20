@@ -55,7 +55,7 @@ value in Secrets Manager and passes the name automatically when the secret is
 in the environment.
 
 The gateway M2M provider's inputs (`gateway_m2m_client_id`,
-`gateway_m2m_client_secret`, `cognito_discovery_url`) are not user
+`gateway_m2m_client_secret_name`, `cognito_discovery_url`) are not user
 configuration: `app.py` wires them from the local auth stack, or from the
 `deployment.federation` block in a federated workload account.
 
@@ -79,13 +79,12 @@ orchestrator and research-agent runtimes, whose
 
 ## Security notes
 
-- **`unsafe_unwrap()` here is deliberate and safe.** The L1 `client_secret`
-  fields take plain strings, so the code unwraps `SecretValue`s — but what
-  renders into the template is a CloudFormation *token* (an `Fn::GetAtt` on
-  the auth stack's `DescribeUserPoolClient` custom resource for the M2M
-  provider, a `{{resolve:secretsmanager:...}}` dynamic reference for the 3LO
-  providers). CloudFormation resolves them at deploy time; no secret value
-  appears in `cdk.out` or the synthesized template.
+- **`unsafe_unwrap()` here unwraps dynamic references, not credential
+  values.** Every provider receives a Secrets Manager name. The L1
+  `client_secret` fields take strings, so the code renders
+  `{{resolve:secretsmanager:...}}` references that CloudFormation resolves at
+  deployment. The Cognito `UserPoolClient.ClientSecret` value stays inside
+  the auth stack and never crosses a CloudFormation output.
 - OAuth **scopes are not provider configuration**: agents request them per
   token via `@requires_access_token(scopes=[...])`. For the M2M exchange,
   Cognito grants the scopes assigned to the M2M client (`agentcore/invoke`)

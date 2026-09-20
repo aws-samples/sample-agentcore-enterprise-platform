@@ -3,13 +3,14 @@
 Implements Requirement 5: Identity Provider Integration
 - Cognito User Pool with email sign-in, password policy
 - Resource server with `agentcore/invoke` scope
-- 3 OAuth clients: app (auth code + PKCE), web (SRP), m2m (client_credentials)
+- 3 OAuth clients: app (auth code), web (auth code + PKCE), m2m (client_credentials)
 - Optional federated IdP (Entra ID, Okta, Ping) via OIDC provider in Cognito
 - SSM Parameters published for cross-stack consumption
 """
 
 import aws_cdk as cdk
 from aws_cdk import aws_cognito as cognito
+from aws_cdk import aws_secretsmanager as secretsmanager
 from aws_cdk import aws_ssm as ssm
 from constructs import Construct
 
@@ -27,6 +28,8 @@ class AuthStack(cdk.Stack):
         idp_config: dict | None = None,
         callback_urls: list[str] | None = None,
         logout_urls: list[str] | None = None,
+        retain_legacy_m2m_client: bool = False,
+        publish_legacy_m2m_interface: bool = False,
         **kwargs,
     ):
         """
@@ -47,12 +50,16 @@ class AuthStack(cdk.Stack):
 
         prefix = f"{project_name}-{environment}"
         idp_config = idp_config or {}
+        external_idp_types = ("entra_id", "okta", "ping")
+
+        if idp_type not in ("cognito", *external_idp_types):
+            raise ValueError(
+                "idp_type must be one of 'cognito', 'entra_id', 'okta', or 'ping'"
+            )
 
         # Federated IdPs require the client secret via Secrets Manager — fail fast
         # at synth time with an actionable message instead of a mid-deploy error.
-        if idp_type in ("entra_id", "okta", "ping") and not idp_config.get(
-            "client_secret_name"
-        ):
+        if idp_type in external_idp_types and not idp_config.get("client_secret_name"):
             raise ValueError(
                 f"idp_type='{idp_type}' requires the context key 'idp_client_secret_name' "
                 "(the name of a Secrets Manager secret containing the IdP client secret). "
@@ -63,6 +70,19 @@ class AuthStack(cdk.Stack):
                 "(scripts/deploy.sh does both automatically when prompted for the IdP secret). "
                 "The plaintext 'idp_client_secret' context key is no longer supported."
             )
+        if idp_type in external_idp_types:
+            required_fields = ["client_id"]
+            required_fields.append(
+                "tenant_id" if idp_type == "entra_id" else "issuer_url"
+            )
+            missing_fields = [
+                field for field in required_fields if not idp_config.get(field)
+            ]
+            if missing_fields:
+                missing = ", ".join(f"idp_{field}" for field in missing_fields)
+                raise ValueError(
+                    f"idp_type='{idp_type}' requires the context key(s): {missing}"
+                )
         callback_urls = callback_urls or [
             "http://localhost:3000/api/auth/callback/cognito"
         ]
@@ -73,12 +93,16 @@ class AuthStack(cdk.Stack):
             self._build_direct(project_name, environment, idp_type, idp_config)
             return
 
+        has_external_idp = idp_type in external_idp_types
+
         # ── User Pool ──
         self.user_pool = cognito.UserPool(
             self,
             "UserPool",
             user_pool_name=f"{prefix}-user-pool",
-            self_sign_up_enabled=True,
+            # Corporate users must enter through the configured IdP. The
+            # Cognito-only workshop path keeps its self-service signup flow.
+            self_sign_up_enabled=not has_external_idp,
             sign_in_aliases=cognito.SignInAliases(email=True),
             auto_verify=cognito.AutoVerifiedAttrs(email=True),
             password_policy=cognito.PasswordPolicy(
@@ -111,7 +135,7 @@ class AuthStack(cdk.Stack):
         # actual secret is resolved only at deploy time by CloudFormation, so it
         # never appears in the synthesized template, cdk.out, or process args.
         idp_client_secret = None
-        if idp_type in ("entra_id", "okta", "ping"):
+        if has_external_idp:
             idp_client_secret = cdk.SecretValue.secrets_manager(
                 idp_config["client_secret_name"]
             ).unsafe_unwrap()
@@ -168,12 +192,14 @@ class AuthStack(cdk.Stack):
             )
             provider_name = "PingIdentity"
 
-        # Determine supported identity providers for app client
-        supported_providers = [cognito.UserPoolClientIdentityProvider.COGNITO]
-        if federated_provider:
-            supported_providers.append(
-                cognito.UserPoolClientIdentityProvider.custom(provider_name)
-            )
+        # A brokered corporate IdP is the only interactive user provider. Keeping
+        # COGNITO here would expose a second sign-in path that bypasses the
+        # corporate IdP's MFA and conditional-access policy.
+        supported_providers = (
+            [cognito.UserPoolClientIdentityProvider.custom(provider_name)]
+            if has_external_idp
+            else [cognito.UserPoolClientIdentityProvider.COGNITO]
+        )
 
         # ── Resource Server (agentcore/invoke scope) ──
         resource_server = self.user_pool.add_resource_server(
@@ -192,7 +218,10 @@ class AuthStack(cdk.Stack):
             "AppClient",
             user_pool_client_name=f"{prefix}-app-client",
             generate_secret=True,
-            auth_flows=cognito.AuthFlow(user_password=True, user_srp=True),
+            auth_flows=cognito.AuthFlow(
+                user_password=not has_external_idp,
+                user_srp=not has_external_idp,
+            ),
             supported_identity_providers=supported_providers,
             o_auth=cognito.OAuthSettings(
                 flows=cognito.OAuthFlows(authorization_code_grant=True),
@@ -210,15 +239,15 @@ class AuthStack(cdk.Stack):
         if federated_provider:
             self._app_client.node.add_dependency(federated_provider)
 
-        # ── Web Client (SRP only, no secret — for browser SPAs) ──
+        # ── Web Client (Authorization Code + PKCE, no secret — browser SPA) ──
         self._web_client = self.user_pool.add_client(
             "WebClient",
             user_pool_client_name=f"{prefix}-web-client",
             generate_secret=False,
-            auth_flows=cognito.AuthFlow(user_srp=True),
+            auth_flows=cognito.AuthFlow(user_srp=not has_external_idp),
             supported_identity_providers=supported_providers,
             o_auth=cognito.OAuthSettings(
-                flows=cognito.OAuthFlows(implicit_code_grant=True),
+                flows=cognito.OAuthFlows(authorization_code_grant=True),
                 scopes=[
                     cognito.OAuthScope.OPENID,
                     cognito.OAuthScope.EMAIL,
@@ -232,10 +261,16 @@ class AuthStack(cdk.Stack):
             self._web_client.node.add_dependency(federated_provider)
 
         # ── M2M Client (client_credentials — service-to-service) ──
+        #
+        # M2MClientV2 intentionally has a new logical id. G0 rotates the client
+        # whose credential was published by the old dashboard. During an
+        # upgrade deploy.sh temporarily asks this stack to retain the original
+        # client and secret so consumers can move without an outage.
         self._m2m_client = self.user_pool.add_client(
-            "M2MClient",
-            user_pool_client_name=f"{prefix}-m2m-client",
+            "M2MClientV2",
+            user_pool_client_name=f"{prefix}-m2m-client-v2",
             generate_secret=True,
+            access_token_validity=cdk.Duration.minutes(60),
             auth_flows=cognito.AuthFlow(user_password=False, user_srp=False),
             o_auth=cognito.OAuthSettings(
                 flows=cognito.OAuthFlows(client_credentials=True),
@@ -243,6 +278,87 @@ class AuthStack(cdk.Stack):
             ),
         )
         self._m2m_client.node.add_dependency(resource_server)
+
+        # Keep the generated client secret inside this stack. Passing
+        # user_pool_client_secret directly to IdentityStack makes CDK export
+        # the secret-bearing Fn::GetAtt through CloudFormation. Store it here
+        # and let consumers resolve it by secret name instead.
+        self._m2m_client_secret_store = secretsmanager.Secret(
+            self,
+            "M2MClientSecretV2",
+            description=f"Gateway M2M client secret for {project_name}/{environment}",
+            secret_string_value=self._m2m_client.user_pool_client_secret,
+            removal_policy=cdk.RemovalPolicy.DESTROY,
+        )
+        self._m2m_client_secret_store.node.add_dependency(self._m2m_client)
+        # Keep this non-sensitive reference explicit and stable. A normal CDK
+        # cross-stack reference is lazy, so the compatibility synthesis omitted
+        # it while Identity still consumed the old value and phase 2 had
+        # nothing to import.
+        self._m2m_client_id_export_name = f"{prefix}:auth:m2m-client-id-v2"
+        self._m2m_client_secret_export_name = f"{prefix}:auth:m2m-client-secret-name-v2"
+        cdk.CfnOutput(
+            self,
+            "M2MClientIdV2Export",
+            value=self._m2m_client.user_pool_client_id,
+            export_name=self._m2m_client_id_export_name,
+        )
+        cdk.CfnOutput(
+            self,
+            "M2MClientSecretNameV2Export",
+            value=self._m2m_client_secret_store.secret_name,
+            export_name=self._m2m_client_secret_export_name,
+        )
+
+        if retain_legacy_m2m_client:
+            self._legacy_m2m_client = self.user_pool.add_client(
+                "M2MClient",
+                user_pool_client_name=f"{prefix}-m2m-client",
+                generate_secret=True,
+                access_token_validity=cdk.Duration.minutes(60),
+                auth_flows=cognito.AuthFlow(user_password=False, user_srp=False),
+                o_auth=cognito.OAuthSettings(
+                    flows=cognito.OAuthFlows(client_credentials=True),
+                    scopes=[cognito.OAuthScope.custom("agentcore/invoke")],
+                ),
+            )
+            self._legacy_m2m_client.node.add_dependency(resource_server)
+            self._legacy_m2m_client_secret_store = secretsmanager.Secret(
+                self,
+                "M2MClientSecret",
+                description=(
+                    f"Legacy gateway M2M client secret for "
+                    f"{project_name}/{environment}; removed after G0 rotation"
+                ),
+                secret_string_value=self._legacy_m2m_client.user_pool_client_secret,
+                removal_policy=cdk.RemovalPolicy.DESTROY,
+            )
+            self._legacy_m2m_client_secret_store.node.add_dependency(
+                self._legacy_m2m_client
+            )
+            self._legacy_m2m_client_secret_export_name = (
+                f"{prefix}:auth:m2m-client-secret-name"
+            )
+            cdk.CfnOutput(
+                self,
+                "M2MClientSecretNameExport",
+                value=self._legacy_m2m_client_secret_store.secret_name,
+                export_name=self._legacy_m2m_client_secret_export_name,
+            )
+
+        publish_legacy_m2m_interface = (
+            publish_legacy_m2m_interface and retain_legacy_m2m_client
+        )
+        published_m2m_client = (
+            self._legacy_m2m_client
+            if publish_legacy_m2m_interface
+            else self._m2m_client
+        )
+        published_m2m_secret_store = (
+            self._legacy_m2m_client_secret_store
+            if publish_legacy_m2m_interface
+            else self._m2m_client_secret_store
+        )
 
         # ── SSM Parameters (cross-stack / cross-account discovery) ──
         self._publish(
@@ -254,7 +370,8 @@ class AuthStack(cdk.Stack):
                 "user-pool-id": self.user_pool.user_pool_id,
                 "app-client-id": self._app_client.user_pool_client_id,
                 "web-client-id": self._web_client.user_pool_client_id,
-                "m2m-client-id": self._m2m_client.user_pool_client_id,
+                "m2m-client-id": published_m2m_client.user_pool_client_id,
+                "m2m-client-secret-name": published_m2m_secret_store.secret_name,
                 "m2m-scope": "agentcore/invoke",
             },
         )
@@ -266,7 +383,11 @@ class AuthStack(cdk.Stack):
         cdk.CfnOutput(self, "DiscoveryUrl", value=self.discovery_url)
         cdk.CfnOutput(self, "AppClientId", value=self._app_client.user_pool_client_id)
         cdk.CfnOutput(self, "WebClientId", value=self._web_client.user_pool_client_id)
-        cdk.CfnOutput(self, "M2MClientId", value=self._m2m_client.user_pool_client_id)
+        cdk.CfnOutput(
+            self,
+            "M2MClientId",
+            value=published_m2m_client.user_pool_client_id,
+        )
         cdk.CfnOutput(
             self,
             "DomainUrl",
@@ -292,9 +413,7 @@ class AuthStack(cdk.Stack):
         tenant_id = idp_config["tenant_id"]
         self._direct_issuer = f"https://login.microsoftonline.com/{tenant_id}/v2.0"
         self._direct_client_id = idp_config["client_id"]
-        self._direct_secret = cdk.SecretValue.secrets_manager(
-            idp_config["client_secret_name"]
-        )
+        self._direct_secret_name = idp_config["client_secret_name"]
         self._publish(
             project_name,
             environment,
@@ -354,17 +473,37 @@ class AuthStack(cdk.Stack):
     def m2m_client_id(self) -> str:
         if self.is_direct:
             return self._direct_client_id
-        return self._m2m_client.user_pool_client_id
+        return cdk.Fn.import_value(self._m2m_client_id_export_name)
 
     @property
-    def m2m_client_secret(self) -> cdk.SecretValue:
-        """M2M client secret as a SecretValue.
-
-        Brokered: CDK backs this with a DescribeUserPoolClient custom resource
-        in this stack; it renders as a CloudFormation token (Fn::GetAtt) in the
-        template — never literal text. Direct: a Secrets Manager dynamic
-        reference to the IdP client secret — also never literal text.
-        """
+    def m2m_client_secret_name(self) -> str:
+        """Secrets Manager name consumed by the account-local token vault."""
         if self.is_direct:
-            return self._direct_secret
-        return self._m2m_client.user_pool_client_secret
+            return self._direct_secret_name
+        return cdk.Fn.import_value(self._m2m_client_secret_export_name)
+
+    @property
+    def legacy_m2m_client_id(self) -> str:
+        """Upgrade-only id for the client being invalidated by G0."""
+        if self.is_direct or not hasattr(self, "_legacy_m2m_client"):
+            raise ValueError("no legacy Cognito M2M client is retained")
+        return self._legacy_m2m_client.user_pool_client_id
+
+    @property
+    def legacy_m2m_client_secret_name(self) -> str:
+        """Upgrade-only managed-secret reference for the old client."""
+        if self.is_direct or not hasattr(self, "_legacy_m2m_client_secret_export_name"):
+            raise ValueError("no legacy Cognito M2M client is retained")
+        return cdk.Fn.import_value(self._legacy_m2m_client_secret_export_name)
+
+    @property
+    def legacy_m2m_client_secret(self) -> cdk.SecretValue:
+        """Upgrade-only value that preserves the pre-G0 CDK export.
+
+        app.py reads this only under the internal
+        retain_legacy_m2m_export context flag used by deploy.sh's staged
+        migration. Normal synthesis must use m2m_client_secret_name.
+        """
+        if self.is_direct or not hasattr(self, "_legacy_m2m_client"):
+            raise ValueError("no legacy Cognito M2M client is retained")
+        return self._legacy_m2m_client.user_pool_client_secret

@@ -135,13 +135,12 @@ az ad app create \
   --display-name "AgentCore Accelerator" \
   --sign-in-audience AzureADMyOrg \
   --web-redirect-uris "https://<prefix>-<account>.auth.<region>.amazoncognito.com/oauth2/idpresponse" \
-  --enable-id-token-issuance true \
   --query "{appId:appId,id:id}"
 ```
 
-`--enable-id-token-issuance` matters: Cognito's OIDC provider expects an
-`id_token` from the implicit/hybrid response, and without it the login fails
-after the user has already authenticated — the most confusing possible place.
+Cognito federates to Entra through the authorization-code flow. Do not enable
+the Entra implicit/hybrid ID-token flow for this registration; the accelerator
+does not require it.
 
 Note the returned `appId`; that is your `IDP_CLIENT_ID`.
 

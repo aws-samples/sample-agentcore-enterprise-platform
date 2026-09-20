@@ -324,8 +324,9 @@ export ORG_ID=o-yourorgid           # required when resource policies are on
 # Everything security-focused (networking + security + resource policies + egress filter):
 ./scripts/deploy.sh deploy --profile security-focused
 
-# Or a single stack:
-NON_INTERACTIVE=1 cdk deploy agentcore-workshop-dev-gateway -c enable_egress_filter=true
+# Or a single module through the upgrade-aware deployment entry point:
+NON_INTERACTIVE=1 ENABLE_EGRESS_FILTER=true \
+  ./scripts/deploy.sh deploy --module 5 --yes
 ```
 
 ### B2. Verify the Memory resource policy (item 4)
@@ -358,13 +359,13 @@ Interceptor logs: `/aws/lambda/agentcore-workshop-dev-egress-interceptor`.
 ```bash
 # The policy engine is attached to the gateway; deploy with enable_cedar=true (or the
 # security-focused profile). Start in LOG_ONLY so nothing is blocked while you validate.
-NON_INTERACTIVE=1 cdk deploy agentcore-workshop-dev-gateway \
-  -c enable_cedar=true -c cedar_mode=LOG_ONLY
+NON_INTERACTIVE=1 ENABLE_CEDAR=true CEDAR_MODE=LOG_ONLY \
+  ./scripts/deploy.sh deploy --module 5 --yes
 ```
 
 Invoke a permitted (read) tool and a non-permitted (write) tool through the agent, then check
 the policy decision logs. Only after confirming the expected allow/deny decisions, redeploy
-with `-c cedar_mode=ENFORCE` to actively block.
+with `CEDAR_MODE=ENFORCE` to actively block.
 
 ### B4. Verify the CMK SCP (item 1) — management account
 

@@ -176,7 +176,7 @@ There is also a local dashboard (status only, runs on your machine):
 
 ```bash
 python dashboard/monitor.py &
-python3 -m http.server 8888 -d dashboard/public
+python3 -m http.server 8888 --bind 127.0.0.1 -d dashboard/public
 ```
 
 ---

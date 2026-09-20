@@ -146,8 +146,8 @@ def test_auth_stack_publishes_the_same_interface_in_both_modes():
     src = (REPO / "stacks" / "auth_stack.py").read_text()
     for key in ('"mode"', '"issuer-url"', '"m2m-client-id"', '"m2m-scope"'):
         assert src.count(key) >= 2, f"{key} must be published in brokered AND direct"
-    assert '"m2m-client-secret-name"' in src  # direct only: brokered's is in Cognito
-    assert "self._direct_secret = cdk.SecretValue.secrets_manager(" in src
+    assert src.count('"m2m-client-secret-name"') >= 2
+    assert 'self._direct_secret_name = idp_config["client_secret_name"]' in src
 
 
 # ── container side ──

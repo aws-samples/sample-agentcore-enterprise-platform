@@ -17,6 +17,7 @@ import uuid
 from pathlib import Path
 
 import boto3
+from botocore.exceptions import ClientError
 from colorama import Fore, Style, init
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -78,9 +79,11 @@ def get_m2m_token(
     """
     Get an M2M access token via the Cognito client_credentials grant (scope agentcore/invoke).
 
-    Reads user-pool-id and m2m-client-id from SSM, fetches the client secret via
-    cognito-idp, and POSTs to the Cognito hosted domain token endpoint
+    Reads user-pool-id, m2m-client-id, and the Secrets Manager reference from
+    SSM, then POSTs to the Cognito hosted domain token endpoint
     https://{project}-{env}-{account}.auth.{region}.amazoncognito.com/oauth2/token.
+    Deployments created before the secret reference existed fall back to
+    DescribeUserPoolClient for compatibility.
     """
     project = project or os.environ.get("PROJECT_NAME", DEFAULT_PROJECT)
     env = env or os.environ.get("ENVIRONMENT", DEFAULT_ENV)
@@ -91,11 +94,22 @@ def get_m2m_token(
 
     pool_id = get_ssm_param("auth/user-pool-id", project, env)
     client_id = get_ssm_param("auth/m2m-client-id", project, env)
-    client_secret = boto3.client(
-        "cognito-idp", region_name=region
-    ).describe_user_pool_client(UserPoolId=pool_id, ClientId=client_id)[
-        "UserPoolClient"
-    ]["ClientSecret"]
+    secret_name = _optional_ssm_param(
+        "auth/m2m-client-secret-name",
+        project,
+        env,
+        region,
+    )
+    if secret_name:
+        client_secret = boto3.client(
+            "secretsmanager", region_name=region
+        ).get_secret_value(SecretId=secret_name)["SecretString"]
+    else:
+        client_secret = boto3.client(
+            "cognito-idp", region_name=region
+        ).describe_user_pool_client(UserPoolId=pool_id, ClientId=client_id)[
+            "UserPoolClient"
+        ]["ClientSecret"]
 
     # The Cognito domain prefix includes the account ID (see auth stack)
     account = boto3.client("sts", region_name=region).get_caller_identity()["Account"]
@@ -115,6 +129,24 @@ def get_m2m_token(
     )
     resp = urllib.request.urlopen(req).read()  # nosec B310 — https URL built above
     return json.loads(resp)["access_token"]
+
+
+def _optional_ssm_param(
+    name: str,
+    project: str,
+    env: str,
+    region: str,
+) -> str | None:
+    """Read an optional compatibility parameter without hiding access errors."""
+    full_name = f"{get_ssm_prefix(project, env)}/{name}"
+    try:
+        return boto3.client("ssm", region_name=region).get_parameter(Name=full_name)[
+            "Parameter"
+        ]["Value"]
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "ParameterNotFound":
+            return None
+        raise
 
 
 def auth_mode(project: str, env: str) -> str:

@@ -4,6 +4,13 @@ Deploy a secure, governed foundation for production AI agents on Amazon Bedrock 
 
 **📖 Documentation site:** [aws-samples.github.io/sample-agentcore-enterprise-platform](https://aws-samples.github.io/sample-agentcore-enterprise-platform/) — start with [How it works](https://aws-samples.github.io/sample-agentcore-enterprise-platform/#/how-it-works).
 
+> **Production readiness:** This repository is a platform baseline that must be
+> tailored and approved for each customer's security, reliability, data, and
+> compliance requirements. The
+> [`Production Readiness Plan`](docs/PRODUCTION_READINESS_PLAN.md) defines the
+> work and release evidence required before describing a deployment as
+> production-ready.
+
 ## What You Get
 
 - **An AI platform for production agents:** AgentCore Runtime, Gateway, Identity, Memory, and observability.
@@ -161,8 +168,8 @@ Run both commands from the repository root. The dashboard is only available on l
 # Polls the region you deployed with; set AWS_REGION only to override.
 AWS_PROFILE=<your-profile> .venv/bin/python dashboard/monitor.py
 
-# Terminal 2: web server. Open http://localhost:8888.
-python3 -m http.server 8888 -d dashboard/public
+# Terminal 2: loopback-only web server. Open http://127.0.0.1:8888.
+python3 -m http.server 8888 --bind 127.0.0.1 -d dashboard/public
 ```
 
 ![AgentCore deployment dashboard monitor tab](docs/dashboard-monitor.png)
@@ -220,12 +227,12 @@ Available patterns: `orchestrator` (default), `strands-agent`, `langgraph-agent`
 ```bash
 # Pick a framework. The script saves the choice in workshop.env for later runs.
 AGENT_PATTERN=langgraph-agent ./scripts/deploy.sh deploy --module 6
-
-# Or pass it to CDK directly.
-cdk deploy agentcore-workshop-dev-runtime-orchestrator -c agent_pattern=claude-sdk-agent
 ```
 
 `./scripts/deploy.sh deploy` asks for the pattern in an interactive run. The guided command prints the active pattern before its first module.
+Use `deploy.sh` for every update to an existing environment: it owns
+consumer-first identity migrations and credential-rotation checkpoints. Direct
+`cdk deploy` is supported only for disposable test stacks and synth/diff work.
 
 The agent applications and shared utilities build on patterns from [fullstack-solution-template-for-agentcore](https://github.com/aws-samples/fullstack-solution-template-for-agentcore) (FAST). The CDK stacks are specific to this accelerator.
 

@@ -21,10 +21,10 @@ All parameters live under `/{project}/{environment}/` (default:
 | `auth/issuer-url` | Token issuer (Cognito, or Entra's `.../v2.0` in direct mode); append `/.well-known/openid-configuration` for OIDC discovery |
 | `auth/user-pool-id` | The user pool everything authenticates against (brokered only) |
 | `auth/app-client-id` | Authorization-code + PKCE client (humans; has a secret, readable via `cognito-idp describe-user-pool-client`) |
-| `auth/web-client-id` | Implicit-grant client (browser dashboards; no secret; brokered only) |
+| `auth/web-client-id` | Authorization-code + PKCE client (browser SPAs; no secret; brokered only) |
 | `auth/m2m-client-id` | client_credentials client (machines). Direct mode: the same app registration as `app-client-id` |
 | `auth/m2m-scope` | Scope to request for a machine token: `agentcore/invoke` (brokered) or `<client_id>/.default` (direct) |
-| `auth/m2m-client-secret-name` | Direct mode only: Secrets Manager NAME of the client secret (brokered keeps it in Cognito) |
+| `auth/m2m-client-secret-name` | Secrets Manager name of the M2M client secret (generated Cognito secret in brokered mode; IdP app secret in direct mode) |
 | `gateway/url` | MCP gateway endpoint — `tools/list` / `tools/call` with a Bearer JWT |
 | `identity/gateway-credential-provider-name` | Token-vault provider agents use via `@requires_access_token` |
 | `memory/memory-id`, `memory/memory-arn` | AgentCore Memory for this deployment |
