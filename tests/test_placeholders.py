@@ -108,12 +108,13 @@ def test_secret_name_that_looks_like_a_value_is_refused(value):
 
 def test_real_identity_values_pass():
     c = cfg(
+        deployment={"platform_account": "111122223333"},
         identity={
             "idp": "entra_id",
             "tenant_id": "3f2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
             "client_id": "9a8b7c6d-1234-4abc-9def-000111222333",
             "client_secret_name": "agentcore/idp-client-secret",
-        }
+        },
     )
     assert c.warnings == []
 

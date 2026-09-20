@@ -211,31 +211,86 @@ echo "PASS: IdP client secret is trimmed (and empty-after-trim refused)"
 # Configuring identity.client_secret_name (platform.yaml) or IDP_CLIENT_SECRET_NAME
 # used to be ignored: deploy.sh probed only <prefix>-idp-client-secret, asked for
 # the value anyway, and stored a second copy.
-eval "$(sed -n '/^prompt_idp()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
+eval "$(sed -n '/^prompt_idp()/,/^}/p;
+                /^validate_configured_idp_secret()/,/^}/p;
+                /^validate_deployment_account()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
+log_error() { printf '%s\n' "$*" >&2; }
 # shellcheck disable=SC2034,SC2329  # read by the eval'd functions, not statically
 NON_INTERACTIVE=0
 IDP_CLIENT_SECRET_NAME="my-corp/entra-secret"
 IDP_TYPE="entra_id"
 unset IDP_CLIENT_SECRET
 
-# The stub answers "exists" only for the operator's secret, so probing the
-# prefixed name instead would fall through to the secret prompt.
+# The stub returns only the non-sensitive SecretString length. The deploy must
+# prove the configured value readable before prompting, then reuse its name.
 # shellcheck disable=SC2329
-aws() { printf '%s\n' "$*" >> "$TMP/aws.args"; [[ "$*" == *my-corp/entra-secret* ]]; }
+aws() {
+    printf '%s\n' "$*" >> "$TMP/aws.args"
+    if [[ "$*" == *"get-secret-value"* && "$*" == *my-corp/entra-secret* ]]; then
+        printf '12\n'
+        return 0
+    fi
+    return 1
+}
 : > "$TMP/aws.args"
-# Two blank lines: "keep saved IdP? [Y/n]" → yes, plus a spare for the secret
-# prompt the old behaviour reached — so this check fails with its own message
-# rather than dying on `read` at EOF.
-prompt_idp >/dev/null 2>&1 <<< $'\n'
-grep -q -- "describe-secret --secret-id my-corp/entra-secret" "$TMP/aws.args" \
-    || fail "configured secret name not probed: $(cat "$TMP/aws.args")"
+ACCOUNT_ID="111122223333"
+AWS_REGION="us-east-1"
+# shellcheck disable=SC2034  # read by the eval'd validation function
+DEPLOYMENT_STRATEGY="centralized"
+PLATFORM_ACCOUNT="$ACCOUNT_ID"
+validate_configured_idp_secret >/dev/null
+prompt_out="$(prompt_idp 2>&1 <<< $'\n')"
+grep -q -- "get-secret-value --secret-id my-corp/entra-secret" "$TMP/aws.args" \
+    || fail "configured secret value not validated: $(cat "$TMP/aws.args")"
+! grep -q -- "Client Secret:" <<<"$prompt_out" \
+    || fail "configured secret unexpectedly caused a plaintext prompt: $prompt_out"
 [ "$IDP_CLIENT_SECRET_NAME" = "my-corp/entra-secret" ] \
     || fail "configured secret name overwritten: $IDP_CLIENT_SECRET_NAME"
+
+# A valid identity for another account must stop before any deployment-side
+# operation, even in --yes/non-interactive modes.
+ACCOUNT_ID="999988887777"
+PLATFORM_ACCOUNT="111122223333"
+YES=1
+NON_INTERACTIVE=1
+account_out="$(validate_deployment_account 2>&1)" && \
+    fail "wrong account was accepted with non-interactive confirmation bypasses"
+grep -q -- "$ACCOUNT_ID" <<<"$account_out" \
+    || fail "account mismatch does not name the active account: $account_out"
+grep -q -- "$PLATFORM_ACCOUNT" <<<"$account_out" \
+    || fail "account mismatch does not name the pinned account: $account_out"
+
+# A configured name is authoritative. Missing/denied access must stop rather
+# than falling through to a value prompt that could copy it into the wrong
+# account.
+ACCOUNT_ID="111122223333"
+PLATFORM_ACCOUNT="$ACCOUNT_ID"
+YES=0
+NON_INTERACTIVE=0
+# shellcheck disable=SC2329
+aws() { printf '%s\n' "$*" >> "$TMP/aws.args"; return 254; }
+: > "$TMP/aws.args"
+secret_out="$(validate_configured_idp_secret 2>&1)" && \
+    fail "unreadable configured IdP secret was accepted"
+for fact in "$IDP_CLIENT_SECRET_NAME" "$ACCOUNT_ID" "$AWS_REGION"; do
+    grep -q -- "$fact" <<<"$secret_out" \
+        || fail "configured-secret error omits '$fact': $secret_out"
+done
+
+# With no configured secret, interactive entry is still supported but empty
+# input is rejected locally.
+unset IDP_CLIENT_SECRET_NAME IDP_CLIENT_SECRET
+empty_out="$(prompt_idp 2>&1 <<< $'\n\n')" && \
+    fail "empty interactive IdP secret was accepted"
+grep -q 'empty IdP client secret' <<<"$empty_out" \
+    || fail "empty-secret error is not actionable: $empty_out"
 
 # Rotating a value in must land in the operator's secret, not a fork of it.
 # shellcheck disable=SC2329
 aws() { printf '%s\n' "$*" >> "$TMP/aws.args"; return 0; }
 : > "$TMP/aws.args"
+# shellcheck disable=SC2034  # read by the eval'd upsert_idp_secret
+IDP_CLIENT_SECRET_NAME="my-corp/entra-secret"
 # shellcheck disable=SC2034  # read by the eval'd upsert_idp_secret
 IDP_CLIENT_SECRET="rotated-value"
 upsert_idp_secret >/dev/null 2>&1 || true

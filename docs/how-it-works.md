@@ -51,6 +51,9 @@ project: agentcore-workshop
 environment: dev
 region: us-east-1
 
+deployment:
+  platform_account: "111122223333" # account this manifest may modify
+
 identity:
   idp: entra_id            # or cognito, okta, ping
   mode: brokered           # Cognito issues tokens, the IdP signs users in.

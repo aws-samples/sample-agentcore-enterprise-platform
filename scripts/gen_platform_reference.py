@@ -43,7 +43,7 @@ DESCRIPTIONS: dict[str, str] = {
     # deployment
     "deployment.mode": "`workshop` keeps disposable lifecycle defaults. `production` retains stateful resources and fails validation unless enterprise identity, networking, audit, authorization, guardrails, model allow-listing and monitored alarms are all configured.",
     "deployment.strategy": "`centralized` puts everything in one account. `distributed` means each team deploys its own copy of this file. `federated` splits shared services (auth, gateway) into `platform_account` from agent runtimes in `workload_accounts`; the account you deploy into decides the role, the same file works in both.",
-    "deployment.platform_account": "12-digit account that hosts the shared services in a `federated` deployment. Required by that strategy, ignored by the others.",
+    "deployment.platform_account": "12-digit account this deployment may modify. Required for production and for centralized/distributed enterprise-IdP deployments; in a federated deployment it hosts the shared services.",
     "deployment.workload_accounts": "12-digit accounts that run agent runtimes in a `federated` deployment. Deploying a federated file from an account in neither list is a hard error.",
     "deployment.federation.gateway_url": "Platform-account gateway MCP endpoint a workload account calls (an output of the platform gateway stack).",
     "deployment.federation.issuer_url": "Platform Cognito issuer; the OIDC discovery URL is derived from it.",

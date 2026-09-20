@@ -38,13 +38,14 @@ from infra_utils.platform_config import (
 TENANT = "11111111-2222-3333-4444-555555555555"
 CLIENT = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 DIRECT = {
+    "deployment": {"platform_account": "111122223333"},
     "identity": {
         "idp": "entra_id",
         "mode": "direct",
         "tenant_id": TENANT,
         "client_id": CLIENT,
         "client_secret_name": "agentcore/idp-client-secret",
-    }
+    },
 }
 
 
@@ -95,7 +96,10 @@ def test_design_prints_direct_issuer_and_prereqs():
 
 def test_design_prints_cognito_redirect_uri_for_brokered_idp():
     c = PlatformConfig.model_validate(
-        {"identity": {**DIRECT["identity"], "mode": "brokered"}}
+        {
+            "deployment": DIRECT["deployment"],
+            "identity": {**DIRECT["identity"], "mode": "brokered"},
+        }
     )
     t = "\n".join(design_plan(c, account="444333641315"))
     assert "Sign-in: entra_id via Cognito (brokered)" in t

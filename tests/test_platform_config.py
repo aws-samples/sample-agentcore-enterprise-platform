@@ -166,7 +166,10 @@ def test_defaults_are_a_valid_deployment():
 
 def _production_config() -> dict:
     return {
-        "deployment": {"mode": "production"},
+        "deployment": {
+            "mode": "production",
+            "platform_account": "111122223333",
+        },
         "identity": {
             "idp": "entra_id",
             "tenant_id": "3f2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
@@ -211,6 +214,7 @@ def test_production_mode_reports_all_missing_controls_together():
     msg = str(excinfo.value)
     for field in (
         "identity.idp",
+        "deployment.platform_account",
         "security.networking",
         "security.cloudtrail_alerting",
         "security.resource_policies",
@@ -257,6 +261,7 @@ def test_effective_design_config_applies_identity_environment_overrides():
             "IDP_TENANT_ID": "11111111-2222-3333-4444-555555555555",
             "IDP_CLIENT_ID": "client-from-environment",
             "IDP_CLIENT_SECRET_NAME": "agentcore/idp-client-secret",
+            "PLATFORM_ACCOUNT": "111122223333",
             "ORCHESTRATOR_RUNTIME_GENERATION": "2",
         },
     )
