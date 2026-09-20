@@ -134,6 +134,12 @@ Open evidence and ownership work:
   deployment-config checks pass, changed Python files pass Ruff and formatting,
   and offline synthesis confirms the three actions are scoped to the system
   Code Interpreter ARN.
+- The targeted orchestrator deployment changed only its IAM policy; the
+  generation-2 Runtime and image were not replaced. The strict live retry then
+  passed all seven footprint checks. Its structured evidence confirms Code
+  Interpreter started successfully, executed the seeded Python statement,
+  returned the expected marker with exit code zero, and both A2A agents
+  remained healthy.
 
 ## Decisions
 
