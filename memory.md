@@ -477,3 +477,6 @@ Never copy credential values into this file.
 - `efeb2ae` — `Pin deployments to the intended AWS account`
 - Pull request:
   [#77 — Pin deployments to the intended AWS account](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/77)
+- `b48da8d` — `Automate runtime observability handoff`
+- Pull request:
+  [#78 — Automate runtime observability handoff](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/78)
