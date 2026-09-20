@@ -97,6 +97,20 @@ Open evidence and ownership work:
   `CHILD_USER` build argument, JSON runtime environment, and least-privilege
   migration-secret access.
 
+### 2026-09-21 — migration-aware verification and EBA runbook
+
+- Configuration-aware verification now ignores `agents.pattern` for a
+  migration runtime and performs a basic AgentCore invocation against the
+  customer image instead of demanding an accelerator-specific Code
+  Interpreter tool or AG-UI protocol.
+- Transport success is insufficient: the invoke verifier decodes raw JSON or
+  JSON SSE events and fails when the adapter reports an application error or
+  4xx/5xx-style child status inside an HTTP-success Runtime response.
+- `docs/MIGRATION_RUNBOOK.md` defines the supported arm64
+  AgentCore-plus-adapter path, isolated rehearsal setup, stdin-only secret
+  ingestion, external connectivity/event prerequisites, plan/build/verify
+  flow, customer tests, cutover/rollback, cleanup, and an evidence checklist.
+
 ### 2026-09-20 — live evidence run exposed an unbound deployment account
 
 - The operator selected the intended accelerator-development account, while

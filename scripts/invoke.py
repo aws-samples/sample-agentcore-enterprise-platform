@@ -31,6 +31,10 @@ class ToolVerificationError(RuntimeError):
     """A required runtime tool was absent, failed, or returned the wrong result."""
 
 
+class RuntimeVerificationError(RuntimeError):
+    """The runtime replied, but its structured application result was a failure."""
+
+
 def new_session_id() -> str:
     """40-char unique session id (runtime requires >= 33 chars)."""
     return f"session-{uuid.uuid4().hex}"  # 8 + 32 = 40 chars
@@ -63,11 +67,14 @@ def invoke_agent(
     session_id: str,
     required_tool: str | None = None,
     required_result: str | None = None,
+    require_success: bool = False,
 ) -> str:
     """POST the prompt to the runtime data plane with a Bearer M2M token."""
     body = _post(_runtime_url(), {"prompt": prompt, "runtimeSessionId": session_id}, {})
     if required_tool:
         validate_tool_result(body, required_tool, required_result)
+    if require_success:
+        validate_runtime_success(body)
     return body
 
 
@@ -142,6 +149,46 @@ def _sse_events(body: str):
             yield json.loads(line[len("data:") :].strip())
         except json.JSONDecodeError:
             continue
+
+
+def _decoded_runtime_payloads(body: str):
+    """Yield a raw JSON response or each JSON SSE event."""
+    try:
+        yield json.loads(body)
+        return
+    except json.JSONDecodeError:
+        pass
+    yield from _sse_events(body)
+
+
+def validate_runtime_success(body: str) -> None:
+    """Require a structured migration response that does not report failure.
+
+    The migration adapter reports child/process failures as JSON with
+    ``status=error`` and a 4xx/5xx-style ``code``. AgentCore can carry that
+    application payload inside an otherwise successful HTTP response, so
+    transport success alone is not enough for a migration health check.
+    """
+    payloads = list(_decoded_runtime_payloads(body))
+    if not payloads:
+        raise RuntimeVerificationError(
+            "runtime returned no decodable JSON response or SSE event"
+        )
+    for payload in payloads:
+        for node in _walk_json(payload):
+            status = str(node.get("status", "")).lower()
+            code = node.get("code")
+            try:
+                failed_code = not isinstance(code, bool) and int(code) >= 400
+            except (TypeError, ValueError):
+                failed_code = False
+            if status in {"error", "failed", "failure"} or (
+                failed_code and node.get("error")
+            ):
+                detail = str(node.get("error") or status or f"code {code}")
+                raise RuntimeVerificationError(
+                    f"runtime reported an application failure: {detail[:500]}"
+                )
 
 
 def validate_tool_result(
@@ -310,6 +357,11 @@ def main():
         "--require-tool-result",
         help="Also require this marker inside the named tool's structured result",
     )
+    parser.add_argument(
+        "--require-success",
+        action="store_true",
+        help="Fail when the structured runtime response reports an application error",
+    )
     args = parser.parse_args()
     if not args.tools and not args.prompt:
         parser.error("prompt is required unless --tools is given")
@@ -330,13 +382,14 @@ def main():
                         session_id,
                         args.require_tool,
                         args.require_tool_result,
+                        args.require_success,
                     )
                 )
     except urllib.error.HTTPError as e:
         # Surface the real error — users need the status and body to debug
         print(f"HTTP {e.code}: {e.read().decode()}", file=sys.stderr)
         sys.exit(1)
-    except ToolVerificationError as e:
+    except (RuntimeVerificationError, ToolVerificationError) as e:
         print(f"FAIL: {e}", file=sys.stderr)
         sys.exit(1)
 
