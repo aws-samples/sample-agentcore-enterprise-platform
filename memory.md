@@ -299,6 +299,10 @@ Never copy credential values into this file.
 - Clean-checkout CI then caught a test that included an intentionally untracked
   local facilitator runbook. The loopback-only documentation contract now
   covers only the tracked README and participant guide.
+- The artifact scan correctly detected seeded credential fixtures when Pytest
+  scratch data lived under `dashboard/public`. Test-only scratch data now lives
+  in the runner temporary directory, while the deployable dashboard and
+  synthesized templates remain fully scanned.
 - The failing label job is a repository baseline issue: its workflow references
   a missing `.github/labeler.yml`; recent merged pull requests show the same
   result. The aggregate CodeQL status is likewise separate from the passing
