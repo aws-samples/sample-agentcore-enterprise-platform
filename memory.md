@@ -414,4 +414,6 @@ Never copy credential values into this file.
   [#75 — Add missing pull request labeler configuration](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/75)
 - PR #75 and PR #74 merged to `main` on 2026-09-20.
 - `05623cf` — `Add production deployment mode and G1 evidence`
-- G1 branch: `feat/production-mode-g1` (pull request pending).
+- G1 branch: `feat/production-mode-g1`
+- Pull request:
+  [#76 — Add production deployment mode and G1 design evidence](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/76)
