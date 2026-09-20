@@ -8,6 +8,7 @@ region: us-east-1
 deployment:
   mode: production
   strategy: centralized
+  platform_account: "000000000000"
 
 identity:
   idp: entra_id

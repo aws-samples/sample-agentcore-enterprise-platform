@@ -380,6 +380,31 @@ check_prereqs() {
 # ═══════════════════════════════════════════════════════════════
 # AWS Credential Validation (Requirement 18.4)
 # ═══════════════════════════════════════════════════════════════
+validate_deployment_account() {
+    local strategy="${DEPLOYMENT_STRATEGY:-centralized}"
+    local expected="${PLATFORM_ACCOUNT:-}"
+
+    # Federated deployments intentionally run in more than one declared
+    # account; PlatformConfig.federated_role() validates membership before
+    # synthesis. For a one-account deployment, platform_account is the
+    # non-bypassable target-account boundary.
+    if [ "$strategy" != "federated" ]; then
+        if [ "${IDP_TYPE:-cognito}" != "cognito" ] \
+            && [ -n "${IDP_CLIENT_SECRET_NAME:-}" ] \
+            && [ -z "$expected" ]; then
+            log_error "The configured IdP secret is account-scoped, but no deployment account is pinned."
+            log_error "Set deployment.platform_account in platform.yaml to the intended 12-digit AWS account."
+            exit 1
+        fi
+        if [ -n "$expected" ] && [ "$ACCOUNT_ID" != "$expected" ]; then
+            log_error "Wrong AWS account: credentials resolve to $ACCOUNT_ID, but platform.yaml pins $expected."
+            log_error "No secret, bootstrap, or CloudFormation operation has been attempted."
+            log_error "Switch credentials to the intended account and retry."
+            exit 1
+        fi
+    fi
+}
+
 check_credentials() {
     log_header "AWS Credentials"
     if ! aws sts get-caller-identity &>/dev/null; then
@@ -396,6 +421,7 @@ check_credentials() {
     log_info "Identity: $identity"
     export CDK_DEFAULT_ACCOUNT="$ACCOUNT_ID"
     export CDK_DEFAULT_REGION="$AWS_REGION"
+    validate_deployment_account
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -480,22 +506,22 @@ prompt_idp() {
         echo ""
         read -rp "IdP: ${IDP_TYPE} (saved) — keep? [Y/n]: " keep
         if [[ ! "$keep" =~ ^[Nn] ]]; then
-            # The client secret is never persisted: reuse the one already in
-            # Secrets Manager if present, otherwise re-prompt for it.
+            # The client secret is never persisted: reuse the configured
+            # Secrets Manager reference, otherwise prompt for a new value.
             if [ "$IDP_TYPE" != "cognito" ] && [ -z "${IDP_CLIENT_SECRET:-}" ]; then
-                # Bring-your-own secret: if IDP_CLIENT_SECRET_NAME is configured
-                # (platform.yaml or env), look for THAT secret and keep its name.
-                # Probing only the prefixed name would ignore the secret the
-                # operator already owns, prompt for the value anyway, and create
-                # a duplicate under our name.
-                local secret_name="${IDP_CLIENT_SECRET_NAME:-${PREFIX}-idp-client-secret}"
-                if aws secretsmanager describe-secret \
-                    --secret-id "$secret_name" \
-                    --region "${AWS_REGION:-us-east-1}" &>/dev/null; then
-                    IDP_CLIENT_SECRET_NAME="$secret_name"
-                    log_info "✓ IdP client secret: reusing existing Secrets Manager secret ($secret_name)"
+                if [ -n "${IDP_CLIENT_SECRET_NAME:-}" ]; then
+                    # validate_configured_idp_secret already proved this exact
+                    # reference readable in the pinned account. Never turn a
+                    # missing or denied configured secret into a plaintext
+                    # prompt: that masked wrong-account credentials.
+                    log_info "✓ IdP client secret: reusing configured Secrets Manager secret ($IDP_CLIENT_SECRET_NAME)"
                 else
                     read -rsp "  ${IDP_TYPE} Client Secret: " IDP_CLIENT_SECRET; echo ""
+                    if [ -z "${IDP_CLIENT_SECRET:-}" ]; then
+                        log_error "An empty IdP client secret is not valid."
+                        log_error "Enter the secret value, or configure identity.client_secret_name in platform.yaml."
+                        exit 1
+                    fi
                 fi
             fi
             log_info "IdP set to: ${IDP_TYPE}"
@@ -594,6 +620,38 @@ upsert_oauth_secret() {
 upsert_idp_secret() {
     upsert_oauth_secret IDP_CLIENT_SECRET IDP_CLIENT_SECRET_NAME \
         "${PREFIX}-idp-client-secret" "IdP client"
+}
+
+validate_configured_idp_secret() {
+    [ "${IDP_TYPE:-cognito}" != "cognito" ] || return 0
+    [ -n "${IDP_CLIENT_SECRET_NAME:-}" ] || return 0
+    # A supplied value is an explicit rotation; upsert_idp_secret validates and
+    # writes it below. Do not require the old version to remain readable.
+    [ -z "${IDP_CLIENT_SECRET:-}" ] || return 0
+    # Federated workload accounts consume their own M2M secret and do not
+    # deploy the platform-side enterprise IdP.
+    if [ "${DEPLOYMENT_STRATEGY:-centralized}" = "federated" ] \
+        && [ "${ACCOUNT_ID:-}" != "${PLATFORM_ACCOUNT:-}" ]; then
+        return 0
+    fi
+
+    local secret_length
+    if ! secret_length=$(aws secretsmanager get-secret-value \
+        --secret-id "$IDP_CLIENT_SECRET_NAME" \
+        --region "$AWS_REGION" \
+        --query 'length(SecretString)' \
+        --output text 2>/dev/null); then
+        log_error "Cannot read configured IdP secret '$IDP_CLIENT_SECRET_NAME'."
+        log_error "Account: ${ACCOUNT_ID:-unknown}   Region: $AWS_REGION"
+        log_error "Confirm the account, Region, secret name, AWSCURRENT version, and secretsmanager:GetSecretValue permission."
+        exit 1
+    fi
+    if ! [[ "$secret_length" =~ ^[1-9][0-9]*$ ]]; then
+        log_error "Configured IdP secret '$IDP_CLIENT_SECRET_NAME' has no non-empty SecretString."
+        log_error "Account: ${ACCOUNT_ID:-unknown}   Region: $AWS_REGION"
+        exit 1
+    fi
+    log_info "✓ IdP client secret: readable in the pinned account ($IDP_CLIENT_SECRET_NAME)"
 }
 
 # 3LO providers (module 4): GOOGLE/GITHUB/NOTION_CLIENT_SECRET in the
@@ -1765,6 +1823,7 @@ if [ "$DRY_RUN" != "1" ]; then
     # strand the secret in the provisional region with no value left to
     # re-store (usability review, finding 7).
     case "$ACTION" in deploy | workshop) prompt_region ;; esac
+    validate_configured_idp_secret
     upsert_idp_secret
     upsert_3lo_secrets
 fi

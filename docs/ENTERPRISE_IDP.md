@@ -33,6 +33,9 @@ below — no user pool is deployed at all.
 ## Direct mode: Entra ID issues the tokens
 
 ```yaml
+deployment:
+  platform_account: "<12-digit AWS account id>"
+
 identity:
   idp: entra_id
   mode: direct
@@ -189,18 +192,27 @@ IDP_TYPE=entra_id \
 IDP_TENANT_ID=<tenant-id> \
 IDP_CLIENT_ID=<appId> \
 IDP_CLIENT_SECRET_NAME=agentcore/entra-client-secret \
+PLATFORM_ACCOUNT=<12-digit-aws-account-id> \
 ./scripts/deploy.sh deploy --module 4
 ```
 
 Or declare it in `platform.yaml` (see `presets/migration.yaml`):
 
 ```yaml
+deployment:
+  strategy: centralized
+  platform_account: "<12-digit AWS account id>"
+
 identity:
   idp: entra_id
   tenant_id: "<tenant-id>"
   client_id: "<appId>"
   client_secret_name: agentcore/entra-client-secret
 ```
+
+The account pin is mandatory for a centralized or distributed enterprise IdP
+deployment. `deploy.sh` compares it to STS before reading the secret,
+bootstrapping CDK, or changing CloudFormation; `--yes` cannot bypass it.
 
 The stack builds the issuer URL as
 `https://login.microsoftonline.com/<tenant-id>/v2.0`, requests

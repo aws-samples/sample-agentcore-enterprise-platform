@@ -6,6 +6,9 @@ project: agentcore-workshop
 environment: dev
 region: us-east-1
 
+deployment:
+  platform_account: "111111111111"
+
 identity:
   idp: entra_id
   mode: direct

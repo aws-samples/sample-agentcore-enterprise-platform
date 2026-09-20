@@ -42,7 +42,7 @@ Deployment posture and multi-account strategy. See docs/MULTI_ACCOUNT.md.
 |---|---|---|---|---|
 | `deployment.mode` | one of: `workshop`, `production` | `'workshop'` | `DEPLOYMENT_MODE` | `workshop` keeps disposable lifecycle defaults. `production` retains stateful resources and fails validation unless enterprise identity, networking, audit, authorization, guardrails, model allow-listing and monitored alarms are all configured. |
 | `deployment.strategy` ✦ | one of: `centralized`, `distributed`, `federated` | `'centralized'` | `DEPLOYMENT_STRATEGY` | `centralized` puts everything in one account. `distributed` means each team deploys its own copy of this file. `federated` splits shared services (auth, gateway) into `platform_account` from agent runtimes in `workload_accounts`; the account you deploy into decides the role, the same file works in both. |
-| `deployment.platform_account` | str | `""` | `PLATFORM_ACCOUNT` | 12-digit account that hosts the shared services in a `federated` deployment. Required by that strategy, ignored by the others. |
+| `deployment.platform_account` | str | `""` | `PLATFORM_ACCOUNT` | 12-digit account this deployment may modify. Required for production and for centralized/distributed enterprise-IdP deployments; in a federated deployment it hosts the shared services. |
 | `deployment.workload_accounts` | list of str | `[]` | — | 12-digit accounts that run agent runtimes in a `federated` deployment. Deploying a federated file from an account in neither list is a hard error. |
 | `deployment.federation.gateway_url` | str | `""` | — | Platform-account gateway MCP endpoint a workload account calls (an output of the platform gateway stack). |
 | `deployment.federation.issuer_url` | str | `""` | — | Platform Cognito issuer; the OIDC discovery URL is derived from it. |
@@ -255,6 +255,7 @@ environment: dev
 region: us-east-1
 deployment:
   strategy: centralized
+  platform_account: "000000000000"  # replace with the account this migration may modify
 identity:
   idp: entra_id
   tenant_id: "00000000-0000-0000-0000-000000000000"   # your Entra tenant
@@ -380,6 +381,7 @@ region: us-east-1
 deployment:
   mode: production
   strategy: centralized
+  platform_account: "000000000000"
 
 identity:
   idp: entra_id

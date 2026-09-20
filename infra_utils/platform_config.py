@@ -112,9 +112,10 @@ class DeploymentConfig(BaseModel):
     mode — workshop preserves the accelerator's disposable defaults;
         production enables retained state and requires the controls enforced
         by PlatformConfig._production_controls_are_complete.
-    centralized — everything in one account (the default; today's behavior).
+    centralized — everything in platform_account (the default).
     distributed — each team/workload account runs its own full copy of this
-        file; org guardrails (terraform/org-guardrails) apply org-wide.
+        file; platform_account binds that copy to its intended account and org
+        guardrails (terraform/org-guardrails) apply org-wide.
     federated — shared services (auth, gateway, observability account setting)
         live in platform_account; workload_accounts run agent runtimes plus
         their own credential provider, consuming the platform gateway via
@@ -829,6 +830,11 @@ class PlatformConfig(BaseModel):
             "identity.idp",
             "use an enterprise IdP (entra_id, okta, or ping)",
         )
+        require(
+            bool(self.deployment.platform_account),
+            "deployment.platform_account",
+            "provide the 12-digit AWS account this deployment may modify",
+        )
         require(self.security.networking, "security.networking", "set true")
         require(
             self.security.cloudtrail_alerting,
@@ -880,6 +886,27 @@ class PlatformConfig(BaseModel):
             raise ValueError(
                 "deployment.mode 'production' requires all production controls:\n- "
                 + "\n- ".join(missing)
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _account_scoped_idp_secret_has_an_owner(self) -> PlatformConfig:
+        """Bind centralized/distributed IdP secrets to an intended account.
+
+        A Secrets Manager name is only meaningful inside one account and
+        Region. Without this binding, valid credentials for another account
+        turn a missing-secret lookup into a prompt and can deploy an
+        identically named platform into the wrong place.
+        """
+        if (
+            self.identity.idp != "cognito"
+            and self.deployment.strategy != "federated"
+            and not self.deployment.platform_account
+        ):
+            raise ValueError(
+                "identity.client_secret_name is account-scoped: set "
+                "deployment.platform_account to the 12-digit AWS account this "
+                "deployment may modify"
             )
         return self
 

@@ -13,12 +13,13 @@ operational readiness review.
 
 ## Current milestone
 
-**G1 — production design baseline (implementation in progress)**
+**G1 — production design baseline merged; live evidence closure in progress**
 
-Branch: `feat/production-mode-g1`
+Branch: `fix/deployment-account-secret-guard`
 
-G0 code merged to `main` through PR #74 after prerequisite PR #75. Its
-blocking repository checks are now present. The current branch implements:
+G0 merged through PR #74 after prerequisite PR #75. G1 implementation merged
+through PR #76. The current branch closes a deployment-account boundary found
+during the remaining live evidence run.
 
 - [x] Add explicit `workshop` and `production` deployment modes.
 - [x] Add a production preset that requires enterprise identity, networking,
@@ -45,6 +46,35 @@ Open evidence and ownership work:
   the retired client allow-list/checkpoints and verify the final state.
 - [ ] Populate, review, and approve the five G1 governance artifacts for the
   specific customer; draft templates and green synthesis do not close G1.
+
+### 2026-09-20 — live evidence run exposed an unbound deployment account
+
+- The operator's shell held valid credentials for a different AWS account than
+  the established development environment. The full-footprint confirmation
+  displayed that account but did not enforce the intended account.
+- The configured Entra secret name did not exist in that account. The deploy
+  script discarded the lookup error, prompted for a plaintext replacement,
+  accepted empty input, and continued until the Auth stack failed.
+- No secret was entered or copied. The unexpected account's Auth stack reached
+  `UPDATE_ROLLBACK_COMPLETE`. A read-only audit of any earlier consumer-stack
+  updates and the deployment lock is still pending.
+- Root cause: centralized/distributed manifests did not bind the deployment to
+  an expected account, and a configured-secret lookup treated missing,
+  denied, and wrong-account states as an invitation to create or enter a
+  secret.
+- Branch `fix/deployment-account-secret-guard` now pins enterprise-IdP and
+  production deployments to `deployment.platform_account`, rejects mismatched
+  credentials before secret/bootstrap/CloudFormation operations, validates a
+  configured SecretString without exposing it, refuses empty interactive
+  input, and never replaces a failed configured-secret lookup with a prompt.
+- Verification so far: 403 repository tests, deployment-config checks, all
+  deployment contract syntheses, targeted Ruff/formatting, shell syntax,
+  generated-reference drift, and diff whitespace checks pass.
+- A live negative probe with mismatched account credentials was rejected at
+  the new preflight before any secret/CDK operation. A correct-account,
+  non-interactive read-only diff then validated the existing secret without a
+  prompt and confirmed that the pending deployment removes the retired client
+  from Gateway and orchestrator authorizers after the completed token drain.
 
 ## Decisions
 

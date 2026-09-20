@@ -8,6 +8,7 @@ environment: dev
 region: us-east-1
 deployment:
   strategy: centralized
+  platform_account: "000000000000"  # replace with the account this migration may modify
 identity:
   idp: entra_id
   tenant_id: "00000000-0000-0000-0000-000000000000"   # your Entra tenant
