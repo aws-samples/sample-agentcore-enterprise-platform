@@ -692,6 +692,7 @@ CONTEXT_ARGS=()
 M2M_ROTATION_CONTEXT_ARGS=()
 M2M_DEPLOYMENT_LOCK_VALUE=""
 M2M_DEPLOYMENT_LOCK_PARAMETER=""
+ORCHESTRATOR_OBSERVABILITY_HANDOFF=0
 build_context_args() {
     CONTEXT_ARGS=()
     CONTEXT_ARGS+=(-c "project=${PROJECT_NAME}")
@@ -1301,6 +1302,132 @@ rotate_legacy_m2m_client() {
     log_info "Cleanup resumes on the first deploy after ${drain_seconds} seconds."
 }
 
+prepare_orchestrator_observability_handoff() {
+    local target_generation="${ORCHESTRATOR_RUNTIME_GENERATION:-1}"
+    [ "$target_generation" -gt 1 ] || return 0
+
+    local runtime_stack="${PREFIX}-runtime-orchestrator"
+    local observability_stack="${PREFIX}-observability"
+    local current_id current_arn current_generation=1
+    current_id=$(aws cloudformation describe-stacks \
+        --stack-name "$runtime_stack" \
+        --region "$AWS_REGION" \
+        --query "Stacks[0].Outputs[?OutputKey=='RuntimeId'].OutputValue | [0]" \
+        --output text 2>/dev/null) || {
+        local stack_count
+        stack_count=$(aws cloudformation list-stacks \
+            --region "$AWS_REGION" \
+            --query "length(StackSummaries[?StackName=='${runtime_stack}' && StackStatus!='DELETE_COMPLETE'])" \
+            --output text) || {
+            log_error "Could not determine whether $runtime_stack exists."
+            exit 1
+        }
+        [ "$stack_count" = "0" ] && return 0
+        log_error "Could not read the current orchestrator runtime generation."
+        exit 1
+    }
+    [ "$current_id" != "None" ] || return 0
+    if [[ "$current_id" =~ _g([0-9]+)- ]]; then
+        current_generation="${BASH_REMATCH[1]}"
+    fi
+    [ "$target_generation" -gt "$current_generation" ] || return 0
+    if [ "$target_generation" -ne $((current_generation + 1)) ]; then
+        log_error "Orchestrator runtime generation must advance one step at a time."
+        log_error "Current: $current_generation   Requested: $target_generation"
+        exit 1
+    fi
+
+    current_arn=$(aws cloudformation describe-stacks \
+        --stack-name "$runtime_stack" \
+        --region "$AWS_REGION" \
+        --query "Stacks[0].Outputs[?OutputKey=='RuntimeArn'].OutputValue | [0]" \
+        --output text) || {
+        log_error "Could not read the current orchestrator runtime ARN."
+        exit 1
+    }
+    [ -n "$current_arn" ] && [ "$current_arn" != "None" ] || {
+        log_error "$runtime_stack has no RuntimeArn output."
+        exit 1
+    }
+
+    local export_names export_name imports needs_handoff=0
+    export_names=$(aws cloudformation list-exports \
+        --region "$AWS_REGION" \
+        --query "Exports[?Value=='${current_arn}' && starts_with(Name, '${runtime_stack}:')].Name" \
+        --output text) || {
+        log_error "Could not inspect runtime export consumers."
+        exit 1
+    }
+    for export_name in $export_names; do
+        [ "$export_name" != "None" ] || continue
+        imports=$(aws cloudformation list-imports \
+            --export-name "$export_name" \
+            --region "$AWS_REGION" \
+            --query Imports \
+            --output text) || {
+            log_error "Could not inspect imports of runtime export $export_name."
+            exit 1
+        }
+        [[ " $imports " == *" $observability_stack "* ]] && needs_handoff=1
+    done
+    [ "$needs_handoff" = "1" ] || return 0
+
+    # Remove the target generation from the normal context. The handoff must
+    # retain the CURRENT Logs DeliverySource logical ID while replacing only
+    # Observability's cross-stack token with the identical literal ARN.
+    local -a handoff_context=()
+    local i
+    for ((i = 0; i < ${#CONTEXT_ARGS[@]}; i++)); do
+        if [ "${CONTEXT_ARGS[$i]}" = "-c" ] \
+            && [[ "${CONTEXT_ARGS[$((i + 1))]:-}" == orchestrator_runtime_generation=* ]]; then
+            ((i += 1))
+            continue
+        fi
+        handoff_context+=("${CONTEXT_ARGS[$i]}")
+    done
+
+    log_step "Runtime handoff 1/3: release Observability's current runtime export import"
+    JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+        npx cdk deploy "$observability_stack" --exclusively \
+        --require-approval never "${handoff_context[@]}" \
+        -c "orchestrator_runtime_generation=${current_generation}" \
+        -c "runtime_observability_arn_override=${current_arn}" 2>&1 || {
+        log_error "Could not pin Observability to the current runtime ARN."
+        exit 1
+    }
+
+    for export_name in $export_names; do
+        [ "$export_name" != "None" ] || continue
+        imports=$(aws cloudformation list-imports \
+            --export-name "$export_name" \
+            --region "$AWS_REGION" \
+            --query Imports \
+            --output text) || {
+            log_error "Could not verify the runtime export handoff."
+            exit 1
+        }
+        if [[ " $imports " == *" $observability_stack "* ]]; then
+            log_error "Observability still imports $export_name after the handoff."
+            exit 1
+        fi
+    done
+    ORCHESTRATOR_OBSERVABILITY_HANDOFF=1
+    log_info "Runtime handoff prepared; the current ARN remains monitored as a literal."
+}
+
+rebind_orchestrator_observability() {
+    [ "$ORCHESTRATOR_OBSERVABILITY_HANDOFF" = "1" ] || return 0
+    log_step "Runtime handoff 3/3: bind Observability to the replacement runtime"
+    JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+        npx cdk deploy "${PREFIX}-observability" --exclusively \
+        --require-approval never "${CONTEXT_ARGS[@]}" 2>&1 || {
+        log_error "Runtime replaced, but Observability could not bind to it."
+        log_error "Re-run the deployment; the handoff is resumable."
+        exit 1
+    }
+    ORCHESTRATOR_OBSERVABILITY_HANDOFF=0
+}
+
 deploy_stacks() {
     local stack
     # A targeted deploy still follows CDK dependencies unless --exclusively is
@@ -1310,7 +1437,16 @@ deploy_stacks() {
     switch_issuer_consumers_first
     migrate_legacy_m2m_secret_export
     rotate_legacy_m2m_client
+    case " $* " in
+        *" ${PREFIX}-runtime-orchestrator "*)
+            prepare_orchestrator_observability_handoff
+            ;;
+    esac
     for stack in "$@"; do
+        if [ "$ORCHESTRATOR_OBSERVABILITY_HANDOFF" = "1" ] \
+            && [ "$stack" = "${PREFIX}-runtime-orchestrator" ]; then
+            log_step "Runtime handoff 2/3: create the replacement runtime"
+        fi
         log_step "Deploying: $stack"
         JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
             npx cdk deploy "$stack" --require-approval never \
@@ -1320,6 +1456,10 @@ deploy_stacks() {
             exit 1
         }
     done
+    case " $* " in
+        *" ${PREFIX}-observability "*) : ;;
+        *) rebind_orchestrator_observability ;;
+    esac
     release_m2m_deployment_lock
 }
 
@@ -1856,6 +1996,10 @@ case "$ACTION" in
             switch_issuer_consumers_first
             migrate_legacy_m2m_secret_export
             rotate_legacy_m2m_client
+            prepare_orchestrator_observability_handoff
+            if [ "$ORCHESTRATOR_OBSERVABILITY_HANDOFF" = "1" ]; then
+                log_step "Runtime handoff 2/3: create the replacement runtime during full deployment"
+            fi
             log_step "Deploying all stacks..."
             JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
                 npx cdk deploy --all --require-approval never \
@@ -1863,6 +2007,9 @@ case "$ACTION" in
                 log_error "Deployment failed. Check CloudFormation console for details."
                 exit 1
             }
+            # --all includes Observability after the runtime dependency, so it
+            # performs phase 3. Clear the in-process marker after success.
+            ORCHESTRATOR_OBSERVABILITY_HANDOFF=0
             release_m2m_deployment_lock
         fi
 
