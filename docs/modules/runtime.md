@@ -119,8 +119,8 @@ orchestrator, not end users.
 
 | Tool | What it proves |
 |---|---|
-| `scripts/verify.py` | Selects the checks below from the footprint |
-| `scripts/invoke.py "<prompt>"` | Live orchestrator invoke (`--agui` for the agui patterns) |
+| `scripts/verify.py` | Selects the checks below from the footprint; tool-consuming patterns must execute Code Interpreter and return the expected marker |
+| `scripts/invoke.py "<prompt>"` | Live orchestrator invoke (`--agui` for the agui patterns); `--require-tool` and `--require-tool-result` turn structured tool failures into a non-zero exit |
 | `scripts/invoke.py --a2a code-agent` / `--a2a research-agent` | Live A2A sub-agent invokes |
 | `scripts/check_guardrail_enforcement.py` | IAM policy simulation: no-guardrail invoke denied, with-guardrail allowed |
 | `scripts/check_network.py` | Runtimes really are in the VPC when `security.networking` is on |

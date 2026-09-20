@@ -27,6 +27,10 @@ from utils import get_m2m_token, get_ssm_param, resolve_region
 REGION = resolve_region()
 
 
+class ToolVerificationError(RuntimeError):
+    """A required runtime tool was absent, failed, or returned the wrong result."""
+
+
 def new_session_id() -> str:
     """40-char unique session id (runtime requires >= 33 chars)."""
     return f"session-{uuid.uuid4().hex}"  # 8 + 32 = 40 chars
@@ -54,12 +58,25 @@ def _post(url: str, payload: dict, headers: dict) -> str:
     return urllib.request.urlopen(req).read().decode()  # nosec B310 — https URL built above
 
 
-def invoke_agent(prompt: str, session_id: str) -> str:
+def invoke_agent(
+    prompt: str,
+    session_id: str,
+    required_tool: str | None = None,
+    required_result: str | None = None,
+) -> str:
     """POST the prompt to the runtime data plane with a Bearer M2M token."""
-    return _post(_runtime_url(), {"prompt": prompt, "runtimeSessionId": session_id}, {})
+    body = _post(_runtime_url(), {"prompt": prompt, "runtimeSessionId": session_id}, {})
+    if required_tool:
+        validate_tool_result(body, required_tool, required_result)
+    return body
 
 
-def invoke_agui(prompt: str, session_id: str) -> str:
+def invoke_agui(
+    prompt: str,
+    session_id: str,
+    required_tool: str | None = None,
+    required_result: str | None = None,
+) -> str:
     """Invoke an AG-UI runtime (agui-* patterns) and print its text deltas.
 
     AG-UI entrypoints validate the payload as a RunAgentInput, so the prompt has
@@ -83,6 +100,8 @@ def invoke_agui(prompt: str, session_id: str) -> str:
             "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id": session_id,
         },
     )
+    if required_tool:
+        validate_tool_result(body, required_tool, required_result)
 
     # Report the assistant's text, and surface RUN_ERROR rather than printing
     # an empty stream when the agent fails.
@@ -101,6 +120,93 @@ def invoke_agui(prompt: str, session_id: str) -> str:
     out = ["AGENT TEXT: " + repr("".join(text))] if text else []
     out += [f"RUN_ERROR {e}" for e in errors]
     return "\n".join(out) or body
+
+
+def _walk_json(value):
+    """Yield every object in a decoded event without assuming one SDK shape."""
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from _walk_json(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _walk_json(child)
+
+
+def _sse_events(body: str):
+    """Decode JSON SSE events while ignoring keepalives and text fragments."""
+    for line in body.splitlines():
+        if not line.startswith("data:"):
+            continue
+        try:
+            yield json.loads(line[len("data:") :].strip())
+        except json.JSONDecodeError:
+            continue
+
+
+def validate_tool_result(
+    body: str, required_tool: str, required_result: str | None = None
+) -> None:
+    """Require one successful structured result from a named runtime tool.
+
+    Strands HTTP streams expose ``toolUse``/``toolResult`` objects, while
+    AG-UI uses ``TOOL_CALL_START``/``TOOL_CALL_RESULT`` events. Inspect both
+    forms so a friendly final answer cannot hide a failed dependency.
+    """
+    call_ids: set[str] = set()
+    results: dict[str, list[tuple[bool, str]]] = {}
+
+    for event in _sse_events(body):
+        if event.get("type") == "TOOL_CALL_START":
+            if event.get("toolCallName") == required_tool and event.get("toolCallId"):
+                call_ids.add(str(event["toolCallId"]))
+        elif event.get("type") == "TOOL_CALL_RESULT" and event.get("toolCallId"):
+            call_id = str(event["toolCallId"])
+            results.setdefault(call_id, []).append(
+                (False, json.dumps(event.get("content", ""), default=str))
+            )
+
+        for node in _walk_json(event):
+            tool_use = node.get("toolUse")
+            if (
+                isinstance(tool_use, dict)
+                and tool_use.get("name") == required_tool
+                and tool_use.get("toolUseId")
+            ):
+                call_ids.add(str(tool_use["toolUseId"]))
+
+            tool_result = node.get("toolResult")
+            if isinstance(tool_result, dict) and tool_result.get("toolUseId"):
+                call_id = str(tool_result["toolUseId"])
+                failed = (
+                    str(tool_result.get("status", "")).lower() == "error"
+                    or tool_result.get("isError") is True
+                )
+                results.setdefault(call_id, []).append(
+                    (
+                        failed,
+                        json.dumps(tool_result.get("content", ""), default=str),
+                    )
+                )
+
+    if not call_ids:
+        raise ToolVerificationError(f"required tool was not invoked: {required_tool}")
+
+    matching_results = [
+        result for call_id in call_ids for result in results.get(call_id, [])
+    ]
+    if not matching_results:
+        raise ToolVerificationError(
+            f"required tool returned no structured result: {required_tool}"
+        )
+    if any(failed for failed, _ in matching_results):
+        raise ToolVerificationError(f"required tool failed: {required_tool}")
+    if required_result and not any(
+        required_result in content for _, content in matching_results
+    ):
+        raise ToolVerificationError(
+            f"required tool result omitted marker: {required_tool}"
+        )
 
 
 def invoke_a2a(prompt: str, session_id: str, component: str) -> str:
@@ -196,6 +302,14 @@ def main():
         default=None,
         help="Invoke an A2A sub-agent over JSON-RPC (code-agent|research-agent)",
     )
+    parser.add_argument(
+        "--require-tool",
+        help="Fail unless this runtime tool returns a successful structured result",
+    )
+    parser.add_argument(
+        "--require-tool-result",
+        help="Also require this marker inside the named tool's structured result",
+    )
     args = parser.parse_args()
     if not args.tools and not args.prompt:
         parser.error("prompt is required unless --tools is given")
@@ -210,10 +324,20 @@ def main():
                 print(invoke_a2a(args.prompt, session_id, args.a2a))
             else:
                 invoke = invoke_agui if args.agui else invoke_agent
-                print(invoke(args.prompt, session_id))
+                print(
+                    invoke(
+                        args.prompt,
+                        session_id,
+                        args.require_tool,
+                        args.require_tool_result,
+                    )
+                )
     except urllib.error.HTTPError as e:
         # Surface the real error — users need the status and body to debug
         print(f"HTTP {e.code}: {e.read().decode()}", file=sys.stderr)
+        sys.exit(1)
+    except ToolVerificationError as e:
+        print(f"FAIL: {e}", file=sys.stderr)
         sys.exit(1)
 
 

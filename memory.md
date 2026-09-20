@@ -114,6 +114,26 @@ Open evidence and ownership work:
   handoff regression simulates the real non-zero CLI response; deployment
   configuration checks, shell syntax, ShellCheck warnings, and diff whitespace
   checks pass before the resumable live retry.
+- The resumable retry completed all eight stacks. The orchestrator
+  generation-2 Runtime became active, the old Runtime and generation-1 Logs
+  delivery source were deleted, and Observability imported the new generated
+  Runtime ARN. All stacks are `UPDATE_COMPLETE`; the owner-checked deployment
+  lock is absent and this account has no pending retired-client checkpoints.
+- The post-deployment verifier initially reported 7/7 green, but its structured
+  orchestrator stream contained an `AccessDeniedException` for
+  `StartCodeInterpreterSession`; the model returned a friendly fallback answer
+  and `invoke.py` accepted the HTTP success. This is not accepted as clean live
+  evidence.
+- AWS's Code Interpreter documentation requires session start, invoke, and
+  stop permissions. The Runtime role now grants only those three data-plane
+  actions on the exact AWS-managed system Code Interpreter ARN. Tool-consuming
+  agent patterns now require a structured, successful Code Interpreter result
+  containing a seeded marker, so a model response cannot conceal a failed
+  dependency.
+- Pre-deployment evidence for the correction: 409 repository tests pass,
+  deployment-config checks pass, changed Python files pass Ruff and formatting,
+  and offline synthesis confirms the three actions are scoped to the system
+  Code Interpreter ARN.
 
 ## Decisions
 

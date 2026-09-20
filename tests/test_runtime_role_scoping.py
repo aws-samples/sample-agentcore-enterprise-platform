@@ -131,6 +131,26 @@ def test_ecr_pull_is_scoped_to_the_repository_arn():
     raise AssertionError("no ECR pull statement found")
 
 
+def test_code_interpreter_session_actions_are_complete_and_scoped():
+    """The shipped clients start, invoke, and optionally stop one system tool."""
+    statements = {statement["sid"]: statement for statement in _policy_statements()}
+    code_interpreter = statements["AgentCoreCodeInterpreter"]
+    assert code_interpreter["actions"] == [
+        "bedrock-agentcore:StartCodeInterpreterSession",
+        "bedrock-agentcore:InvokeCodeInterpreter",
+        "bedrock-agentcore:StopCodeInterpreterSession",
+    ]
+    assert "*" not in code_interpreter["resources"]
+
+    broad_actions = statements["AgentCoreAccess"]["actions"]
+    assert not any("CodeInterpreter" in action for action in broad_actions)
+
+    source = RUNTIME_STACK.read_text()
+    assert 'account="aws"' in source
+    assert 'resource="code-interpreter"' in source
+    assert 'resource_name="aws.codeinterpreter.v1"' in source
+
+
 def test_ssm_reads_are_scoped_to_the_project_path():
     source = RUNTIME_STACK.read_text()
     assert "arn:aws:ssm:*:*:parameter/{project_name}/*" in source, (

@@ -46,6 +46,11 @@ from infra_utils.platform_config import (
 )
 
 HEALTH_PROMPT = "Health check: reply with one word."
+CODE_INTERPRETER_MARKER = "CODE_INTERPRETER_OK"
+CODE_INTERPRETER_PROMPT = (
+    "Use execute_python_securely to run print('CODE_INTERPRETER_OK'). "
+    "After the tool succeeds, reply with one word."
+)
 
 
 def load_config() -> PlatformConfig:
@@ -93,7 +98,19 @@ def checks_for(
         checks.append(("alarms", ["check_alarms.py"]))
     if "runtime-orchestrator" in suffixes:
         agui = ["--agui"] if agent_pattern.startswith("agui-") else []
-        checks.append(("orchestrator invoke", ["invoke.py", *agui, HEALTH_PROMPT]))
+        if agent_pattern == "orchestrator":
+            invoke_args = ["invoke.py", *agui, HEALTH_PROMPT]
+        else:
+            invoke_args = [
+                "invoke.py",
+                *agui,
+                "--require-tool",
+                "execute_python_securely",
+                "--require-tool-result",
+                CODE_INTERPRETER_MARKER,
+                CODE_INTERPRETER_PROMPT,
+            ]
+        checks.append(("orchestrator invoke", invoke_args))
     if "runtime-code-agent" in suffixes:
         checks.append(
             ("a2a code-agent", ["invoke.py", "--a2a", "code-agent", HEALTH_PROMPT])

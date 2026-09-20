@@ -733,7 +733,6 @@ class RuntimeStack(cdk.Stack):
                     "bedrock-agentcore:StartBrowserSession",
                     "bedrock-agentcore:StopBrowserSession",
                     "bedrock-agentcore:ConnectBrowserAutomationStream",
-                    "bedrock-agentcore:InvokeCodeInterpreter",
                     "bedrock-agentcore:GetResourceOauth2Token",
                     "bedrock-agentcore:CreateWorkloadIdentity",
                     "bedrock-agentcore:GetWorkloadAccessToken",
@@ -741,6 +740,28 @@ class RuntimeStack(cdk.Stack):
                     "bedrock-agentcore:GetWorkloadAccessTokenForUserId",
                 ],
                 resources=["*"],
+            ),
+            # The built-in Code Interpreter is session based: the agent must
+            # start a session before InvokeCodeInterpreter and may stop it
+            # during cleanup. Keep these permissions off the broad AgentCore
+            # statement and scope them to the one AWS-managed interpreter the
+            # shipped agent patterns use.
+            iam.PolicyStatement(
+                sid="AgentCoreCodeInterpreter",
+                actions=[
+                    "bedrock-agentcore:StartCodeInterpreterSession",
+                    "bedrock-agentcore:InvokeCodeInterpreter",
+                    "bedrock-agentcore:StopCodeInterpreterSession",
+                ],
+                resources=[
+                    cdk.Stack.of(role).format_arn(
+                        service="bedrock-agentcore",
+                        account="aws",
+                        resource="code-interpreter",
+                        resource_name="aws.codeinterpreter.v1",
+                        arn_format=cdk.ArnFormat.SLASH_RESOURCE_NAME,
+                    )
+                ],
             ),
             # AgentCore Identity token vault. GetResourceOauth2Token reads the
             # credential provider's client secret from a Secrets Manager secret
