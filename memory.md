@@ -450,3 +450,6 @@ Never copy credential values into this file.
 - G1 branch: `feat/production-mode-g1`
 - Pull request:
   [#76 — Add production deployment mode and G1 design evidence](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/76)
+- `efeb2ae` — `Pin deployments to the intended AWS account`
+- Pull request:
+  [#77 — Pin deployments to the intended AWS account](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/77)
