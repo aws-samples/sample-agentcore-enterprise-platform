@@ -49,15 +49,19 @@ Open evidence and ownership work:
 
 ### 2026-09-20 — live evidence run exposed an unbound deployment account
 
-- The operator's shell held valid credentials for a different AWS account than
-  the established development environment. The full-footprint confirmation
-  displayed that account but did not enforce the intended account.
-- The configured Entra secret name did not exist in that account. The deploy
-  script discarded the lookup error, prompted for a plaintext replacement,
-  accepted empty input, and continued until the Auth stack failed.
-- No secret was entered or copied. The unexpected account's Auth stack reached
-  `UPDATE_ROLLBACK_COMPLETE`. A read-only audit of any earlier consumer-stack
-  updates and the deployment lock is still pending.
+- The operator selected the intended accelerator-development account, while
+  the existing live Entra credential and recent validation environment were
+  in a separate development account. The manifest did not declare which
+  account it was allowed to modify, so the mismatch was not detected.
+- The configured Entra secret and callback did not yet exist for the intended
+  accelerator-development account. The deploy script discarded the lookup
+  error, prompted for a plaintext replacement, accepted empty input, and
+  continued until the Auth stack failed.
+- No secret was entered or copied. The intended account's Auth stack reached
+  `UPDATE_ROLLBACK_COMPLETE`. The follow-up audit found that only Auth had an
+  incident-time update; every consumer stack retained an earlier update
+  timestamp, and the owner-checked SSM deployment lock was absent. No
+  partial-deployment cleanup was required.
 - Root cause: centralized/distributed manifests did not bind the deployment to
   an expected account, and a configured-secret lookup treated missing,
   denied, and wrong-account states as an invitation to create or enter a
@@ -71,10 +75,30 @@ Open evidence and ownership work:
   deployment contract syntheses, targeted Ruff/formatting, shell syntax,
   generated-reference drift, and diff whitespace checks pass.
 - A live negative probe with mismatched account credentials was rejected at
-  the new preflight before any secret/CDK operation. A correct-account,
-  non-interactive read-only diff then validated the existing secret without a
-  prompt and confirmed that the pending deployment removes the retired client
-  from Gateway and orchestrator authorizers after the completed token drain.
+  the new preflight before any secret/CDK operation. A non-interactive
+  read-only diff against the earlier validation account then validated its
+  existing secret without a prompt and confirmed that its pending deployment
+  removes the retired client after the completed token drain. The intended
+  accelerator-development account requires its own Entra credential and live
+  validation.
+- After the operator confirmed the intended account, its Cognito callback was
+  added to the existing Entra app without removing the earlier callback. A
+  dedicated one-year credential was streamed directly into that account's
+  Secrets Manager; a non-disclosing check confirmed one current, non-empty
+  SecretString.
+- The guarded deployment created the Entra provider and updated Auth,
+  Identity, Memory, and Gateway. The orchestrator then required a
+  generation-based physical replacement, which CloudFormation safely refused
+  because Observability still imported its generated Runtime ARN export. The
+  orchestrator rolled back completely, its temporary Runtime was deleted, and
+  the owner-checked deployment lock was released.
+- Root cause: the recovery-only Observability ARN override existed in the CDK
+  application and documentation but the normal deploy orchestrator did not
+  execute the required handoff. The current evidence branch automates the
+  resumable sequence under the deployment lock: pin Observability to the
+  current literal ARN at the current Logs source generation, replace the
+  Runtime at the next generation, then rebind Observability without the
+  override.
 
 ## Decisions
 

@@ -719,7 +719,81 @@ fi
 rm -f "$LOCK_STATE"
 echo "PASS: deployment lock is atomic, owner-checked, and stale state fails closed"
 
-# (z) deployment summaries and workshop exports use the same allow-list as the
+# (z) a generation-based orchestrator replacement first removes
+# Observability's generated export import while retaining the same literal ARN,
+# then rebinds Observability after the runtime deploy. This makes the documented
+# recovery sequence part of every normal build instead of a manual operation.
+eval "$(sed -n '/^prepare_orchestrator_observability_handoff()/,/^}/p;
+                /^rebind_orchestrator_observability()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
+PREFIX="handoff-check"
+AWS_REGION="us-east-1"
+# shellcheck disable=SC2034  # consumed by the function extracted with eval
+ORCHESTRATOR_RUNTIME_GENERATION=2
+ORCHESTRATOR_OBSERVABILITY_HANDOFF=0
+CONTEXT_ARGS=(-c "project=handoff-check" -c "orchestrator_runtime_generation=2")
+HANDOFF_IMPORT_CALLS="$TMP/handoff-import-calls"
+HANDOFF_CDK_ARGS="$TMP/handoff-cdk-args"
+: > "$HANDOFF_IMPORT_CALLS"
+: > "$HANDOFF_CDK_ARGS"
+log_step() { :; }
+log_info() { :; }
+log_error() { printf '%s\n' "$*" >&2; }
+
+# shellcheck disable=SC2329
+aws() {
+    local operation="${1:-} ${2:-}"
+    case "$operation" in
+        "cloudformation describe-stacks")
+            if [[ " $* " == *" OutputKey=='RuntimeId' "* ]]; then
+                printf 'handoff_check_dev_orchestrator-current\n'
+            else
+                printf 'arn:aws:bedrock-agentcore:us-east-1:111111111111:runtime/current\n'
+            fi
+            ;;
+        "cloudformation list-exports")
+            printf 'handoff-check-runtime-orchestrator:ExportsRuntimeArn\n'
+            ;;
+        "cloudformation list-imports")
+            if [ ! -s "$HANDOFF_IMPORT_CALLS" ]; then
+                printf '1' > "$HANDOFF_IMPORT_CALLS"
+                printf 'handoff-check-observability\n'
+            else
+                printf 'None\n'
+            fi
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+# shellcheck disable=SC2329
+npx() { printf '%s\n' "$*" >> "$HANDOFF_CDK_ARGS"; }
+
+prepare_orchestrator_observability_handoff
+[ "$ORCHESTRATOR_OBSERVABILITY_HANDOFF" = "1" ] \
+    || fail "runtime handoff was not marked prepared"
+first_handoff="$(head -1 "$HANDOFF_CDK_ARGS")"
+[[ "$first_handoff" == *"deploy handoff-check-observability --exclusively"* ]] \
+    || fail "handoff did not target Observability exclusively: $first_handoff"
+[[ "$first_handoff" == *"orchestrator_runtime_generation=1"* ]] \
+    || fail "handoff did not retain the current delivery-source generation: $first_handoff"
+[[ "$first_handoff" == *"runtime_observability_arn_override="* ]] \
+    || fail "handoff omitted the literal current runtime ARN: $first_handoff"
+[[ "$first_handoff" != *"orchestrator_runtime_generation=2"* ]] \
+    || fail "target generation leaked into the pre-replacement handoff: $first_handoff"
+
+rebind_orchestrator_observability
+[ "$ORCHESTRATOR_OBSERVABILITY_HANDOFF" = "0" ] \
+    || fail "runtime handoff marker survived the rebind"
+rebind="$(tail -1 "$HANDOFF_CDK_ARGS")"
+[[ "$rebind" == *"orchestrator_runtime_generation=2"* ]] \
+    || fail "Observability did not rebind at the replacement generation: $rebind"
+[[ "$rebind" != *"runtime_observability_arn_override="* ]] \
+    || fail "literal runtime override survived the Observability rebind: $rebind"
+unset -f aws npx
+echo "PASS: orchestrator replacement hands Observability off and back"
+
+# (aa) deployment summaries and workshop exports use the same allow-list as the
 # dashboard. Seed both a reviewed value and a legacy secret-bearing output;
 # only the reviewed field may survive filtering.
 # shellcheck disable=SC2034  # consumed by the function extracted with eval

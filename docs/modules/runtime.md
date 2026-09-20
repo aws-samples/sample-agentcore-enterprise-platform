@@ -151,14 +151,14 @@ orchestrator, not end users.
   surprising if you expected an error.
 - **An invalid OIDC discovery URL can make an existing Runtime unreadable as
   well as un-updatable.** Restore the CloudFormation stack with that Runtime
-  explicitly skipped. Before replacement, deploy Observability once with the
-  current Runtime ARN passed as the recovery-only
-  `runtime_observability_arn_override` CDK context; this removes its import
-  without changing the resolved monitored ARN. Then increment
-  `agents.orchestrator_runtime_generation`, review `deploy.sh design`, and
-  deploy the runtime stack. AgentCore runtime names are create-only, so
-  CloudFormation creates the valid replacement before deleting the broken
-  generation. Immediately deploy Observability again without the override to
-  bind it to the replacement; the generation also gives the immutable Logs
-  DeliverySource a new name and logical ID. Never remove or decrement the
-  generation afterward.
+  explicitly skipped, then increment
+  `agents.orchestrator_runtime_generation` by exactly one and review
+  `deploy.sh design`. A normal build performs the replacement as a resumable
+  three-phase handoff: Observability first retains the current Runtime ARN as
+  a literal (releasing its CloudFormation export import), AgentCore creates
+  the new generation before deleting the old one, and Observability rebinds
+  to the replacement. The generation also gives the immutable Logs
+  DeliverySource a new name and logical ID. The recovery-only
+  `runtime_observability_arn_override` context is internal to this handoff;
+  operators should not set it manually. Never skip, remove, or decrement a
+  generation.
