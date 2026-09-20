@@ -22,6 +22,7 @@ from infra_utils.platform_config import PlatformConfig, to_env
 
 OBS_STACK = (REPO / "stacks" / "observability_stack.py").read_text()
 RUNTIME_STACK = (REPO / "stacks" / "runtime_stack.py").read_text()
+APP = (REPO / "app.py").read_text()
 
 
 # ── config ──
@@ -115,4 +116,13 @@ def test_runtime_name_dimension_matches_runtime_stack():
     assert obs, "observability stack lost the rt_name derivation"
     assert rt, "runtime stack lost the rt_name derivation"
     assert _normalized(obs) == _normalized(rt)
+    assert "orchestrator_runtime_generation" in OBS_STACK
+    assert "runtime_generation=orchestrator_runtime_generation" in APP
     assert "::DEFAULT" in OBS_STACK, "runtime metrics need the endpoint suffix"
+
+
+def test_runtime_replacement_creates_a_new_log_delivery_source():
+    assert 'resource_name == "runtime-orchestrator"' in OBS_STACK
+    assert 'f"Source{safe_name}{delivery_id_suffix}"' in OBS_STACK
+    assert 'f"Delivery{safe_name}{delivery_id_suffix}"' in OBS_STACK
+    assert "delivery_name_suffix" in OBS_STACK

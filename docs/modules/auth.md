@@ -40,15 +40,16 @@ the stack deploys, only what it contains — the contract, the dashboard and
 
 | Resource | Name pattern | Purpose |
 |---|---|---|
-| `AWS::Cognito::UserPool` | `{prefix}-user-pool` | Email sign-in, self-signup enabled, email auto-verify, email-only recovery |
+| `AWS::Cognito::UserPool` | `{prefix}-user-pool` | Email sign-in and recovery. Self-signup is enabled only for the Cognito-only workshop path; enterprise IdP users must enter through the corporate provider |
 | Cognito user pool domain | `{prefix}-{account}` | Hosted UI / OAuth endpoints (`…​.auth.{region}.amazoncognito.com`) |
 | `AWS::Cognito::UserPoolResourceServer` | identifier `agentcore` | Defines the custom scope `agentcore/invoke` |
 | App client | `{prefix}-app-client` | Authorization-code grant, has a secret — humans via the hosted UI |
-| Web client | `{prefix}-web-client` | SRP + implicit grant, no secret — browser SPAs |
-| M2M client | `{prefix}-m2m-client` | `client_credentials` grant, scope `agentcore/invoke` — machines |
+| Web client | `{prefix}-web-client` | Authorization-code grant with PKCE, no secret — browser SPAs |
+| M2M client | `{prefix}-m2m-client-v2` | `client_credentials` grant, scope `agentcore/invoke` — machines. The versioned name allowed the unsafe legacy credential to be replaced without an outage |
 | `UserPoolIdentityProviderOidc` (optional) | `EntraID` / `Okta` / `PingIdentity` | Federated OIDC provider, created only when `idp_type` is not `cognito` |
-| CDK custom resource + singleton Lambda | (CDK-generated) | Backs the `m2m_client_secret` property: calls `DescribeUserPoolClient` so the secret reaches consumers as a CloudFormation token, never literal text |
-| 7 × `AWS::SSM::Parameter` | `/{project}/{environment}/auth/*` | Cross-stack / cross-account discovery (see Interfaces) |
+| CDK custom resource + singleton Lambda | (CDK-generated) | Calls `DescribeUserPoolClient` to obtain the generated M2M secret inside this stack |
+| `AWS::SecretsManager::Secret` | (CloudFormation-generated) | Stores the generated M2M secret so downstream stacks consume a dynamic reference rather than exporting the secret value |
+| 8 × `AWS::SSM::Parameter` | `/{project}/{environment}/auth/*` | Cross-stack / cross-account discovery (see Interfaces) |
 
 ### `mode: direct`
 
@@ -91,12 +92,12 @@ SSM parameters under `/{project}/{environment}/auth/` (part of
 | `issuer-url` | `https://cognito-idp.{region}.amazonaws.com/{pool-id}` | `https://login.microsoftonline.com/{tenant}/v2.0` |
 | `user-pool-id` | The user pool id | — |
 | `app-client-id` | Authorization-code client (humans) | Your Entra app's client id (humans and machines) |
-| `web-client-id` | SRP client (browsers) | — |
+| `web-client-id` | Authorization-code + PKCE client (browser SPAs; Cognito-only mode also permits SRP) | — |
 | `m2m-client-id` | `client_credentials` client (machines) | The same Entra client id |
 | `m2m-scope` | `agentcore/invoke` | `{client_id}/.default` |
-| `m2m-client-secret-name` | — (the secret lives in Cognito) | Secrets Manager **name** of the client secret |
+| `m2m-client-secret-name` | Secrets Manager **name** containing the generated Cognito client secret | Secrets Manager **name** of the IdP client secret |
 
-Stack outputs (no exports): `IssuerUrl`, `DiscoveryUrl`, `AppClientId`,
+Explicit stack outputs: `IssuerUrl`, `DiscoveryUrl`, `AppClientId`,
 `M2MClientId`, `IdPType`, `IdPMode` in both modes; brokered adds
 `UserPoolId`, `UserPoolArn`, `WebClientId`, `DomainUrl`. Consumers wired by
 `app.py`: the gateway and runtime authorizers (issuer + allowed clients, or
@@ -116,12 +117,39 @@ workload accounts in either mode ([Multi-account federation](../MULTI_ACCOUNT.md
   any plaintext secret key outright. The value reaches CloudFormation as a
   `{{resolve:secretsmanager:...}}` dynamic reference — it never appears in
   `cdk.out`, the template, or process arguments.
+- **Cognito M2M credentials stay inside the auth stack.** The generated value
+  is written directly to Secrets Manager; CloudFormation and SSM publish only
+  its secret name. `deploy.sh` upgrades older deployments consumer-first,
+  rotates to the `-v2` client, and deletes the legacy client and stored
+  credential. Its already-issued 60-minute JWTs remain accepted during a
+  65-minute drain; the first later `deploy.sh` run removes the retired client
+  ID from authorizers. In a federated deployment, the script refuses legacy
+  deletion until platform authorizers accept both clients and the operator
+  attests with
+  `FEDERATED_M2M_CONSUMERS_UPDATED=1` that every workload has deployed the
+  replacement identified by the safe `M2MClientIdV2Export` and
+  `M2MClientSecretNameV2Export` outputs. Workloads set
+  `FEDERATED_RETIRED_M2M_CLIENT_ID` during that deployment so their own
+  authorizers also drain previously issued JWTs.
+- **Mutating operations are serialized.** `deploy.sh deploy`, guided workshop
+  deployments, `destroy`, and artifact export claim an atomic SSM lock for the
+  project/environment. This prevents concurrent multi-phase rotations from
+  recreating or deleting clients out of order. Normal exits and interrupts
+  release it. After an uncatchable process termination, confirm that no
+  deployment or CloudFormation operation is still active, then have the
+  platform owner delete
+  `/{project}/{environment}/auth/m2m-deployment-lock`; the script never takes
+  over an existing lock automatically.
 - **The user pool has `removal_policy=DESTROY`**: destroying the stack deletes
   the pool and every user in it. Fine for a workshop; reconsider before
   holding real users.
-- **Self-signup is enabled** — anyone who can reach the hosted UI can register
-  an email address. The password policy is 8+ chars with upper/lower/digits,
-  no symbols required.
+- **Self-signup exists only in the Cognito-only workshop path.** Configuring
+  Entra ID, Okta, or Ping disables signup, removes native Cognito from both
+  user clients, and disables password/SRP authentication so corporate MFA and
+  conditional-access policy cannot be bypassed.
+- The Cognito-only password policy is 8+ chars with upper/lower/digits and no
+  symbol requirement. Treat it as a workshop default, not an enterprise
+  password standard.
 - The runtime and gateway authorizers validate signature, issuer, and
   **client id (brokered) or audience (direct) — not scopes**. A user token
   without `agentcore/invoke` is accepted; enforce scopes in the agent if you

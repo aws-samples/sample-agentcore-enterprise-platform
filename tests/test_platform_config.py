@@ -14,8 +14,10 @@ from pydantic import ValidationError
 from infra_utils.platform_config import (
     AGENT_PATTERNS,
     PlatformConfig,
+    apply_environment_overrides,
     load_platform_config,
     resolve_region,
+    to_env,
 )
 
 REPO = Path(__file__).resolve().parents[1]
@@ -155,8 +157,45 @@ def test_defaults_are_a_valid_deployment():
     config = PlatformConfig.model_validate({})
     assert config.deployment.strategy == "centralized"
     assert config.agents.pattern == "orchestrator"
+    assert config.agents.orchestrator_runtime_generation == 1
     assert config.security.networking is False
     assert config.observability.transaction_search is True
+
+
+def test_runtime_generation_is_durable_and_bounded():
+    config = PlatformConfig.model_validate(
+        {"agents": {"orchestrator_runtime_generation": 2}}
+    )
+    assert to_env(config)["ORCHESTRATOR_RUNTIME_GENERATION"] == "2"
+    with pytest.raises(ValidationError):
+        PlatformConfig.model_validate(
+            {"agents": {"orchestrator_runtime_generation": 0}}
+        )
+
+
+def test_effective_design_config_applies_identity_environment_overrides():
+    config = PlatformConfig.model_validate({})
+    effective = apply_environment_overrides(
+        config,
+        {
+            "IDP_TYPE": "entra_id",
+            "IDP_MODE": "brokered",
+            "IDP_TENANT_ID": "11111111-2222-3333-4444-555555555555",
+            "IDP_CLIENT_ID": "client-from-environment",
+            "IDP_CLIENT_SECRET_NAME": "agentcore/idp-client-secret",
+            "ORCHESTRATOR_RUNTIME_GENERATION": "2",
+        },
+    )
+    assert effective.identity.idp == "entra_id"
+    assert effective.identity.client_id == "client-from-environment"
+    assert effective.agents.orchestrator_runtime_generation == 2
+
+
+def test_effective_design_config_rejects_non_boolean_environment_flag():
+    with pytest.raises(ValueError, match="ENABLE_A2A must be true or false"):
+        apply_environment_overrides(
+            PlatformConfig.model_validate({}), {"ENABLE_A2A": "sometimes"}
+        )
 
 
 def test_secrets_never_belong_in_the_file():

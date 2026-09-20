@@ -58,6 +58,7 @@ runtime proxies AG-UI's SSE events as plain HTTP), `a2a_agent` → `A2A`,
 | platform.yaml | Env var / context flag | Default | Effect |
 |---|---|---|---|
 | `agents.pattern` | `AGENT_PATTERN` / `agent_pattern` | `orchestrator` | Which Dockerfile the orchestrator builds |
+| `agents.orchestrator_runtime_generation` | `ORCHESTRATOR_RUNTIME_GENERATION` / `orchestrator_runtime_generation` | `1` | Controlled create-before-delete replacement of only the orchestrator. Increment only when it is unrecoverable; keep the new value in the manifest for every later deploy |
 | `agents.a2a` | `ENABLE_A2A` / `enable_a2a` | schema `false`; legacy flag default `true` (deliberately different — see `app.py`) | Deploy the two A2A sub-agent stacks |
 | `agents.model_id` | `MODEL_ID` / `model_id` | empty | When set, injected into **every** runtime; when empty, `MODEL_ID` is not injected and each container uses its baked-in `DEFAULT_MODEL_ID` |
 | `agents.allowed_models` | `ALLOWED_MODELS` / `allowed_models` | empty | Scopes the role's Bedrock statement; empty keeps the wildcard |
@@ -148,3 +149,16 @@ orchestrator, not end users.
 - **Missing source directory synthesizes a placeholder image** (echo-only
   Dockerfile) rather than failing — useful for synth without agent code,
   surprising if you expected an error.
+- **An invalid OIDC discovery URL can make an existing Runtime unreadable as
+  well as un-updatable.** Restore the CloudFormation stack with that Runtime
+  explicitly skipped. Before replacement, deploy Observability once with the
+  current Runtime ARN passed as the recovery-only
+  `runtime_observability_arn_override` CDK context; this removes its import
+  without changing the resolved monitored ARN. Then increment
+  `agents.orchestrator_runtime_generation`, review `deploy.sh design`, and
+  deploy the runtime stack. AgentCore runtime names are create-only, so
+  CloudFormation creates the valid replacement before deleting the broken
+  generation. Immediately deploy Observability again without the override to
+  bind it to the replacement; the generation also gives the immutable Logs
+  DeliverySource a new name and logical ID. Never remove or decrement the
+  generation afterward.

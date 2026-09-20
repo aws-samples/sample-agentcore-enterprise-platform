@@ -9,6 +9,10 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 log_info() { :; }
 
+grep -q '^export AWS_PAGER=""$' "$SCRIPT_DIR/deploy.sh" \
+    || fail "deploy.sh must disable the interactive AWS CLI pager"
+echo "PASS: deploy output cannot be trapped by the AWS CLI pager"
+
 # Sandbox: pull ONLY the config vars + functions out of deploy.sh (no main flow).
 # shellcheck disable=SC2034  # used by the eval'd CONFIG_FILE= line below
 PROJECT_DIR="$TMP"
@@ -530,7 +534,10 @@ echo "PASS: design materializes + plans without deploying, refuses placeholders;
 # Source-order assertion: the switch runs after the footprint confirmation
 # and before the --all deploy; it excludes exactly the auth stack; and the
 # mode reaches CDK as context.
-switch_line=$(first_call_line switch_issuer_consumers_first || true)
+# There is also a targeted-auth call in deploy_stacks; the full-deploy call is
+# the last call site and is the one constrained by confirm_footprint/--all.
+switch_line=$(grep -nE '^[^#]*\bswitch_issuer_consumers_first\b' "$SCRIPT_DIR/deploy.sh" \
+    | grep -v 'switch_issuer_consumers_first()' | tail -1 | cut -d: -f1 || true)
 all_line=$(grep -n 'npx cdk deploy --all' "$SCRIPT_DIR/deploy.sh" | head -1 | cut -d: -f1 || true)
 confirm_line=$(grep -n 'confirm_footprint deploy' "$SCRIPT_DIR/deploy.sh" | head -1 | cut -d: -f1 || true)
 [ -n "$switch_line" ] && [ -n "$all_line" ] && [ -n "$confirm_line" ] \
@@ -542,4 +549,144 @@ grep -q -- 'grep -v -- "-auth\$"' "$SCRIPT_DIR/deploy.sh" \
 grep -q -- '-c "idp_mode=\${IDP_MODE:-brokered}"' "$SCRIPT_DIR/deploy.sh" \
     || fail "IDP_MODE is not passed to CDK as idp_mode context"
 echo "PASS: brokered → direct switch deploys auth consumers first; idp_mode reaches CDK"
+
+# (w) the one-time compatibility deploy retains a secret-bearing output long
+# enough to move Identity away from it. CDK prints outputs after deployment;
+# prove the stream filter removes a seeded value before it reaches logs.
+eval "$(sed -n '/^redact_legacy_m2m_output()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
+seeded_secret="seeded-secret-that-must-not-reach-logs"
+filtered="$(printf '%s\n' \
+    "stack.ExportsOutputFnGetAttUserPoolM2MClientDescribeCognitoUserPoolClientABCUserPoolClientClientSecretXYZ = $seeded_secret" \
+    | redact_legacy_m2m_output)"
+! grep -q "$seeded_secret" <<<"$filtered" \
+    || fail "legacy M2M output redaction exposed the seeded secret"
+grep -q '\[REDACTED\]' <<<"$filtered" \
+    || fail "legacy M2M output redaction did not mark the filtered value"
+echo "PASS: legacy M2M compatibility output is redacted from deployment logs"
+
+# (x) rotation checkpoints are optional only when SSM confirms they do not
+# exist. An SSM/API failure must stop the deployment rather than silently
+# restarting a credential rotation from an inconsistent phase.
+# shellcheck disable=SC2329
+log_error() {
+    :
+}
+eval "$(sed -n '/^read_optional_rotation_parameter()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
+
+# shellcheck disable=SC2329
+aws() {
+    printf 'None\n'
+}
+rotation_value="$(read_optional_rotation_parameter '/test/missing')" \
+    || fail "a confirmed-missing rotation checkpoint should be optional"
+[ -z "$rotation_value" ] \
+    || fail "a confirmed-missing rotation checkpoint should return an empty value"
+
+# shellcheck disable=SC2329
+aws() {
+    return 42
+}
+if read_optional_rotation_parameter '/test/unavailable' >/dev/null 2>&1; then
+    fail "an SSM failure must not be treated as a missing rotation checkpoint"
+fi
+echo "PASS: rotation checkpoint reads distinguish missing values from SSM failures"
+
+# (y) mutating deployments use an atomic, owner-checked SSM lock. Exercise the
+# extracted implementation with a file-backed AWS stub: one owner acquires and
+# releases, and another owner cannot take over any existing lock implicitly.
+eval "$(sed -n '/^release_m2m_deployment_lock()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
+eval "$(sed -n '/^acquire_m2m_deployment_lock()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
+LOCK_STATE="$TMP/m2m-deployment-lock"
+PROJECT_NAME="lock-check"
+# shellcheck disable=SC2034  # consumed by the function extracted with eval
+ENVIRONMENT="dev"
+AWS_REGION="us-east-1"
+# shellcheck disable=SC2034  # consumed by the function extracted with eval
+ACCOUNT_ID="111111111111"
+M2M_DEPLOYMENT_LOCK_VALUE=""
+M2M_DEPLOYMENT_LOCK_PARAMETER=""
+
+# shellcheck disable=SC2329
+aws() {
+    local operation="${1:-} ${2:-}" arg value=""
+    case "$operation" in
+        "ssm get-parameters")
+            if [ -f "$LOCK_STATE" ]; then
+                cat "$LOCK_STATE"
+            else
+                printf 'None\n'
+            fi
+            ;;
+        "ssm put-parameter")
+            [ ! -f "$LOCK_STATE" ] || return 1
+            while [ "$#" -gt 0 ]; do
+                arg="$1"; shift
+                if [ "$arg" = "--value" ]; then value="${1:-}"; break; fi
+            done
+            printf '%s' "$value" > "$LOCK_STATE"
+            ;;
+        "ssm delete-parameter")
+            rm -f "$LOCK_STATE"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+acquire_m2m_deployment_lock
+[ -s "$LOCK_STATE" ] || fail "deployment lock was not persisted"
+owner="$M2M_DEPLOYMENT_LOCK_VALUE"
+if (
+    M2M_DEPLOYMENT_LOCK_VALUE=""
+    # shellcheck disable=SC2034  # consumed by the function extracted with eval
+    M2M_DEPLOYMENT_LOCK_PARAMETER=""
+    acquire_m2m_deployment_lock
+) >/dev/null 2>&1; then
+    fail "a concurrent deployment acquired an active lock"
+fi
+[ "$(cat "$LOCK_STATE")" = "$owner" ] \
+    || fail "a rejected concurrent deployment changed lock ownership"
+release_m2m_deployment_lock
+[ ! -e "$LOCK_STATE" ] || fail "deployment lock was not released by its owner"
+
+printf 'owner-requiring-review\n' > "$LOCK_STATE"
+if (
+    M2M_DEPLOYMENT_LOCK_VALUE=""
+    # shellcheck disable=SC2034  # consumed by the function extracted with eval
+    M2M_DEPLOYMENT_LOCK_PARAMETER=""
+    acquire_m2m_deployment_lock
+) >/dev/null 2>&1; then
+    fail "an existing deployment lock was taken over without owner review"
+fi
+[ "$(cat "$LOCK_STATE")" = "owner-requiring-review" ] \
+    || fail "a rejected lock takeover changed the existing owner"
+rm -f "$LOCK_STATE"
+echo "PASS: deployment lock is atomic, owner-checked, and stale state fails closed"
+
+# (z) deployment summaries and workshop exports use the same allow-list as the
+# dashboard. Seed both a reviewed value and a legacy secret-bearing output;
+# only the reviewed field may survive filtering.
+# shellcheck disable=SC2034  # consumed by the function extracted with eval
+PROJECT_DIR="$SCRIPT_DIR/.."
+eval "$(sed -n '/^sanitize_public_metadata()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
+export_seed="legacy-generated-secret-must-not-export"
+safe_export="$(printf '%s' \
+    "[{\"OutputKey\":\"GatewayUrl\",\"OutputValue\":\"https://safe.example\"},{\"OutputKey\":\"ExportsOutputFnGetAttUserPoolM2MClientClientSecret\",\"OutputValue\":\"$export_seed\"}]" \
+    | sanitize_public_metadata stack-export gateway)"
+grep -q 'https://safe.example' <<<"$safe_export" \
+    || fail "reviewed stack output was removed from the safe export"
+! grep -q "$export_seed" <<<"$safe_export" \
+    || fail "legacy M2M secret survived the safe export filter"
+handoff_export="$(printf '%s' \
+    '[{"OutputKey":"M2MClientIdV2Export","OutputValue":"replacement-client"},{"OutputKey":"M2MClientSecretNameV2Export","OutputValue":"replacement-secret-name"}]' \
+    | sanitize_public_metadata stack-export auth)"
+grep -q 'M2MClientIdV2Export' <<<"$handoff_export" \
+    || fail "federated export removed the replacement client ID"
+grep -q 'M2MClientSecretNameV2Export' <<<"$handoff_export" \
+    || fail "federated export removed the replacement secret-name reference"
+grep -q 'workshop-outputs-\*\.json' "$SCRIPT_DIR/../.gitignore" \
+    || fail "account-specific workshop exports are not gitignored"
+echo "PASS: summaries/exports exclude unknown outputs and local exports are ignored"
+
 echo "OK: all deploy-config checks passed"

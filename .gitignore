@@ -36,7 +36,11 @@ override.tf.json
 # Dashboard monitor output (account-specific, auto-generated)
 dashboard/public/status.json
 
+# Local, account-specific export snapshots
+workshop-outputs-*.json
+
 .vscode/
+.playwright-cli/
 
 # Kiro session steering (local-only, must never ship)
 .kiro/

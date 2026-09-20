@@ -98,8 +98,9 @@ aws ssm get-parameter --name /<project>/<env>/gateway/url --query Parameter.Valu
 ```
 
 **2. Platform team hands the workload team** the four federation values plus
-the M2M client secret through a secure channel (the secret comes from
-`aws cognito-idp describe-user-pool-client`). The workload team stores it:
+the M2M client secret through a secure channel. The secret is read from the
+Secrets Manager name published at `/<project>/<env>/auth/m2m-client-secret-name`;
+it is never a CloudFormation output. The workload team stores it:
 
 ```bash
 aws secretsmanager create-secret --name agentcore/platform-m2m \
@@ -122,8 +123,31 @@ a message naming both — the config-file version of "wrong account".
 - The workload agent gets exactly the tools the platform gateway exposes —
   tool governance (Cedar, egress filter, target approval) is enforced in one
   place, and workload teams cannot widen it.
-- Rotating the M2M secret is a platform-side Cognito action plus a
-  workload-side Secrets Manager update; no redeploys.
+- Federated M2M client rotation is coordinated because each workload has its
+  own credential provider and local secret copy. The first platform build
+  creates the replacement, updates platform authorizers to accept both client
+  IDs, and then stops before deleting the old client. The safe
+  `M2MClientIdV2Export` and `M2MClientSecretNameV2Export` auth-stack outputs
+  identify the replacement; retrieve the value only from that named secret and
+  transfer it through the team's approved secret channel. After the platform
+  preparation stops, `./scripts/deploy.sh export` produces a mode-`0600`,
+  Git-ignored snapshot containing those two references but never the secret
+  value.
+
+  For each workload, preserve the previous `m2m_client_id`, update the
+  federation client ID and local secret, then deploy while allowing already
+  issued old-client JWTs to drain:
+
+  ```bash
+  FEDERATED_RETIRED_M2M_CLIENT_ID=<previous-client-id> \
+    AWS_PROFILE=workload ./scripts/deploy.sh deploy
+  ```
+
+  Only after every workload succeeds, rerun the platform build with
+  `FEDERATED_M2M_CONSUMERS_UPDATED=1`; this acknowledgement permits old-client
+  deletion and starts the 65-minute drain. After that drain, deploy each
+  workload once without `FEDERATED_RETIRED_M2M_CLIENT_ID` to remove the retired
+  ID from its runtime authorizers.
 - The platform account sees gateway-side telemetry for all teams;
   workload accounts see their own runtime/memory telemetry. Neither sees the
   other's logs.

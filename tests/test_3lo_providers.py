@@ -36,6 +36,17 @@ def test_secrets_render_as_dynamic_references():
     assert "unsafe_unwrap" in IDENTITY_SRC
 
 
+def test_gateway_secret_crosses_stacks_by_name_only():
+    assert "gateway_m2m_client_secret_name" in IDENTITY_SRC
+    # The value form exists only as an optional, deploy-script-controlled
+    # compatibility bridge for one staged upgrade.
+    assert "gateway_m2m_client_secret: cdk.SecretValue | None = None" in IDENTITY_SRC
+    assert "if gateway_m2m_client_secret is not None" in IDENTITY_SRC
+    assert "auth_stack.m2m_client_secret_name" in APP_SRC
+    assert "auth_stack.m2m_client_secret\n" not in APP_SRC
+    assert "retain_legacy_m2m_export" in APP_SRC
+
+
 def test_no_raw_dict_provider_config():
     # The raw-dict key that silently dropped the whole config (quoted = used
     # as a dict key; the comments explaining the defect may name it bare).

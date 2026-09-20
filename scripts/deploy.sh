@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# deploy.sh is an orchestrator, not an interactive AWS CLI session. A caller's
+# pager setting can otherwise trap the deployment summary in repeated `less`
+# screens (observed during the live G0 migration).
+export AWS_PAGER=""
+
 # ── Bash version check (must run before any bash-4 syntax like `declare -A`) ──
 if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
     echo "ERROR: This script requires bash 4 or newer (you are running bash ${BASH_VERSION})." >&2
@@ -60,7 +65,8 @@ log_explain(){ echo -e "${YELLOW}📖${NC} $*"; }
 # declarative Pydantic/YAML config task on the board.
 CONFIG_FILE="$PROJECT_DIR/workshop.env"
 CONFIG_KEYS=(AWS_REGION IDP_TYPE IDP_MODE IDP_TENANT_ID IDP_CLIENT_ID IDP_ISSUER_URL
-             MODEL_ID ORG_ID PROJECT_NAME ENVIRONMENT AGENT_PATTERN)
+             MODEL_ID ORG_ID PROJECT_NAME ENVIRONMENT AGENT_PATTERN
+             ORCHESTRATOR_RUNTIME_GENERATION)
 
 save_config() {
     # CI runs (NON_INTERACTIVE=1) never write the file.
@@ -621,6 +627,12 @@ setup_venv() {
 # "${CONTEXT_ARGS[@]}") keeps values containing spaces intact — a single
 # string expanded unquoted would word-split them.
 CONTEXT_ARGS=()
+# During a credential-rotation drain, normal deploys must continue accepting
+# already-issued legacy JWTs without recreating the deleted client. The
+# rotation function populates this with a non-secret retired client ID.
+M2M_ROTATION_CONTEXT_ARGS=()
+M2M_DEPLOYMENT_LOCK_VALUE=""
+M2M_DEPLOYMENT_LOCK_PARAMETER=""
 build_context_args() {
     CONTEXT_ARGS=()
     CONTEXT_ARGS+=(-c "project=${PROJECT_NAME}")
@@ -628,6 +640,7 @@ build_context_args() {
     CONTEXT_ARGS+=(-c "region=${AWS_REGION:-us-east-1}")
     CONTEXT_ARGS+=(-c "idp_type=${IDP_TYPE:-cognito}")
     CONTEXT_ARGS+=(-c "idp_mode=${IDP_MODE:-brokered}")
+    CONTEXT_ARGS+=(-c "orchestrator_runtime_generation=${ORCHESTRATOR_RUNTIME_GENERATION:-1}")
 
     # IdP config — the client secret itself is never passed; only the name of
     # the Secrets Manager secret set by upsert_idp_secret (see above).
@@ -635,6 +648,8 @@ build_context_args() {
     [ -n "${IDP_CLIENT_ID:-}" ]          && CONTEXT_ARGS+=(-c "idp_client_id=${IDP_CLIENT_ID}")
     [ -n "${IDP_CLIENT_SECRET_NAME:-}" ] && CONTEXT_ARGS+=(-c "idp_client_secret_name=${IDP_CLIENT_SECRET_NAME}")
     [ -n "${IDP_ISSUER_URL:-}" ]         && CONTEXT_ARGS+=(-c "idp_issuer_url=${IDP_ISSUER_URL}")
+    [ -n "${FEDERATED_RETIRED_M2M_CLIENT_ID:-}" ] \
+        && CONTEXT_ARGS+=(-c "retired_m2m_client_id=${FEDERATED_RETIRED_M2M_CLIENT_ID}")
 
     # 3LO provider config — same rule: secret NAMES only (upsert_3lo_secrets).
     [ -n "${GOOGLE_CLIENT_ID:-}" ]          && CONTEXT_ARGS+=(-c "google_client_id=${GOOGLE_CLIENT_ID}")
@@ -787,6 +802,18 @@ sweep_leftovers() {
             done
         fi
     fi
+
+    # Rotation checkpoints are intentionally outside CloudFormation so they
+    # survive a multi-run token drain. A full destroy must remove them or a
+    # later fresh deployment could be mistaken for an in-progress upgrade.
+    aws ssm delete-parameters \
+        --names \
+        "/${PROJECT_NAME}/${ENVIRONMENT}/auth/m2m-retired-client-id" \
+        "/${PROJECT_NAME}/${ENVIRONMENT}/auth/m2m-retired-not-before" \
+        --region "$AWS_REGION" >/dev/null 2>&1 || {
+        log_error "Could not remove M2M rotation checkpoints after destroy."
+        return 1
+    }
     return 0
 }
 
@@ -828,17 +855,410 @@ switch_issuer_consumers_first() {
     }
 }
 
+redact_legacy_m2m_output() {
+    # The compatibility deployment must briefly retain the old CloudFormation
+    # output, and CDK prints stack outputs after a successful deploy. Never let
+    # that credential value reach a terminal transcript or CI log.
+    sed -E \
+        's/(UserPoolM2MClientDescribeCognitoUserPoolClient[^=]*ClientSecret[^=]*=)[[:space:]]*.*/\1 [REDACTED]/'
+}
+
+read_optional_rotation_parameter() {
+    # get-parameters returns success plus an empty Parameters list when a name
+    # does not exist. Any AWS/API failure remains non-zero and must stop the
+    # rotation; treating AccessDenied or a network error as "no checkpoint"
+    # could prune a still-valid client id during an active token drain.
+    local parameter_name="$1" value
+    value=$(aws ssm get-parameters \
+        --names "$parameter_name" \
+        --region "$AWS_REGION" \
+        --query "Parameters[0].Value" \
+        --output text) || {
+        log_error "Could not read M2M rotation checkpoint: $parameter_name"
+        return 1
+    }
+    if [ "$value" != "None" ]; then
+        printf '%s' "$value"
+    fi
+    return 0
+}
+
+release_m2m_deployment_lock() {
+    [ -n "$M2M_DEPLOYMENT_LOCK_VALUE" ] || return 0
+    local current
+    current=$(read_optional_rotation_parameter "$M2M_DEPLOYMENT_LOCK_PARAMETER") || {
+        log_error "Could not verify ownership of the deployment lock."
+        return 1
+    }
+    if [ "$current" != "$M2M_DEPLOYMENT_LOCK_VALUE" ]; then
+        log_error "Deployment lock ownership changed unexpectedly; refusing to remove it."
+        return 1
+    fi
+    aws ssm delete-parameter \
+        --name "$M2M_DEPLOYMENT_LOCK_PARAMETER" \
+        --region "$AWS_REGION" >/dev/null || {
+        log_error "Could not release the deployment lock."
+        return 1
+    }
+    M2M_DEPLOYMENT_LOCK_VALUE=""
+    M2M_DEPLOYMENT_LOCK_PARAMETER=""
+    trap - EXIT
+}
+
+release_m2m_deployment_lock_on_exit() {
+    local exit_code=$?
+    trap - EXIT
+    if ! release_m2m_deployment_lock; then
+        [ "$exit_code" -ne 0 ] || exit_code=1
+    fi
+    exit "$exit_code"
+}
+
+acquire_m2m_deployment_lock() {
+    # Every mutating CDK operation for one project/environment shares this
+    # atomic SSM lock. Without it, two rotations can both synthesize the fresh
+    # path and recreate/delete clients between phases. --no-overwrite elects
+    # exactly one winner. A lock left by SIGKILL fails closed: SSM has no
+    # compare-and-swap delete, so automatic "stale" takeover would be racy.
+    [ -z "$M2M_DEPLOYMENT_LOCK_VALUE" ] || return 0
+    local existing now
+    M2M_DEPLOYMENT_LOCK_PARAMETER="/${PROJECT_NAME}/${ENVIRONMENT}/auth/m2m-deployment-lock"
+    existing=$(read_optional_rotation_parameter "$M2M_DEPLOYMENT_LOCK_PARAMETER") || {
+        exit 1
+    }
+    if [ -n "$existing" ]; then
+        log_error "Another deployment holds the ${PROJECT_NAME}/${ENVIRONMENT} lock."
+        log_error "If no deployment is running, an owner must review and delete:"
+        log_error "  $M2M_DEPLOYMENT_LOCK_PARAMETER"
+        exit 1
+    fi
+    now=$(date +%s)
+    M2M_DEPLOYMENT_LOCK_VALUE="${ACCOUNT_ID:-unknown}:$$:${RANDOM:-0}:${now}"
+    if ! aws ssm put-parameter \
+        --name "$M2M_DEPLOYMENT_LOCK_PARAMETER" \
+        --type String \
+        --value "$M2M_DEPLOYMENT_LOCK_VALUE" \
+        --no-overwrite \
+        --region "$AWS_REGION" >/dev/null 2>&1; then
+        M2M_DEPLOYMENT_LOCK_VALUE=""
+        log_error "Could not acquire the deployment lock; another deployment may have started."
+        exit 1
+    fi
+    trap release_m2m_deployment_lock_on_exit EXIT
+}
+
+migrate_legacy_m2m_secret_export() {
+    # Releases before the G0 hardening passed Cognito's generated M2M client
+    # secret directly from auth to identity. CDK represented that as a
+    # CloudFormation export, so auth cannot simply remove it while the live
+    # identity stack still imports it.
+    #
+    # Upgrade in three safe, resumable steps:
+    #   1. Auth adds the Secrets Manager copy while retaining the old export.
+    #   2. Identity switches to the safe secret-name reference.
+    #   3. Auth removes the now-unused secret export.
+    # A failed step leaves the previous working credential path intact; rerun
+    # the same command after fixing the reported CloudFormation error.
+    # Direct mode has no Cognito M2M client. Its issuer-switch path updates
+    # consumers before auth and therefore needs no secret-export migration.
+    [ "${IDP_MODE:-brokered}" = "brokered" ] || return 0
+    local legacy_count replacement_export_count auth_stack_count
+    legacy_count=$(aws cloudformation describe-stacks \
+        --stack-name "${PREFIX}-auth" \
+        --region "$AWS_REGION" \
+        --query "length(Stacks[0].Outputs[?contains(OutputKey, 'UserPoolM2MClientDescribeCognitoUserPoolClient') && contains(OutputKey, 'ClientSecret')])" \
+        --output text 2>/dev/null) || {
+        auth_stack_count=$(aws cloudformation list-stacks \
+            --region "$AWS_REGION" \
+            --query "length(StackSummaries[?StackName=='${PREFIX}-auth' && StackStatus!='DELETE_COMPLETE'])" \
+            --output text) || {
+            log_error "Could not determine whether the auth stack exists."
+            exit 1
+        }
+        [ "$auth_stack_count" = "0" ] && return 0
+        log_error "The auth stack exists but its M2M migration state could not be read."
+        exit 1
+    }
+    replacement_export_count=$(aws cloudformation describe-stacks \
+        --stack-name "${PREFIX}-auth" \
+        --region "$AWS_REGION" \
+        --query "length(Stacks[0].Outputs[?ExportName=='${PREFIX}:auth:m2m-client-id-v2' || ExportName=='${PREFIX}:auth:m2m-client-secret-name-v2'])" \
+        --output text 2>/dev/null) || {
+        log_error "The auth stack exists but its V2 M2M exports could not be read."
+        exit 1
+    }
+    # A partial retry may already have moved Identity off the unsafe export
+    # while Auth later rolled back to its pre-V2 shape. The migration is
+    # complete only when the secret-bearing export is gone AND both safe V2
+    # handoff exports exist. Otherwise rerun all three idempotent phases.
+    if [ "$legacy_count" = "0" ] && [ "$replacement_export_count" = "2" ]; then
+        return 0
+    fi
+
+    log_info "Migrating the legacy M2M secret export to Secrets Manager"
+    log_step "Migration 1/3: create the managed secret and retain the live export"
+    JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+        npx cdk deploy "${PREFIX}-auth" --exclusively --require-approval never \
+        "${CONTEXT_ARGS[@]}" -c retain_legacy_m2m_export=true 2>&1 \
+        | redact_legacy_m2m_output || {
+        log_error "Could not prepare the auth stack for M2M secret migration."
+        exit 1
+    }
+
+    log_step "Migration 2/3: switch the identity provider to the secret reference"
+    JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+        npx cdk deploy "${PREFIX}-identity" --exclusively --require-approval never \
+        "${CONTEXT_ARGS[@]}" -c retain_legacy_m2m_client=true 2>&1 || {
+        log_error "Could not move the identity stack to the M2M secret reference."
+        exit 1
+    }
+
+    log_step "Migration 3/3: remove the unused secret-bearing export"
+    JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+        npx cdk deploy "${PREFIX}-auth" --exclusively --require-approval never \
+        "${CONTEXT_ARGS[@]}" -c retain_legacy_m2m_client=true 2>&1 || {
+        log_error "Identity is using Secrets Manager, but auth could not remove the legacy export."
+        exit 1
+    }
+    log_info "Legacy M2M secret export removed"
+}
+
+rotate_legacy_m2m_client() {
+    # The credential that crossed the legacy output boundary must be
+    # invalidated, not merely moved. New minting stops immediately after the
+    # interface moves, but already-issued JWTs remain valid for 60 minutes.
+    # Keep their non-secret client id in authorizer allow-lists for a 65-minute
+    # drain, persisted in SSM so retries and later deploys resume safely.
+    local legacy_client_id retired_client_id not_before now remaining
+    local has_checkpoint=0
+    local authorizer_consumers
+    local drain_seconds=3900
+    local marker_root="/${PROJECT_NAME}/${ENVIRONMENT}/auth"
+    local retired_id_parameter="${marker_root}/m2m-retired-client-id"
+    local not_before_parameter="${marker_root}/m2m-retired-not-before"
+
+    if [ "${IDP_MODE:-brokered}" != "brokered" ]; then
+        # Switching away from Cognito invalidates its issuer as a whole. A
+        # stale checkpoint must not poison a later direct → brokered switch.
+        aws ssm delete-parameters \
+            --names "$retired_id_parameter" "$not_before_parameter" \
+            --region "$AWS_REGION" >/dev/null 2>&1 || {
+            log_error "Could not clear M2M rotation checkpoints for direct mode."
+            exit 1
+        }
+        M2M_ROTATION_CONTEXT_ARGS=()
+        return 0
+    fi
+
+    legacy_client_id=$(aws cloudformation describe-stacks \
+        --stack-name "${PREFIX}-auth" \
+        --region "$AWS_REGION" \
+        --query "Stacks[0].Outputs[?contains(OutputKey, 'ExportsOutputRefUserPoolM2MClient') && !contains(OutputKey, 'UserPoolM2MClientV2')].OutputValue | [0]" \
+        --output text 2>/dev/null) || {
+        local auth_stack_count
+        auth_stack_count=$(aws cloudformation list-stacks \
+            --region "$AWS_REGION" \
+            --query "length(StackSummaries[?StackName=='${PREFIX}-auth' && StackStatus!='DELETE_COMPLETE'])" \
+            --output text) || {
+            log_error "Could not determine whether the auth stack exists."
+            exit 1
+        }
+        if [ "$auth_stack_count" != "0" ]; then
+            log_error "The auth stack exists but its rotation state could not be read."
+            exit 1
+        fi
+        legacy_client_id=""
+    }
+    [ "$legacy_client_id" != "None" ] || legacy_client_id=""
+    retired_client_id=$(read_optional_rotation_parameter "$retired_id_parameter") || {
+        exit 1
+    }
+    [ -z "$retired_client_id" ] || has_checkpoint=1
+
+    [ -n "$legacy_client_id" ] || [ -n "$retired_client_id" ] || return 0
+    [ -n "$retired_client_id" ] || retired_client_id="$legacy_client_id"
+
+    authorizer_consumers=$(JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+        npx cdk ls "${CONTEXT_ARGS[@]}" \
+        -c "retired_m2m_client_id=${retired_client_id}" 2>/dev/null \
+        | grep -E -- '-(gateway|runtime-(orchestrator|code-agent|research-agent))$' \
+        | tr '\n' ' ')
+    [ -n "$authorizer_consumers" ] || {
+        log_error "Could not resolve the M2M authorizer consumers."
+        exit 1
+    }
+
+    if [ "${DEPLOYMENT_STRATEGY:-centralized}" = "federated" ] \
+        && [ "$has_checkpoint" = "0" ] \
+        && [ "${FEDERATED_M2M_CONSUMERS_UPDATED:-0}" != "1" ]; then
+        log_step "Federated rotation preparation: allow both clients on platform authorizers"
+        # shellcheck disable=SC2086  # stack list is space-separated by design
+        JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+            npx cdk deploy $authorizer_consumers --exclusively \
+            --require-approval never "${CONTEXT_ARGS[@]}" \
+            -c "retired_m2m_client_id=${retired_client_id}" 2>&1 || {
+            log_error "Could not prepare platform authorizers for federated rotation."
+            exit 1
+        }
+        log_error "Federated M2M rotation now requires a coordinated workload update."
+        log_error "Read the safe M2MClientIdV2Export and M2MClientSecretNameV2Export"
+        log_error "auth-stack outputs. In every workload, preserve the previous client ID"
+        log_error "as FEDERATED_RETIRED_M2M_CLIENT_ID, deploy the replacement, then rerun"
+        log_error "this platform build with FEDERATED_M2M_CONSUMERS_UPDATED=1."
+        exit 1
+    fi
+
+    # A marker means phases 1-4 completed on an earlier run. If the old client
+    # still exists, deletion failed: first restore both allow-list entries,
+    # then retry deletion. If it is gone, continue or wait for token drain.
+    if [ "$has_checkpoint" = "1" ]; then
+        if [ -n "$legacy_client_id" ]; then
+            log_step "Rotation recovery: accept both clients before retrying deletion"
+            # shellcheck disable=SC2086  # stack list is space-separated by design
+            JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+                npx cdk deploy $authorizer_consumers --exclusively \
+                --require-approval never "${CONTEXT_ARGS[@]}" \
+                -c "retired_m2m_client_id=${retired_client_id}" 2>&1 || {
+                log_error "Could not restore the M2M token drain allow-list."
+                exit 1
+            }
+            JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+                npx cdk deploy "${PREFIX}-auth" --exclusively \
+                --require-approval never "${CONTEXT_ARGS[@]}" 2>&1 || {
+                log_error "Could not delete the invalidated M2M client."
+                exit 1
+            }
+            not_before=""
+        else
+            not_before=$(read_optional_rotation_parameter "$not_before_parameter") || {
+                exit 1
+            }
+        fi
+        if ! [[ "$not_before" =~ ^[0-9]+$ ]]; then
+            now=$(date +%s)
+            not_before=$((now + drain_seconds))
+            aws ssm put-parameter --name "$not_before_parameter" \
+                --type String --value "$not_before" --overwrite \
+                --region "$AWS_REGION" >/dev/null || {
+                log_error "Could not persist the M2M token-drain deadline."
+                exit 1
+            }
+        fi
+        now=$(date +%s)
+        if [ "$now" -lt "$not_before" ]; then
+            remaining=$((not_before - now))
+            M2M_ROTATION_CONTEXT_ARGS=(
+                -c "retired_m2m_client_id=${retired_client_id}"
+            )
+            log_info "Legacy M2M client is disabled; issued tokens are draining."
+            log_info "Cleanup resumes on the first deploy after ${remaining} seconds."
+            return 0
+        fi
+
+        log_step "Rotation 6/6: remove the drained client id from authorizers"
+        # shellcheck disable=SC2086  # stack list is space-separated by design
+        JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+            npx cdk deploy $authorizer_consumers --exclusively \
+            --require-approval never "${CONTEXT_ARGS[@]}" 2>&1 || {
+            log_error "Could not remove the drained M2M client id."
+            exit 1
+        }
+        aws ssm delete-parameters \
+            --names "$retired_id_parameter" "$not_before_parameter" \
+            --region "$AWS_REGION" >/dev/null || {
+            log_error "Rotation completed, but its SSM checkpoint could not be removed."
+            exit 1
+        }
+        M2M_ROTATION_CONTEXT_ARGS=()
+        log_info "Legacy Cognito M2M token drain complete"
+        return 0
+    fi
+
+    log_info "Rotating the legacy Cognito M2M client"
+    # migrate_legacy_m2m_secret_export created the replacement before this
+    # function runs. The retired client id is passed literally (it is not a
+    # secret), so authorizers do not retain a CloudFormation import that would
+    # prevent phase 5 from deleting the old client.
+    log_step "Rotation 1/6: allow both clients on every inbound authorizer"
+    # shellcheck disable=SC2086  # stack list is space-separated by design
+    JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+        npx cdk deploy $authorizer_consumers --exclusively --require-approval never \
+        "${CONTEXT_ARGS[@]}" \
+        -c "retired_m2m_client_id=${retired_client_id}" 2>&1 || {
+        log_error "Could not expand the M2M client allow-lists."
+        exit 1
+    }
+
+    log_step "Rotation 2/6: retain the replacement while publishing the old interface"
+    JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+        npx cdk deploy "${PREFIX}-auth" --exclusively --require-approval never \
+        "${CONTEXT_ARGS[@]}" -c retain_legacy_m2m_client=true 2>&1 || {
+        log_error "Could not reconcile the replacement and legacy M2M clients."
+        exit 1
+    }
+
+    log_step "Rotation 3/6: move the credential provider to the replacement"
+    JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+        npx cdk deploy "${PREFIX}-identity" --exclusively --require-approval never \
+        "${CONTEXT_ARGS[@]}" -c transition_m2m_consumers=true 2>&1 || {
+        log_error "Could not move the credential provider to the replacement client."
+        exit 1
+    }
+
+    log_step "Rotation 4/6: publish the replacement through the SSM interface"
+    JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+        npx cdk deploy "${PREFIX}-auth" --exclusively --require-approval never \
+        "${CONTEXT_ARGS[@]}" -c transition_m2m_consumers=true 2>&1 || {
+        log_error "Could not publish the replacement M2M client."
+        exit 1
+    }
+
+    log_step "Rotation 5/6: disable the old client and start the token drain"
+    aws ssm put-parameter --name "$retired_id_parameter" \
+        --type String --value "$retired_client_id" --overwrite \
+        --region "$AWS_REGION" >/dev/null || {
+        log_error "Could not persist the retired M2M client checkpoint."
+        exit 1
+    }
+    JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+        npx cdk deploy "${PREFIX}-auth" --exclusively --require-approval never \
+        "${CONTEXT_ARGS[@]}" 2>&1 || {
+        log_error "Consumers use the replacement, but the old M2M client could not be deleted."
+        exit 1
+    }
+    now=$(date +%s)
+    not_before=$((now + drain_seconds))
+    aws ssm put-parameter --name "$not_before_parameter" \
+        --type String --value "$not_before" --overwrite \
+        --region "$AWS_REGION" >/dev/null || {
+        log_error "Client deleted, but the M2M token-drain deadline was not stored."
+        exit 1
+    }
+    M2M_ROTATION_CONTEXT_ARGS=(-c "retired_m2m_client_id=${retired_client_id}")
+    log_info "Legacy Cognito M2M client invalidated; issued tokens are draining."
+    log_info "Cleanup resumes on the first deploy after ${drain_seconds} seconds."
+}
+
 deploy_stacks() {
     local stack
+    # A targeted deploy still follows CDK dependencies unless --exclusively is
+    # used. Run compatibility work before every target set so deploying a
+    # gateway/runtime cannot pull Auth across the unsafe legacy export.
+    acquire_m2m_deployment_lock
+    switch_issuer_consumers_first
+    migrate_legacy_m2m_secret_export
+    rotate_legacy_m2m_client
     for stack in "$@"; do
         log_step "Deploying: $stack"
         JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
-            npx cdk deploy "$stack" --require-approval never "${CONTEXT_ARGS[@]}" 2>&1 || {
+            npx cdk deploy "$stack" --require-approval never \
+            "${CONTEXT_ARGS[@]}" "${M2M_ROTATION_CONTEXT_ARGS[@]}" 2>&1 || {
             log_error "Failed to deploy $stack"
             log_error "Check CloudFormation console for details."
             exit 1
         }
     done
+    release_m2m_deployment_lock
 }
 
 # The destroy counterpart. `cdk destroy STACK` without --exclusively walks the
@@ -960,16 +1380,83 @@ migrate_plan() {
 # ═══════════════════════════════════════════════════════════════
 # Deploy Summary (Requirement 2.5)
 # ═══════════════════════════════════════════════════════════════
+sanitize_public_metadata() {
+    # Reuse the dashboard's deny-by-default metadata contract. Raw AWS values
+    # are filtered in-memory and never reach a transcript or artifact.
+    local kind="$1" suffix="${2:-}"
+    "$PROJECT_DIR/.venv/bin/python" -c '
+import json
+import sys
+
+from dashboard.monitor import (
+    SAFE_EXPORT_STACK_OUTPUTS,
+    SAFE_SSM_PARAMETERS,
+    safe_stack_outputs,
+)
+
+kind, suffix, root = sys.argv[1:4]
+raw = json.load(sys.stdin)
+if kind in {"stack", "stack-export"}:
+    allowlist = SAFE_EXPORT_STACK_OUTPUTS if kind == "stack-export" else None
+    safe = (
+        safe_stack_outputs(suffix, raw, allowlist=allowlist)
+        if allowlist is not None
+        else safe_stack_outputs(suffix, raw)
+    )
+    result = [
+        {"OutputKey": key, "OutputValue": value}
+        for key, value in safe.items()
+    ]
+elif kind == "ssm":
+    prefix = root.rstrip("/") + "/"
+    result = []
+    for parameter in raw:
+        name = parameter.get("Name", "")
+        relative = name.removeprefix(prefix) if name.startswith(prefix) else ""
+        if relative in SAFE_SSM_PARAMETERS and "Value" in parameter:
+            result.append({"Name": name, "Value": parameter["Value"]})
+else:
+    raise SystemExit(f"unknown public metadata kind: {kind}")
+print(json.dumps(result, separators=(",", ":")))
+' "$kind" "$suffix" "/${PROJECT_NAME}/${ENVIRONMENT}"
+}
+
 print_summary() {
     log_header "Deployment Summary"
-    for stack in $(aws cloudformation list-stacks \
+    local stack suffix raw_outputs safe_outputs stacks
+    stacks=$(aws cloudformation list-stacks \
         --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE \
         --query "StackSummaries[?starts_with(StackName,'${PREFIX}')].StackName" \
-        --output text --region "$AWS_REGION" 2>/dev/null); do
+        --output text --region "$AWS_REGION" 2>/dev/null) || {
+        log_warn "Could not list stacks for the deployment summary."
+        return 0
+    }
+    for stack in $stacks; do
         echo -e "\n${BOLD}${BLUE}$stack${NC}:"
-        aws cloudformation describe-stacks --stack-name "$stack" --region "$AWS_REGION" \
-            --query "Stacks[0].Outputs[*].{Key:OutputKey,Value:OutputValue}" \
-            --output table 2>/dev/null || true
+        suffix="${stack#"$PREFIX-"}"
+        raw_outputs=$(aws cloudformation describe-stacks \
+            --stack-name "$stack" \
+            --region "$AWS_REGION" \
+            --query "Stacks[0].Outputs" \
+            --output json 2>/dev/null) || {
+            log_warn "Could not read reviewed outputs for $stack."
+            continue
+        }
+        safe_outputs=$(printf '%s' "$raw_outputs" \
+            | sanitize_public_metadata stack "$suffix") || {
+            log_warn "Could not filter reviewed outputs for $stack."
+            continue
+        }
+        printf '%s' "$safe_outputs" | "$PROJECT_DIR/.venv/bin/python" -c '
+import json
+import sys
+
+outputs = json.load(sys.stdin)
+if not outputs:
+    print("  (no reviewed public outputs)")
+for output in outputs:
+    print("  {}: {}".format(output["OutputKey"], output["OutputValue"]))
+'
     done
 }
 
@@ -978,51 +1465,97 @@ print_summary() {
 # ═══════════════════════════════════════════════════════════════
 export_artifacts() {
     log_header "Exporting Artifacts"
-    local stamp export_file
+    local stamp export_file safe_outputs_file stacks stack suffix
+    local raw_params params raw_outputs stack_outputs
+    acquire_m2m_deployment_lock
     stamp="$(date +%Y%m%d-%H%M%S)"
     export_file="${PROJECT_DIR}/workshop-outputs-${stamp}.json"
+    safe_outputs_file="$(mktemp)"
 
-    # Collect all SSM parameters
-    local params
-    params=$(aws ssm get-parameters-by-path \
+    # Collect only the reviewed public SSM interface. Unknown parameters,
+    # including secret names and customer-created values, remain private.
+    raw_params=$(aws ssm get-parameters-by-path \
         --path "/${PROJECT_NAME}/${ENVIRONMENT}" \
         --recursive --region "$AWS_REGION" \
         --query "Parameters[*].{Name:Name,Value:Value}" \
-        --output json 2>/dev/null || echo "[]")
+        --output json 2>/dev/null) || {
+        log_error "Could not read SSM parameters for export."
+        return 1
+    }
+    params=$(printf '%s' "$raw_params" \
+        | sanitize_public_metadata ssm "") || {
+        log_error "Could not filter SSM parameters for export."
+        return 1
+    }
 
-    # Collect all stack outputs
-    local outputs="[]"
-    for stack in $(aws cloudformation list-stacks \
+    # Collect only reviewed public outputs for each known stack type.
+    stacks=$(aws cloudformation list-stacks \
         --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE \
         --query "StackSummaries[?starts_with(StackName,'${PREFIX}')].StackName" \
-        --output text --region "$AWS_REGION" 2>/dev/null); do
-        local stack_outputs
-        stack_outputs=$(aws cloudformation describe-stacks --stack-name "$stack" --region "$AWS_REGION" \
-            --query "Stacks[0].Outputs" --output json 2>/dev/null || echo "[]")
-        outputs=$(echo "$outputs $stack_outputs" | python3.13 -c "
-import json, sys
-parts = sys.stdin.read().split()
-result = []
-for p in parts:
-    try: result.extend(json.loads(p))
-    except: pass
-print(json.dumps(result))
-")
+        --output text --region "$AWS_REGION" 2>/dev/null) || {
+        log_error "Could not list stacks for export."
+        return 1
+    }
+    for stack in $stacks; do
+        suffix="${stack#"$PREFIX-"}"
+        raw_outputs=$(aws cloudformation describe-stacks \
+            --stack-name "$stack" \
+            --region "$AWS_REGION" \
+            --query "Stacks[0].Outputs" \
+            --output json 2>/dev/null) || {
+            log_error "Could not read outputs for $stack."
+            return 1
+        }
+        stack_outputs=$(printf '%s' "$raw_outputs" \
+            | sanitize_public_metadata stack-export "$suffix") || {
+            log_error "Could not filter outputs for $stack."
+            return 1
+        }
+        printf '%s\n' "$stack_outputs" >> "$safe_outputs_file"
     done
 
-    python3.13 -c "
+    "$PROJECT_DIR/.venv/bin/python" -c '
 import json
+import os
+import sys
+import tempfile
+
+project, environment, region, account_id, destination, outputs_path = sys.argv[1:]
+params = json.load(sys.stdin)
+outputs = []
+with open(outputs_path, encoding="utf-8") as source:
+    for line in source:
+        outputs.extend(json.loads(line))
 data = {
-    'project': '${PROJECT_NAME}',
-    'environment': '${ENVIRONMENT}',
-    'region': '${AWS_REGION}',
-    'account_id': '${ACCOUNT_ID}',
-    'ssm_parameters': json.loads('''${params}'''),
-    'stack_outputs': json.loads('''${outputs}'''),
+    "project": project,
+    "environment": environment,
+    "region": region,
+    "account_id": account_id,
+    "ssm_parameters": params,
+    "stack_outputs": outputs,
 }
-with open('${export_file}', 'w') as f:
-    json.dump(data, f, indent=2)
-"
+descriptor, temporary = tempfile.mkstemp(
+    prefix=f".{os.path.basename(destination)}.",
+    dir=os.path.dirname(destination),
+)
+try:
+    with os.fdopen(descriptor, "w", encoding="utf-8") as target:
+        json.dump(data, target, indent=2)
+        target.write("\n")
+        target.flush()
+        os.fsync(target.fileno())
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, destination)
+except Exception:
+    try:
+        os.unlink(temporary)
+    except FileNotFoundError:
+        pass
+    raise
+' "$PROJECT_NAME" "$ENVIRONMENT" "$AWS_REGION" "$ACCOUNT_ID" \
+        "$export_file" "$safe_outputs_file" <<<"$params"
+    rm -f "$safe_outputs_file"
+    release_m2m_deployment_lock
     log_info "Exported to: ${export_file}"
 }
 
@@ -1042,7 +1575,8 @@ if [ "$ACTION" = "config" ]; then
     if [ -f "$PLATFORM_CONFIG" ]; then
         echo "# platform.yaml → effective values (env vars override):"
         py="$PROJECT_DIR/.venv/bin/python"; [ -x "$py" ] || py="python3"
-        "$py" -m infra_utils.platform_config --export "$PLATFORM_CONFIG" || exit 1
+        "$py" -m infra_utils.platform_config \
+            --export --effective-env "$PLATFORM_CONFIG" || exit 1
         echo ""
     fi
     if [ -f "$CONFIG_FILE" ]; then
@@ -1093,7 +1627,8 @@ if [ "$ACTION" = "design" ]; then
         export CDK_DEFAULT_ACCOUNT="$ACCOUNT_ID"
     fi
     log_step "Design: $PLATFORM_CONFIG"
-    (cd "$PROJECT_DIR" && "$py" -m infra_utils.platform_config --design "$PLATFORM_CONFIG") || {
+    (cd "$PROJECT_DIR" && "$py" -m infra_utils.platform_config \
+        --design --effective-env "$PLATFORM_CONFIG") || {
         log_error "Fix the manifest above, then run: $0 design"
         exit 1
     }
@@ -1247,13 +1782,18 @@ case "$ACTION" in
             deploy_stacks $CDK_STACKS
         else
             confirm_footprint deploy
+            acquire_m2m_deployment_lock
             switch_issuer_consumers_first
+            migrate_legacy_m2m_secret_export
+            rotate_legacy_m2m_client
             log_step "Deploying all stacks..."
             JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
-                npx cdk deploy --all --require-approval never "${CONTEXT_ARGS[@]}" 2>&1 || {
+                npx cdk deploy --all --require-approval never \
+                "${CONTEXT_ARGS[@]}" "${M2M_ROTATION_CONTEXT_ARGS[@]}" 2>&1 || {
                 log_error "Deployment failed. Check CloudFormation console for details."
                 exit 1
             }
+            release_m2m_deployment_lock
         fi
 
         print_summary
@@ -1316,12 +1856,14 @@ case "$ACTION" in
     destroy)
         log_header "Destroying"
         [ -z "${CDK_STACKS:-}" ] && confirm_footprint destroy
+        acquire_m2m_deployment_lock
         # No stacks selected means --all. Failures are no longer swallowed: a
         # refused destroy is the guard against cascading, so it has to be seen.
         # shellcheck disable=SC2086  # stack list is space-separated by design
         destroy_stacks ${CDK_STACKS:-} || exit 1
         # Full destroy: also find what the current config could not see.
         [ -z "${CDK_STACKS:-}" ] && sweep_leftovers
+        release_m2m_deployment_lock
         ;;
 
     verify)
@@ -1379,6 +1921,9 @@ case "$ACTION" in
         echo "  AWS_REGION         AWS region"
         echo "  IDP_TYPE           Identity provider (cognito|entra_id|okta|ping)"
         echo "  MODEL_ID           Bedrock model ID override for all agents (default: in-code per pattern)"
+        echo "  ORCHESTRATOR_RUNTIME_GENERATION  Controlled runtime replacement generation (default: 1)"
+        echo "  FEDERATED_RETIRED_M2M_CLIENT_ID  Previous client ID during a federated token drain"
+        echo "  FEDERATED_M2M_CONSUMERS_UPDATED  Set to 1 only after every workload uses the replacement"
         exit 1
         ;;
 esac

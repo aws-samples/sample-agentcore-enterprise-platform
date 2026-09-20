@@ -94,12 +94,23 @@ def check_span_resource_policy() -> None:
     )
 
 
+def _all_paginated(logs, operation: str, result_key: str) -> list[dict]:
+    """Collect every Logs API page.
+
+    DescribeDeliverySources currently returns very small pages in some
+    accounts. Reading only the first page made the verifier claim one active
+    delivery while silently ignoring missing connections on later pages.
+    """
+    paginator = logs.get_paginator(operation)
+    return [item for page in paginator.paginate() for item in page.get(result_key, [])]
+
+
 def check_log_deliveries() -> None:
     logs = boto3.client("logs", region_name=REGION)
     prefix = f"{PROJECT}-{ENVIRONMENT}"
     sources = [
         s
-        for s in logs.describe_delivery_sources().get("deliverySources", [])
+        for s in _all_paginated(logs, "describe_delivery_sources", "deliverySources")
         if s["name"].startswith(prefix)
     ]
     if not sources:
@@ -109,7 +120,7 @@ def check_log_deliveries() -> None:
         )
     delivered = {
         d["deliverySourceName"]
-        for d in logs.describe_deliveries().get("deliveries", [])
+        for d in _all_paginated(logs, "describe_deliveries", "deliveries")
     }
     missing = [s["name"] for s in sources if s["name"] not in delivered]
     if missing:

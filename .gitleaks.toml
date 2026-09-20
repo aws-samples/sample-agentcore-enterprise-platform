@@ -1,0 +1,22 @@
+title = "AgentCore accelerator secret scanning"
+
+[extend]
+useDefault = true
+
+# CDK names staged assets with a SHA-256 content hash. The default
+# generic-api-key rule treats the JSON keys around those hashes as credential
+# names. Require both the generated CDK path and the exact content-hash shape;
+# other high-entropy values in the same files remain findings.
+[[rules]]
+id = "generic-api-key"
+
+  [[rules.allowlists]]
+description = "CDK content-addressed asset keys"
+condition = "AND"
+regexTarget = "match"
+paths = [
+  '''^cdk\.out/(?:.*\.(?:assets|template)\.json|tree\.json)$''',
+]
+regexes = [
+  '''(?i)(?:objectKey|s3Key)"\s*:\s*"[0-9a-f]{64}\.(?:zip|json)"''',
+]

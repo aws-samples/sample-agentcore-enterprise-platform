@@ -68,3 +68,8 @@ def test_migration_plan_is_embedded(monkeypatch):
 def test_plan_is_plain_text():
     for line in design_plan(load_platform_config(PRESETS / "greenfield.yaml")):
         assert "\x1b" not in line and "\t" not in line
+
+
+def test_runtime_replacement_generation_is_explicit():
+    t = text(PlatformConfig(agents={"orchestrator_runtime_generation": 2}))
+    assert "orchestrator runtime generation 2 (controlled replacement)" in t

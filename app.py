@@ -13,10 +13,10 @@ Stack dependency graph:
     RuntimeStack (research-agent, A2A) ← AuthStack
     ObservabilityStack ← all resource stacks
 
-Deploy individual stacks:
-    cdk deploy agentcore-workshop-dev-auth
-    cdk deploy agentcore-workshop-dev-gateway
-    cdk deploy --all
+Deploy or update an environment through ``scripts/deploy.sh``. The orchestrator
+owns consumer-first interface migrations, credential-rotation checkpoints,
+and the deployment lock. Use CDK directly only for synth/diff or disposable
+test stacks.
 """
 
 import os
@@ -99,6 +99,19 @@ idp_type = cfg("idp_type", "IDP_TYPE", "cognito")
 # brokered: Cognito issues tokens (the IdP federates through it). direct: the
 # IdP issues them and no user pool exists — see IdentityConfig.
 idp_mode = cfg("idp_mode", "IDP_MODE", "brokered")
+# Internal one-deploy compatibility switch. deploy.sh uses it to keep the old
+# secret-bearing CDK export alive while an existing identity stack moves to
+# the Secrets Manager reference. It is never set for a normal synthesis.
+retain_legacy_m2m_export = (
+    app.node.try_get_context("retain_legacy_m2m_export") == "true"
+)
+retain_legacy_m2m_client = (
+    app.node.try_get_context("retain_legacy_m2m_client") == "true"
+)
+transition_m2m_consumers = (
+    app.node.try_get_context("transition_m2m_consumers") == "true"
+)
+retired_m2m_client_id = app.node.try_get_context("retired_m2m_client_id") or ""
 
 
 # Security control feature flags (control-library / scope-split model).
@@ -142,6 +155,13 @@ org_id = cfg("org_id", "ORG_ID", "")
 # Options: strands-agent, langgraph-agent, claude-sdk-agent, claude-sdk-multi-agent,
 #          agui-strands-agent, agui-langgraph-agent
 agent_pattern = cfg("agent_pattern", "AGENT_PATTERN", "orchestrator")
+orchestrator_runtime_generation = int(
+    cfg(
+        "orchestrator_runtime_generation",
+        "ORCHESTRATOR_RUNTIME_GENERATION",
+        "1",
+    )
+)
 
 # ── Migration mode (platform.yaml `migration:` block / MIGRATION_* env) ──
 # An existing customer container replaces the agent pattern on the
@@ -324,6 +344,14 @@ if not is_fed_workload:
         idp_type=idp_type,
         idp_mode=idp_mode,
         idp_config=idp_config,
+        retain_legacy_m2m_client=(
+            retain_legacy_m2m_export
+            or retain_legacy_m2m_client
+            or transition_m2m_consumers
+        ),
+        publish_legacy_m2m_interface=(
+            retain_legacy_m2m_export or retain_legacy_m2m_client
+        ),
         env=cdk_env,
     )
 
@@ -339,21 +367,44 @@ if is_fed_workload:
     issuer_url = fed.issuer_url
     discovery_url = fed.discovery_url
     m2m_client_id = fed.m2m_client_id
-    m2m_client_secret = cdk.SecretValue.secrets_manager(fed.m2m_client_secret_name)
+    m2m_client_secret_name = fed.m2m_client_secret_name
+    legacy_m2m_client_secret = None
     allowed_clients = [fed.m2m_client_id]
     if idp_mode == "direct":
         allowed_clients, allowed_audience = [], [fed.m2m_client_id]
         gateway_token_scopes = f"{fed.m2m_client_id}/.default"
+    elif retired_m2m_client_id:
+        allowed_clients.append(retired_m2m_client_id)
 else:
     issuer_url = auth_stack.issuer_url
     discovery_url = auth_stack.discovery_url
-    m2m_client_id = auth_stack.m2m_client_id
-    m2m_client_secret = auth_stack.m2m_client_secret
+    use_legacy_m2m_client = (
+        retain_legacy_m2m_export or retain_legacy_m2m_client
+    ) and not auth_stack.is_direct
+    m2m_client_id = (
+        auth_stack.legacy_m2m_client_id
+        if use_legacy_m2m_client
+        else auth_stack.m2m_client_id
+    )
+    m2m_client_secret_name = (
+        auth_stack.legacy_m2m_client_secret_name
+        if use_legacy_m2m_client
+        else auth_stack.m2m_client_secret_name
+    )
+    legacy_m2m_client_secret = (
+        auth_stack.legacy_m2m_client_secret
+        if retain_legacy_m2m_export and not auth_stack.is_direct
+        else None
+    )
     if auth_stack.is_direct:
         allowed_clients, allowed_audience = [], [auth_stack.app_client_id]
         gateway_token_scopes = f"{auth_stack.app_client_id}/.default"
     else:
         allowed_clients = [auth_stack.app_client_id, auth_stack.m2m_client_id]
+        if retired_m2m_client_id:
+            allowed_clients.append(retired_m2m_client_id)
+        elif transition_m2m_consumers:
+            allowed_clients.append(auth_stack.legacy_m2m_client_id)
 # Omitted when empty: an empty environment value is an L1 deploy-time reject.
 gateway_scope_env = (
     {"GATEWAY_TOKEN_SCOPES": gateway_token_scopes} if gateway_token_scopes else {}
@@ -369,7 +420,8 @@ identity_stack = IdentityStack(
     project_name=project,
     environment=env_name,
     gateway_m2m_client_id=m2m_client_id,
-    gateway_m2m_client_secret=m2m_client_secret,
+    gateway_m2m_client_secret_name=m2m_client_secret_name,
+    gateway_m2m_client_secret=legacy_m2m_client_secret,
     cognito_discovery_url=discovery_url,
     google_client_id=google_client_id,
     google_client_secret_name=google_client_secret_name,
@@ -487,7 +539,8 @@ runtime_network = (
 )
 
 # ── Orchestrator Runtime (HTTP protocol) — not in a federated platform account ──
-# Agent pattern selects source directory: cdk deploy -c agent_pattern=langgraph-agent
+# Agent pattern selects source directory:
+# AGENT_PATTERN=langgraph-agent ./scripts/deploy.sh deploy --module 6
 runtime_orchestrator = None
 if not is_fed_platform:
     runtime_orchestrator = RuntimeStack(
@@ -499,6 +552,7 @@ if not is_fed_platform:
         source_dir="agent-code",
         dockerfile_pattern=agent_pattern,
         runtime_type="orchestrator",
+        runtime_generation=orchestrator_runtime_generation,
         allowed_models=allowed_models,
         cognito_issuer_url=issuer_url,
         cognito_allowed_clients=allowed_clients,
@@ -611,7 +665,17 @@ if gateway_stack:
 if memory_stack:
     monitored_resources["memory"] = memory_stack.memory_arn
 if runtime_orchestrator:
-    monitored_resources["runtime-orchestrator"] = runtime_orchestrator.runtime_arn
+    # Recovery-only context: pin the currently exported ARN as a literal
+    # before a create-only Runtime name change. The resolved value is
+    # identical, but removing Observability's cross-stack import lets
+    # CloudFormation update the RuntimeArn export during replacement. Omit
+    # this context on the immediate follow-up Observability deploy so it binds
+    # to the replacement. This is intentionally not an environment or
+    # platform.yaml setting: steady state must always consume the live export.
+    monitored_resources["runtime-orchestrator"] = (
+        app.node.try_get_context("runtime_observability_arn_override")
+        or runtime_orchestrator.runtime_arn
+    )
 if runtime_code_agent:
     monitored_resources["runtime-code-agent"] = runtime_code_agent.runtime_arn
 if runtime_research_agent:
@@ -623,6 +687,7 @@ obs_stack = ObservabilityStack(
     project_name=project,
     environment=env_name,
     monitored_resources=monitored_resources,
+    orchestrator_runtime_generation=orchestrator_runtime_generation,
     enable_traceability=enable_traceability,
     enable_transaction_search=enable_transaction_search,
     enable_alarms=enable_alarms,

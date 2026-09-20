@@ -56,6 +56,7 @@ class ObservabilityStack(cdk.Stack):
         project_name: str,
         environment: str,
         monitored_resources: dict[str, str] | None = None,
+        orchestrator_runtime_generation: int = 1,
         enable_traceability: bool = False,
         enable_transaction_search: bool = True,
         enable_alarms: bool = False,
@@ -124,6 +125,23 @@ class ObservabilityStack(cdk.Stack):
 
         for resource_name, resource_arn in (monitored_resources or {}).items():
             safe_name = resource_name.replace("-", "").replace("_", "").title()
+            # Logs DeliverySource rejects changing ResourceArn in place even
+            # though the generic CloudFormation diff does not mark the field
+            # immutable. Keep the normal IDs byte-identical for generation 1;
+            # a controlled orchestrator replacement gets a new source name and
+            # source/delivery logical IDs so CloudFormation creates the new
+            # binding instead of attempting the unsupported update.
+            delivery_generation = (
+                orchestrator_runtime_generation
+                if resource_name == "runtime-orchestrator"
+                else 1
+            )
+            delivery_id_suffix = (
+                f"G{delivery_generation}" if delivery_generation > 1 else ""
+            )
+            delivery_name_suffix = (
+                f"-g{delivery_generation}" if delivery_generation > 1 else ""
+            )
 
             log_group = logs.LogGroup(
                 self,
@@ -136,10 +154,12 @@ class ObservabilityStack(cdk.Stack):
             # Vended log delivery source
             source = cdk.CfnResource(
                 self,
-                f"Source{safe_name}",
+                f"Source{safe_name}{delivery_id_suffix}",
                 type="AWS::Logs::DeliverySource",
                 properties={
-                    "Name": f"{prefix}-{resource_name}-app-logs",
+                    "Name": (
+                        f"{prefix}-{resource_name}-app-logs{delivery_name_suffix}"
+                    ),
                     "ResourceArn": resource_arn,
                     "LogType": "APPLICATION_LOGS",
                 },
@@ -159,7 +179,7 @@ class ObservabilityStack(cdk.Stack):
             # Connect source → destination
             cdk.CfnResource(
                 self,
-                f"Delivery{safe_name}",
+                f"Delivery{safe_name}{delivery_id_suffix}",
                 type="AWS::Logs::Delivery",
                 properties={
                     "DeliverySourceName": source.ref,
@@ -246,6 +266,8 @@ class ObservabilityStack(cdk.Stack):
                     continue
                 component = key.removeprefix("runtime-")
                 rt_name = f"{project_name}_{environment}_{component}".replace("-", "_")
+                if component == "orchestrator" and orchestrator_runtime_generation > 1:
+                    rt_name = f"{rt_name}_g{orchestrator_runtime_generation}"
                 dims = {
                     "Resource": arn,
                     "Operation": "InvokeAgentRuntime",

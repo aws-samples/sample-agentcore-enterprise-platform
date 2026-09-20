@@ -35,3 +35,4 @@ Verify
 
 Own
 - [Participant guide](PARTICIPANT_GUIDE.md)
+- [Production readiness plan](PRODUCTION_READINESS_PLAN.md)

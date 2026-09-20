@@ -24,8 +24,9 @@ class IdentityStack(cdk.Stack):
         project_name: str,
         environment: str,
         gateway_m2m_client_id: str,
-        gateway_m2m_client_secret: cdk.SecretValue,
+        gateway_m2m_client_secret_name: str,
         cognito_discovery_url: str,
+        gateway_m2m_client_secret: cdk.SecretValue | None = None,
         google_client_id: str = "",
         google_client_secret_name: str = "",
         github_client_id: str = "",
@@ -73,13 +74,12 @@ class IdentityStack(cdk.Stack):
         # @requires_access_token(provider_name=..., auth_flow="M2M"). The name
         # must match the GATEWAY_CREDENTIAL_PROVIDER_NAME env var on runtimes.
         #
-        # CustomOauth2ProviderConfigInput.client_secret takes a plain string, so
-        # we unwrap the SecretValue with unsafe_unwrap(). Despite the name, this
-        # is the accepted pattern here: it renders the CloudFormation TOKEN
-        # (Fn::GetAtt on the DescribeUserPoolClient custom resource in the auth
-        # stack, imported here via Fn::ImportValue) into the template — NOT the
-        # secret value. The actual secret is resolved only at deploy time by
-        # CloudFormation, so it never appears in the synthesized template.
+        # The auth stack copies Cognito's generated client secret into Secrets
+        # Manager and passes only this name across the stack boundary. A
+        # federated workload account supplies the equivalent local secret name
+        # through platform.yaml. In both cases the provider template contains a
+        # Secrets Manager dynamic reference, never the secret-bearing Cognito
+        # Fn::GetAtt or a literal value.
         self._gateway_provider_name = f"{prefix}-gateway-m2m"
         m2m_provider = agentcore.CfnOAuth2CredentialProvider(
             self,
@@ -97,7 +97,11 @@ class IdentityStack(cdk.Stack):
                         discovery_url=cognito_discovery_url,
                     ),
                     client_id=gateway_m2m_client_id,
-                    client_secret=gateway_m2m_client_secret.unsafe_unwrap(),
+                    client_secret=(
+                        gateway_m2m_client_secret.unsafe_unwrap()
+                        if gateway_m2m_client_secret is not None
+                        else _resolve(gateway_m2m_client_secret_name)
+                    ),
                 ),
             ),
         )

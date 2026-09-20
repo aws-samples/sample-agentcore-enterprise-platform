@@ -71,8 +71,8 @@ Item 4 hard-fails without `org_id`; item 2 silently ships an unpolicied endpoint
 export ORG_ID=o-yourorgid
 ./scripts/deploy.sh deploy --profile security-focused
 
-# Or one control at a time (NON_INTERACTIVE is read by deploy.sh only, not by cdk):
-cdk deploy agentcore-workshop-dev-gateway -c enable_cedar=true
+# Or one control at a time:
+ENABLE_CEDAR=true ./scripts/deploy.sh deploy --module 5
 
 # Org guardrails (from the Organizations management account):
 cd terraform/org-guardrails && terraform init && terraform apply -var 'target_ids=["ou-..."]'
