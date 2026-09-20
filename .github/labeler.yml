@@ -1,0 +1,36 @@
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+          - "**/*.md"
+
+python:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.py"
+
+github_actions:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/workflows/**"
+          - ".github/dependabot.yml"
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/requirements*.txt"
+          - "dashboard/package.json"
+          - "dashboard/package-lock.json"
+
+security:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/workflows/*security*"
+          - ".github/workflows/secret-boundary.yml"
+          - ".gitleaks.toml"
+          - "control-library/**"
+          - "infra_utils/jwt_authorizer.py"
+          - "infra_utils/policy_loader.py"
+          - "stacks/auth_stack.py"
+          - "stacks/identity_stack.py"
+          - "stacks/security_stack.py"
