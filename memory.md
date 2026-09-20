@@ -99,6 +99,11 @@ Open evidence and ownership work:
   current literal ARN at the current Logs source generation, replace the
   Runtime at the next generation, then rebind Observability without the
   override.
+- A post-rollback live verification passed all seven checks in the intended
+  account: brokered identity, Gateway M2M token and tool call, Memory API,
+  trace/log delivery, orchestrator invocation, and both A2A runtimes. The
+  partial deployment therefore preserved the customer-facing footprint while
+  the automated handoff change is reviewed.
 
 ## Decisions
 
