@@ -15,7 +15,7 @@ operational readiness review.
 
 **G1 — production design baseline merged; live evidence closure in progress**
 
-Branch: `fix/deployment-account-secret-guard`
+Branch: `chore/final-live-evidence`
 
 G0 merged through PR #74 after prerequisite PR #75. G1 implementation merged
 through PR #76. The current branch closes a deployment-account boundary found
@@ -104,6 +104,42 @@ Open evidence and ownership work:
   trace/log delivery, orchestrator invocation, and both A2A runtimes. The
   partial deployment therefore preserved the customer-facing footprint while
   the automated handoff change is reviewed.
+- PR #78 merged the automated runtime/Observability handoff. On the first
+  retry, phase 1 completed and released Observability's generated export
+  import, but the deploy script stopped because CloudFormation reports an
+  existing export with zero consumers as a `ValidationError` instead of an
+  empty import list. No runtime replacement had started.
+- The import helper now recognizes only CloudFormation's exact no-consumer
+  response as an empty result and preserves every other API failure. The
+  handoff regression simulates the real non-zero CLI response; deployment
+  configuration checks, shell syntax, ShellCheck warnings, and diff whitespace
+  checks pass before the resumable live retry.
+- The resumable retry completed all eight stacks. The orchestrator
+  generation-2 Runtime became active, the old Runtime and generation-1 Logs
+  delivery source were deleted, and Observability imported the new generated
+  Runtime ARN. All stacks are `UPDATE_COMPLETE`; the owner-checked deployment
+  lock is absent and this account has no pending retired-client checkpoints.
+- The post-deployment verifier initially reported 7/7 green, but its structured
+  orchestrator stream contained an `AccessDeniedException` for
+  `StartCodeInterpreterSession`; the model returned a friendly fallback answer
+  and `invoke.py` accepted the HTTP success. This is not accepted as clean live
+  evidence.
+- AWS's Code Interpreter documentation requires session start, invoke, and
+  stop permissions. The Runtime role now grants only those three data-plane
+  actions on the exact AWS-managed system Code Interpreter ARN. Tool-consuming
+  agent patterns now require a structured, successful Code Interpreter result
+  containing a seeded marker, so a model response cannot conceal a failed
+  dependency.
+- Pre-deployment evidence for the correction: 409 repository tests pass,
+  deployment-config checks pass, changed Python files pass Ruff and formatting,
+  and offline synthesis confirms the three actions are scoped to the system
+  Code Interpreter ARN.
+- The targeted orchestrator deployment changed only its IAM policy; the
+  generation-2 Runtime and image were not replaced. The strict live retry then
+  passed all seven footprint checks. Its structured evidence confirms Code
+  Interpreter started successfully, executed the seeded Python statement,
+  returned the expected marker with exit code zero, and both A2A agents
+  remained healthy.
 
 ## Decisions
 
@@ -485,3 +521,4 @@ Never copy credential values into this file.
 - `b48da8d` — `Automate runtime observability handoff`
 - Pull request:
   [#78 — Automate runtime observability handoff](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/78)
+- PR #78 merged to `main` on 2026-09-20.

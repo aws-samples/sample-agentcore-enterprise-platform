@@ -62,6 +62,16 @@ def test_agui_patterns_invoke_over_agui():
     assert "--agui" not in checks["orchestrator invoke"]
 
 
+def test_tool_consuming_patterns_require_a_successful_code_interpreter_result():
+    checks = dict(checks_for(suffixes(), "strands-agent"))
+    invoke = checks["orchestrator invoke"]
+    assert invoke[invoke.index("--require-tool") + 1] == "execute_python_securely"
+    assert "--require-tool-result" in invoke
+
+    minimal = dict(checks_for(suffixes(), "orchestrator"))["orchestrator invoke"]
+    assert "--require-tool" not in minimal
+
+
 def test_require_guardrails_selects_the_enforcement_check():
     on = names(checks_for(suffixes(), "orchestrator", require_guardrails=True))
     assert "guardrail enforcement" in on

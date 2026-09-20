@@ -1302,6 +1302,30 @@ rotate_legacy_m2m_client() {
     log_info "Cleanup resumes on the first deploy after ${drain_seconds} seconds."
 }
 
+list_cloudformation_imports() {
+    local export_name="$1"
+    local result
+    if result=$(aws cloudformation list-imports \
+        --export-name "$export_name" \
+        --region "$AWS_REGION" \
+        --query Imports \
+        --output text 2>&1); then
+        printf '%s\n' "$result"
+        return 0
+    fi
+
+    # CloudFormation returns ValidationError, rather than an empty list, when
+    # an existing export has no consumers. That is the expected post-handoff
+    # state; preserve all other failures (for example, AccessDenied).
+    if [[ "$result" == *"ValidationError"* \
+        && "$result" == *"is not imported by any stack"* ]]; then
+        printf 'None\n'
+        return 0
+    fi
+    printf '%s\n' "$result" >&2
+    return 1
+}
+
 prepare_orchestrator_observability_handoff() {
     local target_generation="${ORCHESTRATOR_RUNTIME_GENERATION:-1}"
     [ "$target_generation" -gt 1 ] || return 0
@@ -1360,11 +1384,7 @@ prepare_orchestrator_observability_handoff() {
     }
     for export_name in $export_names; do
         [ "$export_name" != "None" ] || continue
-        imports=$(aws cloudformation list-imports \
-            --export-name "$export_name" \
-            --region "$AWS_REGION" \
-            --query Imports \
-            --output text) || {
+        imports=$(list_cloudformation_imports "$export_name") || {
             log_error "Could not inspect imports of runtime export $export_name."
             exit 1
         }
@@ -1398,11 +1418,7 @@ prepare_orchestrator_observability_handoff() {
 
     for export_name in $export_names; do
         [ "$export_name" != "None" ] || continue
-        imports=$(aws cloudformation list-imports \
-            --export-name "$export_name" \
-            --region "$AWS_REGION" \
-            --query Imports \
-            --output text) || {
+        imports=$(list_cloudformation_imports "$export_name") || {
             log_error "Could not verify the runtime export handoff."
             exit 1
         }

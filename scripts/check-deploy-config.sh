@@ -723,7 +723,8 @@ echo "PASS: deployment lock is atomic, owner-checked, and stale state fails clos
 # Observability's generated export import while retaining the same literal ARN,
 # then rebinds Observability after the runtime deploy. This makes the documented
 # recovery sequence part of every normal build instead of a manual operation.
-eval "$(sed -n '/^prepare_orchestrator_observability_handoff()/,/^}/p;
+eval "$(sed -n '/^list_cloudformation_imports()/,/^}/p;
+                /^prepare_orchestrator_observability_handoff()/,/^}/p;
                 /^rebind_orchestrator_observability()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
 PREFIX="handoff-check"
 AWS_REGION="us-east-1"
@@ -758,7 +759,8 @@ aws() {
                 printf '1' > "$HANDOFF_IMPORT_CALLS"
                 printf 'handoff-check-observability\n'
             else
-                printf 'None\n'
+                printf "An error occurred (ValidationError) when calling the ListImports operation: Export 'handoff-check-runtime-orchestrator:ExportsRuntimeArn' is not imported by any stack.\n" >&2
+                return 255
             fi
             ;;
         *)
