@@ -75,6 +75,28 @@ Open evidence and ownership work:
   authorized development account, followed by live invoke, observability,
   rollback, and cleanup evidence.
 
+### 2026-09-21 — migration adapter/runtime hardening
+
+- The CodeBuild migration path now captures the source image's `Config.User`
+  and passes it into the adapter build. Adapter dependencies install as root,
+  then the final image restores that source user before startup. The included
+  rehearsal image declares numeric uid/gid `10001:10001`, so the live exercise
+  proves the non-root path rather than the root fallback.
+- Plain migration environment values now travel as a JSON object from the
+  manifest through CDK into the child process. Commas and equals signs
+  round-trip without corruption; malformed or non-string JSON fails before
+  the customer process starts. Declared Secrets Manager values retain final
+  precedence.
+- The adapter checks both the child process and its declared health endpoint
+  before every invocation, using a bounded timeout, and returns a structured
+  unavailable response without forwarding when either is unhealthy.
+  AgentCore's SDK-owned `/ping` still reports adapter liveness; the runbook
+  does not represent it as proof of customer-process health.
+- Focused adapter, configuration, and CDK synthesis tests pass. Offline
+  synthesis confirms an arm64 source build, source-user capture, the
+  `CHILD_USER` build argument, JSON runtime environment, and least-privilege
+  migration-secret access.
+
 ### 2026-09-20 — live evidence run exposed an unbound deployment account
 
 - The operator selected the intended accelerator-development account, while

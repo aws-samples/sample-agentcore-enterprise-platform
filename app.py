@@ -19,6 +19,7 @@ and the deployment lock. Use CDK directly only for synth/diff or disposable
 test stacks.
 """
 
+import json
 import os
 
 import aws_cdk as cdk
@@ -193,7 +194,46 @@ orchestrator_runtime_generation = int(
 migration_enabled = cfg("migration_enabled", "MIGRATION_ENABLED", "false") == "true"
 migration_kwargs: dict = {}
 if migration_enabled:
-    _migration_env_pairs = cfg("migration_env", "MIGRATION_ENV", "")
+    _migration_target_runtime = cfg(
+        "migration_target_runtime", "MIGRATION_TARGET_RUNTIME", "agentcore"
+    )
+    if _migration_target_runtime != "agentcore":
+        raise ValueError(
+            "Only migration_target_runtime='agentcore' is implemented. "
+            "The ECS-on-EC2 target is not available yet."
+        )
+    _migration_target_mode = cfg(
+        "migration_target_mode", "MIGRATION_TARGET_MODE", "adapter"
+    )
+    if _migration_target_mode != "adapter":
+        raise ValueError(
+            "Only migration_target_mode='adapter' is implemented. "
+            "Native container deployment is not available yet."
+        )
+    _migration_env_json = cfg("migration_env_json", "MIGRATION_ENV_JSON", "")
+    if _migration_env_json:
+        try:
+            _migration_env = json.loads(_migration_env_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "MIGRATION_ENV_JSON must be a JSON object of string values"
+            ) from exc
+        if not isinstance(_migration_env, dict) or not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in _migration_env.items()
+        ):
+            raise ValueError(
+                "MIGRATION_ENV_JSON must be a JSON object of string values"
+            )
+    else:
+        # Legacy direct-environment compatibility. New platform.yaml manifests
+        # emit MIGRATION_ENV_JSON so commas and equals signs round-trip safely.
+        _migration_env_pairs = cfg("migration_env", "MIGRATION_ENV", "")
+        _migration_env = dict(
+            pair.split("=", 1)
+            for pair in _migration_env_pairs.split(",")
+            if "=" in pair
+        )
     migration_kwargs = {
         "source_image": cfg("migration_source_image", "MIGRATION_SOURCE_IMAGE", ""),
         "build_context": cfg("migration_build_context", "MIGRATION_BUILD_CONTEXT", ""),
@@ -204,11 +244,7 @@ if migration_enabled:
             "migration_registry_secret_name", "MIGRATION_REGISTRY_SECRET_NAME", ""
         ),
         "adapter_dir": "migration-adapter",
-        "migration_env": dict(
-            pair.split("=", 1)
-            for pair in _migration_env_pairs.split(",")
-            if "=" in pair
-        ),
+        "migration_env": _migration_env,
         "migration_secret_names": [
             s.strip()
             for s in cfg("migration_secrets", "MIGRATION_SECRETS", "").split(",")

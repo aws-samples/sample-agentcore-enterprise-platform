@@ -155,8 +155,45 @@ def test_wait_for_child_undeclared_path_accepts_any_response(child_server):
     adapter.wait_for_child(f"{child_server}/missing", timeout=5, require_2xx=False)
 
 
+def test_live_health_accepts_declared_healthy_endpoint(child_server):
+    assert adapter.check_child_health(
+        f"{child_server}/healthz", timeout=1, require_2xx=True
+    ) == (True, "HTTP 200")
+
+
+def test_live_health_rejects_declared_unhealthy_endpoint(child_server):
+    assert adapter.check_child_health(
+        f"{child_server}/missing", timeout=1, require_2xx=True
+    ) == (False, "HTTP 404")
+
+
+def test_live_health_undeclared_path_accepts_any_response(child_server):
+    assert adapter.check_child_health(
+        f"{child_server}/missing", timeout=1, require_2xx=False
+    ) == (True, "HTTP 404")
+
+
+def test_live_health_timeout_is_bounded(monkeypatch):
+    observed = []
+
+    def unavailable(_url, timeout):
+        observed.append(timeout)
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(adapter.urllib.request, "urlopen", unavailable)
+    assert (
+        adapter.live_health_timeout({"MIGRATION_LIVE_HEALTH_TIMEOUT": "999"})
+        == adapter.LIVE_HEALTH_TIMEOUT_MAX
+    )
+    assert adapter.check_child_health("http://127.0.0.1:1/", timeout=999) == (
+        False,
+        "TimeoutError: timed out",
+    )
+    assert observed == [adapter.LIVE_HEALTH_TIMEOUT_MAX]
+
+
 # ── env merge ──
-def test_child_env_merges_pairs_and_secrets():
+def test_child_env_legacy_fallback_merges_pairs_and_secrets():
     base = {"PATH": "/bin", "MIGRATION_ENV": "A=1,B=x=y"}
     child_env = adapter.build_child_env(base, {"JIRA_TOKEN": "s3cret"})
     assert child_env["PATH"] == "/bin"
@@ -164,6 +201,49 @@ def test_child_env_merges_pairs_and_secrets():
     assert child_env["B"] == "x=y"  # values may contain '='
     assert child_env["JIRA_TOKEN"] == "s3cret"
     assert "JIRA_TOKEN" not in base  # adapter's own env untouched
+
+
+def test_child_env_json_preserves_commas_equals_and_secret_precedence():
+    base = {
+        "PATH": "/bin",
+        "MIGRATION_ENV_JSON": json.dumps(
+            {"OPTIONS": "a=b,c=d", "JIRA_TOKEN": "not-the-secret"}
+        ),
+    }
+    child_env = adapter.build_child_env(base, {"JIRA_TOKEN": "s3cret"})
+    assert child_env["OPTIONS"] == "a=b,c=d"
+    assert child_env["JIRA_TOKEN"] == "s3cret"
+    assert "OPTIONS" not in base
+
+
+def test_child_env_json_is_preferred_over_legacy_pairs():
+    environ = {
+        "MIGRATION_ENV_JSON": '{"SOURCE":"json"}',
+        "MIGRATION_ENV": "SOURCE=legacy,LEGACY_ONLY=yes",
+    }
+    child_env = adapter.build_child_env(environ, {})
+    assert child_env["SOURCE"] == "json"
+    assert "LEGACY_ONLY" not in child_env
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "",
+        "{not-json}",
+        "[]",
+        '"string"',
+        '{"RETRIES": 3}',
+        '{"ENABLED": true}',
+        '{"EMPTY": null}',
+    ],
+)
+def test_child_env_json_fails_closed_on_malformed_or_non_string_values(raw):
+    with pytest.raises(
+        ValueError,
+        match="MIGRATION_ENV_JSON must be a valid JSON object of string values",
+    ):
+        adapter.build_child_env({"MIGRATION_ENV_JSON": raw}, {})
 
 
 def test_parse_pairs_rejects_malformed_entries():
@@ -231,6 +311,37 @@ def test_resolve_secrets_no_declarations_never_touches_aws():
     assert adapter.resolve_secrets({"MIGRATION_SECRETS": ""}) == {}
 
 
+# ── runtime user ──
+def test_runtime_user_rejects_lost_non_root_user():
+    with pytest.raises(RuntimeError, match="running as root"):
+        adapter.validate_runtime_user(
+            {"ADAPTER_CHILD_USER": "appuser:appgroup"}, effective_uid=0
+        )
+
+
+def test_runtime_user_accepts_non_root_and_explicit_root():
+    adapter.validate_runtime_user({"ADAPTER_CHILD_USER": "appuser"}, effective_uid=1000)
+    adapter.validate_runtime_user({"ADAPTER_CHILD_USER": "root"}, effective_uid=0)
+
+
+def test_runtime_user_rejects_numeric_uid_mismatch():
+    with pytest.raises(RuntimeError, match="does not match"):
+        adapter.validate_runtime_user(
+            {"ADAPTER_CHILD_USER": "1001:1001"}, effective_uid=1000
+        )
+
+
+def test_dockerfile_restores_source_image_user():
+    dockerfile = (REPO / "migration-adapter" / "Dockerfile").read_text()
+    assert "ARG CHILD_USER=root" in dockerfile
+    assert "ENV ADAPTER_CHILD_USER=${CHILD_USER}" in dockerfile
+    assert "USER ${CHILD_USER}" in dockerfile
+    assert dockerfile.rfind("USER ${CHILD_USER}") > dockerfile.find(
+        "pip install --no-cache-dir"
+    )
+    assert "CA_BUNDLE_B64" not in dockerfile
+
+
 # ── entrypoint guard ──
 def test_invoke_reports_dead_child(monkeypatch):
     class DeadChild:
@@ -241,3 +352,50 @@ def test_invoke_reports_dead_child(monkeypatch):
     result = adapter.invoke({"prompt": "hi"})
     assert result["status"] == "error"
     assert result["code"] == 503
+
+
+def test_invoke_rejects_unhealthy_live_child_without_forwarding(monkeypatch):
+    class AliveChild:
+        def alive(self):
+            return True
+
+    monkeypatch.setattr(adapter, "_child", AliveChild())
+    monkeypatch.setenv("MIGRATION_HEALTH_PATH", "/healthz")
+    monkeypatch.setattr(
+        adapter,
+        "check_child_health",
+        lambda *_args, **_kwargs: (False, "HTTP 503"),
+    )
+
+    def must_not_forward(*_args, **_kwargs):
+        pytest.fail("unhealthy invocation must not reach the child")
+
+    monkeypatch.setattr(adapter, "forward", must_not_forward)
+    result = adapter.invoke({"prompt": "hi"})
+    assert result == {
+        "status": "error",
+        "code": 503,
+        "error": "migrated agent health check failed (HTTP 503)",
+    }
+
+
+def test_invoke_preserves_forwarding_after_health_check(monkeypatch):
+    class AliveChild:
+        def alive(self):
+            return True
+
+    monkeypatch.setattr(adapter, "_child", AliveChild())
+    monkeypatch.setattr(
+        adapter,
+        "check_child_health",
+        lambda *_args, **_kwargs: (True, "HTTP 200"),
+    )
+    monkeypatch.setattr(
+        adapter,
+        "forward",
+        lambda payload, url: {"payload": payload, "url": url},
+    )
+    assert adapter.invoke({"prompt": "hi"}) == {
+        "payload": {"prompt": "hi"},
+        "url": adapter._invoke_url(),
+    }

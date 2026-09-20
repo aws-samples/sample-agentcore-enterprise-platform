@@ -16,24 +16,33 @@ names emitted by the platform.yaml `migration:` block — see README.md):
     MIGRATION_HEALTH_PATH    child's health endpoint; empty means "any HTTP
                              response counts as up" (no assumption about the
                              customer exposing a health route)
-    MIGRATION_ENV            extra child env, "KEY=VALUE,KEY2=VALUE2"
+    MIGRATION_ENV_JSON       extra child env as a JSON object of string values
+                             (preferred; commas and equals are lossless)
+    MIGRATION_ENV            legacy extra child env, "KEY=VALUE,KEY2=VALUE2"
     MIGRATION_SECRETS        comma-separated ENV NAMES resolved from Secrets
                              Manager into the CHILD's env only (never ours):
                              secret id <PROJECT_NAME>/<ENVIRONMENT>/migration/<NAME>
     MIGRATION_SECRET_ARNS    optional per-name override, "NAME=arn,NAME2=arn2"
     ADAPTER_CHILD_CMD        JSON array — the source image's Entrypoint+Cmd,
                              baked at image build by the migration buildspec
+    ADAPTER_CHILD_USER       source image's configured runtime user, baked from
+                             the CHILD_USER build argument; the adapter and
+                             child both run as this user
     MIGRATION_STARTUP_TIMEOUT  seconds to wait for child health (default 60)
+    MIGRATION_LIVE_HEALTH_TIMEOUT  per-invocation child health check timeout
+                                  (default 2s, capped at 5s)
     PROJECT_NAME / ENVIRONMENT  used for the default secret naming above
 
 GET /ping is BedrockAgentCoreApp's default handler: it reflects ADAPTER
-liveness, not the child's (there is no universal health hook on an arbitrary
-customer container). The supervisor thread restarts a dead child once; after a
-second death every invocation returns a structured error instead.
+liveness, not the child's. Each live invocation therefore checks both the child
+process and its configured health endpoint before forwarding. The supervisor
+thread restarts a dead child once; after a second death every invocation
+returns a structured error instead.
 """
 
 import json
 import logging
+import math
 import os
 import subprocess  # nosec B404 — supervising the customer's own command is the point
 import sys
@@ -51,6 +60,8 @@ log = logging.getLogger("migration-adapter")
 app = BedrockAgentCoreApp()
 
 STDERR_TAIL_LINES = 50
+LIVE_HEALTH_TIMEOUT_DEFAULT = 2.0
+LIVE_HEALTH_TIMEOUT_MAX = 5.0
 
 
 def parse_pairs(raw: str) -> dict[str, str]:
@@ -65,6 +76,27 @@ def parse_pairs(raw: str) -> dict[str, str]:
         key, _, value = item.partition("=")
         pairs[key.strip()] = value
     return pairs
+
+
+def parse_env_json(raw: str) -> dict[str, str]:
+    """Parse the lossless child-env contract without echoing its values."""
+    message = "MIGRATION_ENV_JSON must be a valid JSON object of string values"
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise ValueError(message) from exc
+    if not isinstance(parsed, dict) or not all(
+        isinstance(key, str) and isinstance(value, str) for key, value in parsed.items()
+    ):
+        raise ValueError(message)
+    return parsed
+
+
+def migration_env(environ: dict) -> dict[str, str]:
+    """Prefer lossless JSON; retain comma pairs only for legacy callers."""
+    if "MIGRATION_ENV_JSON" in environ:
+        return parse_env_json(environ["MIGRATION_ENV_JSON"])
+    return parse_pairs(environ.get("MIGRATION_ENV", ""))
 
 
 def secret_id_for(name: str, environ: dict) -> str:
@@ -104,12 +136,51 @@ def resolve_secrets(environ: dict, client=None) -> dict[str, str]:
 
 
 def build_child_env(environ: dict, secrets: dict[str, str]) -> dict[str, str]:
-    """Child env = our env + MIGRATION_ENV pairs + resolved secrets.
+    """Child env = our env + declared migration env + resolved secrets.
     Secrets land in the CHILD's env only; the adapter's own environ is untouched."""
     child = dict(environ)
-    child.update(parse_pairs(environ.get("MIGRATION_ENV", "")))
+    child.update(migration_env(environ))
     child.update(secrets)
     return child
+
+
+def validate_runtime_user(environ: dict, effective_uid: int | None = None) -> None:
+    """Fail closed if a declared non-root source user was lost during wrapping.
+
+    Docker applies CHILD_USER to the adapter process. The child inherits that
+    same uid from subprocess.Popen, so checking the adapter uid protects both.
+    """
+    expected = environ.get("ADAPTER_CHILD_USER", "").strip()
+    if not expected:
+        raise RuntimeError(
+            "ADAPTER_CHILD_USER is missing; rebuild the adapter with "
+            "--build-arg CHILD_USER=<source image Config.User>"
+        )
+
+    principal = expected.partition(":")[0]
+    uid = os.geteuid() if effective_uid is None else effective_uid
+    expected_is_root = principal in {"0", "root"}
+    if not expected_is_root and uid == 0:
+        raise RuntimeError(
+            f"source image declared non-root user {expected!r}, but the adapter "
+            "is running as root"
+        )
+    if principal.isdigit() and int(principal) != uid:
+        raise RuntimeError(
+            f"adapter uid {uid} does not match declared source image user {expected!r}"
+        )
+
+
+def live_health_timeout(environ: dict) -> float:
+    """Return a positive per-invocation timeout capped at five seconds."""
+    raw = environ.get("MIGRATION_LIVE_HEALTH_TIMEOUT", str(LIVE_HEALTH_TIMEOUT_DEFAULT))
+    try:
+        timeout = float(raw)
+    except (TypeError, ValueError):
+        timeout = LIVE_HEALTH_TIMEOUT_DEFAULT
+    if not math.isfinite(timeout) or timeout <= 0:
+        timeout = LIVE_HEALTH_TIMEOUT_DEFAULT
+    return min(timeout, LIVE_HEALTH_TIMEOUT_MAX)
 
 
 class Child:
@@ -178,7 +249,10 @@ def wait_for_child(
         if child is not None and child.unhealthy:
             break
         try:
-            with urllib.request.urlopen(url, timeout=2) as resp:  # nosec B310 — localhost http
+            remaining = max(deadline - time.monotonic(), 0.05)
+            with urllib.request.urlopen(  # nosec B310 — localhost http
+                url, timeout=min(2, remaining)
+            ) as resp:
                 if 200 <= resp.status < 400:
                     return
                 last_error = f"HTTP {resp.status}"
@@ -194,6 +268,26 @@ def wait_for_child(
         f"child did not become healthy at {url} within {timeout:.0f}s "
         f"(last error: {last_error})\n--- child stderr tail ---\n{tail}"
     )
+
+
+def check_child_health(
+    url: str, timeout: float, require_2xx: bool = True
+) -> tuple[bool, str]:
+    """Perform one bounded health probe for the live invocation path."""
+    try:
+        with urllib.request.urlopen(  # nosec B310 — localhost http
+            url, timeout=min(max(timeout, 0.05), LIVE_HEALTH_TIMEOUT_MAX)
+        ) as resp:
+            if 200 <= resp.status < 400:
+                return True, f"HTTP {resp.status}"
+            return False, f"HTTP {resp.status}"
+    except urllib.error.HTTPError as exc:
+        exc.close()
+        if not require_2xx:
+            return True, f"HTTP {exc.code}"
+        return False, f"HTTP {exc.code}"
+    except (OSError, ValueError) as exc:
+        return False, f"{type(exc).__name__}: {exc}"
 
 
 def forward(payload, url: str):
@@ -265,12 +359,26 @@ def _health_url() -> str:
 
 @app.entrypoint
 def invoke(payload=None):
-    if _child is not None and not _child.alive():
+    if _child is None or not _child.alive():
         return {
             "status": "error",
             "code": 503,
-            "error": "migrated agent process is not running (exited twice); "
-            "see the runtime logs for its stderr",
+            "error": "migrated agent process is not running; see the runtime "
+            "logs for its stderr",
+        }
+
+    declared_health = bool(os.environ.get("MIGRATION_HEALTH_PATH", ""))
+    healthy, detail = check_child_health(
+        _health_url(),
+        live_health_timeout(dict(os.environ)),
+        require_2xx=declared_health,
+    )
+    if not healthy:
+        log.warning("rejecting invocation: child health check failed (%s)", detail)
+        return {
+            "status": "error",
+            "code": 503,
+            "error": f"migrated agent health check failed ({detail})",
         }
     return forward(payload, _invoke_url())
 
@@ -288,13 +396,25 @@ def main():
         sys.exit(2)
 
     try:
+        validate_runtime_user(dict(os.environ))
+    except RuntimeError as exc:
+        log.error("%s", exc)
+        sys.exit(5)
+
+    try:
         secrets = resolve_secrets(dict(os.environ))
     except RuntimeError as exc:
         log.error("%s", exc)
         sys.exit(3)
 
+    try:
+        child_env = build_child_env(dict(os.environ), secrets)
+    except ValueError as exc:
+        log.error("%s", exc)
+        sys.exit(6)
+
     global _child
-    _child = Child(cmd, build_child_env(dict(os.environ), secrets))
+    _child = Child(cmd, child_env)
     _child.start()
     threading.Thread(target=_child.supervise, daemon=True).start()
 
