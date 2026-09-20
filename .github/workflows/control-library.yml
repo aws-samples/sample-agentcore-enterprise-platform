@@ -34,7 +34,7 @@ jobs:
           python-version: '3.13'
 
       - name: Install dependencies
-        run: pip install pyyaml pytest checkov
+        run: pip install -r requirements.txt checkov
 
       - name: Validate control-library against catalog (+ checkov scan)
         run: python scripts/validate_control_library.py

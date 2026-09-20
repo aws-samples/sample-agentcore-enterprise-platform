@@ -208,8 +208,7 @@ def test_export_and_summary_reuse_dashboard_public_allowlist():
     script = (root / "scripts" / "deploy.sh").read_text()
     gitignore = (root / ".gitignore").read_text()
     export_body = script.split("export_artifacts() {", 1)[1].split(
-        "# ═══════════════════════════════════════════════════════════════\n"
-        "# Main",
+        "# ═══════════════════════════════════════════════════════════════\n# Main",
         1,
     )[0]
     summary_body = script.split("print_summary() {", 1)[1].split("\n}", 1)[0]

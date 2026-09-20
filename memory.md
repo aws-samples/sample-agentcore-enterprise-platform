@@ -180,7 +180,7 @@ Never copy credential values into this file.
 
 - Full unit suite: 383 passed.
 - G0 focused auth, identity, token, dashboard, and secret-boundary suite:
-  52 passed.
+  57 passed.
 - Ruff on every changed Python file: passed.
 - Deployment config checks: passed.
 - Workshop flow checks: passed.
@@ -288,6 +288,17 @@ Never copy credential values into this file.
   appearing live.
 - After the concurrency, federated-drain, and export-handoff corrections, the
   independent blocker-only review reported no remaining merge blockers.
+- The first pull-request CI run caught a Ruff formatting mismatch and a
+  control-library job that ran the full CDK-aware test suite after installing
+  only its historical parser dependencies. The formatting was corrected and
+  that job now installs the repository's declared requirements before Checkov.
+- The new secret-boundary job also exposed that the repository-local
+  `cdk.json` expects a developer virtual environment. CI now explicitly invokes
+  the runner's installed `python3` for synthesis.
+- The failing label job is a repository baseline issue: its workflow references
+  a missing `.github/labeler.yml`; recent merged pull requests show the same
+  result. The aggregate CodeQL status is likewise separate from the passing
+  language analysis jobs and is present on recent merged pull requests.
 
 ## Commits and pull request
 
