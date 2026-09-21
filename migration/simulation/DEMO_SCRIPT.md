@@ -27,8 +27,9 @@ This document is the **facilitator's run script** for the 2-day AgentCore worksh
 
 ```bash
 # Destroy any existing deployment
-cd workshop-simulation
+cd migration/simulation
 ./run-workshop.sh --destroy
+cd ../..
 
 # Verify clean slate
 aws cloudformation list-stacks --stack-status-filter CREATE_COMPLETE --query "StackSummaries[?contains(StackName,'agentcore-workshop')].StackName"
@@ -151,7 +152,7 @@ cdk deploy agentcore-workshop-dev-memory
 
 **Show the "before" code:**
 ```bash
-cat workshop-simulation/existing-ec2-agent/agent.py
+cat migration/simulation/existing-ec2-agent/agent.py
 ```
 
 **Explain what changes:**

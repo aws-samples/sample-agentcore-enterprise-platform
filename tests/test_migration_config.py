@@ -106,6 +106,26 @@ def test_happy_path_parses():
     assert m.warnings == []  # built here, so no arm64 doubt
 
 
+def test_legacy_workshop_context_is_normalized_with_warning():
+    migration = deep(
+        (
+            "source.build.context",
+            "./workshop-simulation/existing-ec2-agent",
+        )
+    )
+    config = cfg(migration)
+
+    assert (
+        config.migration.source.build.context
+        == "./migration/simulation/existing-ec2-agent"
+    )
+    assert "pre-v0.2 repository path" in config.migration.warnings[0]
+    assert (
+        to_env(config)["MIGRATION_BUILD_CONTEXT"]
+        == "./migration/simulation/existing-ec2-agent"
+    )
+
+
 # ── source: image XOR build ──────────────────────────────────────────────────
 
 

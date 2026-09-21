@@ -31,7 +31,14 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    PrivateAttr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 # Where the Web Search built-in gateway connector exists (launch regions).
 WEB_SEARCH_REGIONS = {"us-east-1", "eu-west-1", "ap-northeast-1"}
@@ -126,7 +133,7 @@ class DeploymentConfig(BaseModel):
     centralized — everything in platform_account (the default).
     distributed — each team/workload account runs its own full copy of this
         file; platform_account binds that copy to its intended account and org
-        guardrails (terraform/org-guardrails) apply org-wide.
+        guardrails (control-library/terraform/org-guardrails) apply org-wide.
     federated — shared services (auth, gateway, observability account setting)
         live in platform_account; workload_accounts run agent runtimes plus
         their own credential provider, consuming the platform gateway via
@@ -534,6 +541,21 @@ class MigrationBuild(BaseModel):
     dockerfile: str = "Dockerfile"  # relative to context
 
     model_config = {"extra": "forbid"}
+    _compatibility_warning: str = PrivateAttr(default="")
+
+    @model_validator(mode="after")
+    def _normalize_legacy_simulation_context(self) -> MigrationBuild:
+        for legacy in ("./workshop-simulation", "workshop-simulation"):
+            if self.context == legacy or self.context.startswith(f"{legacy}/"):
+                suffix = self.context.removeprefix(legacy)
+                self._compatibility_warning = (
+                    f"migration.source.build.context {self.context!r} uses the "
+                    "pre-v0.2 repository path; it was normalized to "
+                    f"'./migration/simulation{suffix}'. Update platform.yaml."
+                )
+                self.context = f"./migration/simulation{suffix}"
+                break
+        return self
 
 
 class MigrationSource(BaseModel):
@@ -1262,6 +1284,8 @@ class MigrationConfig(BaseModel):
     @property
     def warnings(self) -> list[str]:
         out: list[str] = []
+        if self.source.build and self.source.build._compatibility_warning:
+            out.append(self.source.build._compatibility_warning)
         if self.target.runtime == "agentcore" and self.source.image:
             out.append(
                 "AgentCore Runtime is arm64-only and a pre-built image "

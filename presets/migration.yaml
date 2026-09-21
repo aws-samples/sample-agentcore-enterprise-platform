@@ -26,7 +26,7 @@ migration:
   source:
     platform: openshift       # where it runs today (shapes the docs, not the deploy)
     build:                    # build here so the image is arm64 (AgentCore Runtime is arm64-only);
-      context: ./workshop-simulation/existing-ec2-agent   # use image: for a registry reference instead
+      context: ./migration/simulation/existing-ec2-agent   # use image: for a registry reference instead
       dockerfile: Dockerfile
     port: 8000                # what the container listens on
     invoke_path: /run         # the adapter forwards POST /invocations here

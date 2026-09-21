@@ -34,9 +34,9 @@ def migration_template() -> dict[str, Any]:
         component_name="orchestrator",
         source_dir="agent-code",
         runtime_type="orchestrator",
-        build_context="workshop-simulation/existing-ec2-agent",
+        build_context="migration/simulation/existing-ec2-agent",
         build_dockerfile="Dockerfile",
-        adapter_dir="migration-adapter",
+        adapter_dir="migration/adapter",
         migration_port="8000",
         migration_invoke_path="/run",
         migration_health_path="/healthz",
@@ -86,7 +86,7 @@ def test_migration_buildspec_commands_are_valid_bash() -> None:
 
 def test_rehearsal_source_declares_a_non_root_runtime_user() -> None:
     dockerfile = (
-        REPO / "workshop-simulation" / "existing-ec2-agent" / "Dockerfile"
+        REPO / "migration/simulation" / "existing-ec2-agent" / "Dockerfile"
     ).read_text()
     assert "USER 10001:10001" in dockerfile
     assert dockerfile.index("USER 10001:10001") > dockerfile.index(

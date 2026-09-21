@@ -1,4 +1,4 @@
-# terraform/org-guardrails
+# control-library/terraform/org-guardrails
 
 Reference Terraform module for applying **org-scope** AgentCore guardrails (Service Control
 Policies today; Resource Control Policies later).
@@ -9,7 +9,7 @@ This is the Terraform half of the **scope-split** model:
 - **CDK (Python)** owns account/workload-scope controls (resource policies, IAM, VPCE, Cedar,
   Guardrails, interceptor).
 
-Both read the **same** raw policy files from [`control-library/`](../../control-library) — one
+Both read the **same** raw policy files from [`control-library/`](../..) — one
 source of truth, no duplicated policy bodies.
 
 ## What it deploys
@@ -46,7 +46,7 @@ every statement `Sid` must be unique across the library files.
 
 ```hcl
 module "agentcore_org_guardrails" {
-  source = "../../terraform/org-guardrails"
+  source = "../../control-library/terraform/org-guardrails"
 
   name_prefix = "agentcore"
   target_ids  = ["ou-abcd-1234wxyz"] # OU(s) or account(s) to attach to

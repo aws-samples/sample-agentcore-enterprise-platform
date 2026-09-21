@@ -93,7 +93,7 @@ deployment:
 
 ## Reading the diagram, layer by layer
 
-- **Governance (org scope, opt-in):** `terraform/org-guardrails/` attaches two SCPs
+- **Governance (org scope, opt-in):** `control-library/terraform/org-guardrails/` attaches two SCPs
   per target — the consolidated Gateway SCP (8 controls) and the Memory CMK SCP.
   Both are generated from `control-library/`, the single source of truth for SCP,
   Cedar, IAM, VPCE, and Guardrail policy documents.

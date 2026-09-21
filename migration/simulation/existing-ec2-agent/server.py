@@ -2,7 +2,7 @@
 
 This is what the customer's agent looks like as a service today: its own HTTP
 contract (POST /run, GET /healthz) on its own port. The migration adapter
-(migration-adapter/) fronts this unchanged with the AgentCore contract.
+(migration/adapter/) fronts this unchanged with the AgentCore contract.
 
     POST /run      {"prompt": "..."}  →  {"answer": "..."}
     GET  /healthz                     →  {"status": "ok"}

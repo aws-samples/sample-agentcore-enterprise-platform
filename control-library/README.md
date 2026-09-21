@@ -3,7 +3,8 @@
 IaC-agnostic **source of truth** for AgentCore security control definitions. Every control is
 authored once here, as **valid JSON / Cedar**, and consumed by both:
 
-- **Terraform** — org-scope guardrails (SCPs, later RCPs) under `../terraform/`.
+- **Terraform** — org-scope guardrails (SCPs, later RCPs) under
+  `terraform/org-guardrails/`.
 - **CDK (Python)** — account/workload-scope controls, via `infra_utils/policy_loader.py`.
 
 > The name is deliberately **not** "policies" — this folder holds a mix of control types
@@ -21,6 +22,7 @@ authored once here, as **valid JSON / Cedar**, and consumed by both:
 | `vpce/` | VPC endpoint policies | Account | CDK |
 | `cedar/` | AgentCore Cedar policies (explicit read permits; implicit default-deny) | Workload | CDK |
 | `guardrails/` | Bedrock Guardrails configuration | Workload | CDK |
+| `terraform/` | Deployment modules for organization-scoped controls | Org | Terraform |
 
 `catalog.yaml` is the machine-readable index. Each entry declares the control id, file, type,
 scope, valid attach points, required/optional parameters (with defaults), default enforcement

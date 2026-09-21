@@ -7,7 +7,7 @@ migration:
   source:
     platform: ec2
     build:
-      context: ./workshop-simulation/existing-ec2-agent
+      context: ./migration/simulation/existing-ec2-agent
       dockerfile: Dockerfile
     port: 8000
     invoke_path: /run

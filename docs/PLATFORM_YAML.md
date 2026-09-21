@@ -202,7 +202,7 @@ Each preset is a complete, validated `platform.yaml`; `--profile <name>` copies 
 ```yaml
 # Distributed: every team or workload account runs its own full copy of the
 # platform from this one file — auth, gateway, runtimes, all of it. Nothing is
-# shared between accounts; organisation-wide guardrails (terraform/org-guardrails)
+# shared between accounts; organisation-wide guardrails (control-library/terraform/org-guardrails)
 # are what keep the copies consistent. Pick this when teams must not depend on
 # each other's uptime or change windows. See docs/MULTI_ACCOUNT.md.
 # Modules: 3 4 5 6 9
@@ -333,7 +333,7 @@ migration:
   source:
     platform: openshift       # where it runs today (shapes the docs, not the deploy)
     build:                    # build here so the image is arm64 (AgentCore Runtime is arm64-only);
-      context: ./workshop-simulation/existing-ec2-agent   # use image: for a registry reference instead
+      context: ./migration/simulation/existing-ec2-agent   # use image: for a registry reference instead
       dockerfile: Dockerfile
     port: 8000                # what the container listens on
     invoke_path: /run         # the adapter forwards POST /invocations here
@@ -411,7 +411,8 @@ observability:
 # Platform team: the full build — every module, distributed-ready.
 # Modules: 3 4 5 A 6 7 8 9 C E
 # Distributed strategy: each workload team deploys its own copy of this file
-# into its own account; org-guardrails (terraform/) apply org-wide once.
+# into its own account; org guardrails under control-library/terraform/ apply
+# org-wide once.
 project: agentcore-workshop
 environment: dev
 region: us-east-1

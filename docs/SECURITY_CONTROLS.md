@@ -15,7 +15,7 @@ time, never template syntax that would break linting.
 
 - **`control-library/`** — single source of truth. Valid JSON / Cedar with `<<sentinel>>`
   parameters, indexed by `catalog.yaml`. See [`control-library/README.md`](https://github.com/aws-samples/sample-agentcore-enterprise-platform/blob/main/control-library/README.md).
-- **Terraform** (`terraform/org-guardrails/`) — org-scope guardrails (SCPs).
+- **Terraform** (`control-library/terraform/org-guardrails/`) — org-scope guardrails (SCPs).
 - **CDK (Python)** — account/workload-scope controls, loaded via
   `infra_utils/policy_loader.py` and toggled by feature flags.
 
@@ -34,8 +34,8 @@ against the exact lowercase string `"true"`; `-c enable_cedar=True` silently doe
 
 | # | Control | Flag(s) | Where | Default |
 |---|---|---|---|---|
-| 1 | **SCP: CMK-for-Memory** | `enable_scp_memory_enforce_cmk` + vars | `terraform/org-guardrails/` ← `control-library/scp/` | off (opt-in, see preflight) |
-| 1b | **SCP: Gateway configuration hardening** (CMK, no-auth, policy-engine=ENFORCE, approved IdP, protocol, private-endpoint targets, credential-provider, target-type) | `enable_gateway_scps` + vars | `terraform/org-guardrails/gateway.tf` ← `control-library/scp/gateway/` | off (opt-in, see preflight) |
+| 1 | **SCP: CMK-for-Memory** | `enable_scp_memory_enforce_cmk` + vars | `control-library/terraform/org-guardrails/` ← `control-library/scp/` | off (opt-in, see preflight) |
+| 1b | **SCP: Gateway configuration hardening** (CMK, no-auth, policy-engine=ENFORCE, approved IdP, protocol, private-endpoint targets, credential-provider, target-type) | `enable_gateway_scps` + vars | `control-library/terraform/org-guardrails/gateway.tf` ← `control-library/scp/gateway/` | off (opt-in, see preflight) |
 | 2 | **VPC endpoint policy** — action-scoped; org restriction covers **SigV4 callers only** (OAuth/JWT callers carry no IAM principal and pass via `Principal: "*"` per AWS docs). Requires `org_id`: without it the endpoint is created with **no policy at all** | `enable_networking`, `org_id` | `stacks/networking_stack.py` ← `control-library/vpce/` | org-scoped (SigV4) when `org_id` set |
 | 2b | **Least-privilege runtime IAM** — SSM reads are path-scoped in `infra_utils/agentcore_role.py`; `control-library/iam/runtime-execution-least-privilege.json` is a **reference policy, not deployed** by any stack (the live role still grants ECR/X-Ray/`PutMetricData` on `Resource: "*"`) | — | `infra_utils/agentcore_role.py` | partial |
 | 3 | **AgentCore Cedar policies** | `enable_cedar`, `cedar_mode` | `gateway_stack.py` ← `control-library/cedar/` | LOG_ONLY |
@@ -43,7 +43,7 @@ against the exact lowercase string `"true"`; `-c enable_cedar=True` silently doe
 | 5+6 | **Bedrock Guardrails + egress Lambda interceptor** | `enable_egress_filter` | `gateway_stack.py`, `tools/egress_interceptor/` ← `control-library/guardrails/` | **masking**, not blocking (see below) |
 | 6b | **Guardrailed-only Bedrock inference** — IAM `Null`-deny on the runtime roles for inference calls carrying no `bedrock:GuardrailIdentifier`, plus a baseline guardrail per runtime (same `control-library` artifact as item 5+6) injected into the agents via `GUARDRAIL_ID`/`GUARDRAIL_VERSION`, with `bedrock:ApplyGuardrail` allowed only on that guardrail. Incompatible with the claude-sdk patterns (they cannot attach a guardrail; the config validator refuses the combination). Verify live with `scripts/check_guardrail_enforcement.py` | `require_guardrails` | `stacks/runtime_stack.py` ← `control-library/guardrails/` | off |
 | 7 | **Observability: SNS + EventBridge alerting** | `enable_traceability` | `observability_stack.py` | off |
-| 8 | **AgentCore Identity: deny unverified-userId workload tokens**, plus a scoped credential-provider IAM reference policy | `enable_scp_identity_deny_token_for_userid` (Terraform var) | `terraform/org-guardrails/identity.tf` ← `control-library/scp/identity/`, `control-library/iam/` | enforce (denies everyone) |
+| 8 | **AgentCore Identity: deny unverified-userId workload tokens**, plus a scoped credential-provider IAM reference policy | `enable_scp_identity_deny_token_for_userid` (Terraform var) | `control-library/terraform/org-guardrails/identity.tf` ← `control-library/scp/identity/`, `control-library/iam/` | enforce (denies everyone) |
 
 ## Feature flags
 
@@ -75,7 +75,9 @@ export ORG_ID=o-yourorgid
 ENABLE_CEDAR=true ./scripts/deploy.sh deploy --module 5
 
 # Org guardrails (from the Organizations management account):
-cd terraform/org-guardrails && terraform init && terraform apply -var 'target_ids=["ou-..."]'
+terraform -chdir=control-library/terraform/org-guardrails init
+terraform -chdir=control-library/terraform/org-guardrails apply \
+  -var 'target_ids=["ou-..."]'
 ```
 
 ### Org SCP compatibility preflight
@@ -150,7 +152,7 @@ everyone until an operator supplies a real pattern. Narrow it only for a genuine
 or migration path, and prefer removing the need over widening the pattern:
 
 ```bash
-cd terraform/org-guardrails && terraform apply \
+terraform -chdir=control-library/terraform/org-guardrails apply \
   -var 'target_ids=["ou-example-11111111"]' \
   -var 'identity_approved_principal_arn_pattern=arn:aws:iam::111122223333:role/break-glass'
 ```
@@ -190,7 +192,7 @@ end user must have completed authorization before any credentials exist to retur
 
 Enterprise guardrails built on the launched AgentCore **Gateway configuration** condition keys.
 They constrain what admins can create/update (control plane), enforced via
-`terraform/org-guardrails/`:
+`control-library/terraform/org-guardrails/`:
 
 | SCP | Condition key | Effect |
 |---|---|---|

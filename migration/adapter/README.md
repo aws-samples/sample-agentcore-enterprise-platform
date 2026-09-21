@@ -99,11 +99,11 @@ through `migration.source.build.context` so CodeBuild can produce arm64.
 finch vm start
 
 # 1. Build the stand-in customer agent (arm64, like the real pipeline)
-cd workshop-simulation/existing-ec2-agent
+cd migration/simulation/existing-ec2-agent
 finch build --platform linux/arm64 -t standin:dev .
 
 # 2. Build the adapter on top of it
-cd ../../migration-adapter
+cd ../../adapter
 finch build --platform linux/arm64 \
   --build-arg SOURCE_IMAGE=standin:dev \
   --build-arg CHILD_CMD='["python","server.py"]' \

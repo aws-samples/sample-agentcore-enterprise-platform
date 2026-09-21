@@ -1,4 +1,4 @@
-"""Migration adapter unit tests — migration-adapter/adapter.py.
+"""Migration adapter unit tests — migration/adapter/adapter.py.
 
 Pure unit: the "customer agent" is a threaded stdlib http.server, Secrets
 Manager is a fake client object, and BedrockAgentCoreApp is stubbed when the
@@ -38,7 +38,7 @@ except ImportError:
     sys.modules["bedrock_agentcore.runtime"] = _fake_runtime
 
 _spec = importlib.util.spec_from_file_location(
-    "migration_adapter", REPO / "migration-adapter" / "adapter.py"
+    "migration_adapter", REPO / "migration/adapter" / "adapter.py"
 )
 adapter = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(adapter)
@@ -332,7 +332,7 @@ def test_runtime_user_rejects_numeric_uid_mismatch():
 
 
 def test_dockerfile_restores_source_image_user():
-    dockerfile = (REPO / "migration-adapter" / "Dockerfile").read_text()
+    dockerfile = (REPO / "migration/adapter" / "Dockerfile").read_text()
     assert "ARG CHILD_USER=root" in dockerfile
     assert "ENV ADAPTER_CHILD_USER=${CHILD_USER}" in dockerfile
     assert "USER ${CHILD_USER}" in dockerfile

@@ -82,9 +82,9 @@ class RuntimeStack(cdk.Stack):
         retain_data: bool = False,
         # ── Migration (image-source) mode ──
         # Set source_image (registry ref) or build_context (local dir) and the
-        # stack builds the migration adapter (migration-adapter/) ON TOP of the
+        # stack builds the migration adapter (migration/adapter/) ON TOP of the
         # customer's image instead of an agent pattern. Defaults preserve the
-        # pattern path byte-for-byte. See docs in migration-adapter/README.md.
+        # pattern path byte-for-byte. See docs in migration/adapter/README.md.
         source_image: str = "",
         build_context: str = "",
         build_dockerfile: str = "Dockerfile",
@@ -413,7 +413,7 @@ class RuntimeStack(cdk.Stack):
         if guardrail is not None:
             env_vars["GUARDRAIL_ID"] = guardrail.attr_guardrail_id
             env_vars["GUARDRAIL_VERSION"] = guardrail.attr_version
-        # Migration adapter contract (migration-adapter/adapter.py), also
+        # Migration adapter contract (migration/adapter/adapter.py), also
         # before the extra_env_vars merge so an explicit override wins.
         # ADAPTER_CHILD_CMD is baked into the image at build time, not set here.
         if migration_mode:
@@ -513,7 +513,7 @@ class RuntimeStack(cdk.Stack):
         """Buildspec phases for migration mode: obtain the customer's image
         (registry pull or local source build, always linux/arm64 — AgentCore
         Runtime accepts nothing else), capture its Entrypoint+Cmd, and build
-        the adapter (migration-adapter/) on top.
+        the adapter (migration/adapter/) on top.
 
         CodeBuild runs every command in one shell session, so variables set in
         one command (SOURCE_IMAGE, CHILD_CMD) are visible to the next.
@@ -538,7 +538,7 @@ class RuntimeStack(cdk.Stack):
         if registry_secret_name:
             # Secret JSON shape: {"username": "...", "password": "...",
             # "server": "registry.example.com"} — documented in
-            # migration-adapter/README.md and the migration preset.
+            # migration/adapter/README.md and the migration preset.
             pre_build += [
                 "echo Logging in to the source registry...",
                 (

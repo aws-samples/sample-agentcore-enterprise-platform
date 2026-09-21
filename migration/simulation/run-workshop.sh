@@ -14,7 +14,7 @@ set -euo pipefail
 # ═══════════════════════════════════════════════════════════════
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Colors
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -290,7 +290,7 @@ if [[ "$START_MODULE" -le 5 ]]; then
     echo "  3. Wire gateway URL + memory ID via env vars"
     echo "  4. That's it — the agent logic stays the same"
     echo ""
-    echo "  See: workshop-simulation/existing-ec2-agent/agent.py (before)"
+    echo "  See: migration/simulation/existing-ec2-agent/agent.py (before)"
     echo "  See: agent-code/strands-agent/agent.py (after)"
     echo ""
     log_action "Deploying: ${PREFIX}-runtime-orchestrator (pattern: strands-agent)"

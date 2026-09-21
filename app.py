@@ -187,7 +187,7 @@ orchestrator_runtime_generation = int(
 
 # ── Migration mode (platform.yaml `migration:` block / MIGRATION_* env) ──
 # An existing customer container replaces the agent pattern on the
-# runtime-orchestrator stack: the migration adapter (migration-adapter/) is
+# runtime-orchestrator stack: the migration adapter (migration/adapter/) is
 # built ON TOP of the customer's image and serves the AgentCore contract in
 # front of it. A2A stacks are untouched. Env names match platform_config's
 # to_env(); the stack args mirror them 1:1.
@@ -245,7 +245,7 @@ if migration_enabled:
         "registry_secret_name": cfg(
             "migration_registry_secret_name", "MIGRATION_REGISTRY_SECRET_NAME", ""
         ),
-        "adapter_dir": "migration-adapter",
+        "adapter_dir": "migration/adapter",
         "migration_env": _migration_env,
         "migration_secret_names": [
             s.strip()
