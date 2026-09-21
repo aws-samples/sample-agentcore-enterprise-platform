@@ -5,9 +5,11 @@
 The Agentic AI Platform EBA (Experience-Based Acceleration) is a deployable
 platform for running AI agents under enterprise governance on
 **Amazon Bedrock AgentCore** — authentication, identity, tool gateway, memory,
-observability, and security controls, stood up from one declarative
-configuration file in under an hour, in a single AWS account. Your team
-designs it, builds it and a first use case on it, verifies it, and owns it.
+observability, and security controls, driven by one declarative configuration
+file. The default workshop path is designed to stand up in under an hour in
+one AWS account; multi-account and migration paths have additional customer
+prerequisites. Your team designs it, builds it and a first use case on it,
+verifies it, and owns it.
 
 > Agents are easy to prototype and hard to run. This accelerator is the part
 > that's hard: the governed platform your agents deploy onto.
@@ -39,22 +41,32 @@ designs it, builds it and a first use case on it, verifies it, and owns it.
 
 - **"I don't have a platform — how do I start fast?"** Design from the
   greenfield profile and have a working, governed agent platform before lunch.
-  Add security controls when security shows up; they're one config flag each.
+  Select the required security controls during design; each one is an explicit
+  configuration flag that also drives verification.
 - **"I have agents on other platforms — how do I migrate?"** Keep your
-  framework. The migration profile lands your existing agent on AgentCore
-  Runtime and decouples what it used to carry inside: tools to the Gateway,
-  state to Memory, identity to your IdP, model choice to governed config.
+  existing container and framework. The migration profile places a compatible
+  arm64 container behind an adapter on AgentCore Runtime. It does not
+  automatically extract tools or state, create private connectivity, copy
+  customer data, or move triggers and traffic. Those changes remain explicit,
+  customer-operated stages with evidence and approval gates. Follow the
+  [EBA migration runbook](MIGRATION_RUNBOOK.md).
 
 Read [How it works](how-it-works.md), then head to
 [Getting started](https://github.com/aws-samples/sample-agentcore-enterprise-platform#getting-started).
 
 ## What makes it different
 
-Every capability this documentation claims has been **verified live** — the
-platform ships a `verify` command that re-tests its own promises against your
-deployment and exits non-zero on any failure. If the docs say inference without
-a guardrail is denied, that denial is checked by IAM simulation on your actual
-runtime role, not asserted in prose.
+Core accelerator-managed paths have been **verified live** in the repository's
+development environment. The platform ships a `verify` command that re-tests
+the promises selected by your configuration and exits non-zero on failure. If
+the docs say inference without a guardrail is denied, that denial is checked
+by IAM simulation on your actual runtime role, not asserted in prose.
+
+Customer-owned migration work—data procedures, existing private connectivity,
+event sources, and traffic routing—is deliberately not executed by the
+accelerator. Its readiness commands validate the recorded plan, evidence,
+rollback, and approvals; the customer remains responsible for execution and
+acceptance.
 
 ## Honest scope
 

@@ -2,14 +2,25 @@
 
 Use this runbook to rehearse moving an existing containerized agent onto
 Amazon Bedrock AgentCore during an Experience-Based Acceleration (EBA).
-It covers the path implemented by this repository:
+It covers the path implemented by this repository.
 
-> **Supported path:** an arm64 image, or source built as arm64 by the
-> accelerator, deployed to **AgentCore Runtime** in **adapter** mode.
+| Scope | What it means |
+|---|---|
+| **Supported** | An arm64 image, or source built as arm64 by the accelerator, deployed to **AgentCore Runtime** in **adapter** mode |
+| **Evidence-gated, customer-operated** | Existing private connectivity, retained or externally copied data, source trigger changes, traffic cutover, and rollback |
+| **Not supported** | ECS-on-EC2 or amd64-only targets, native mode without the adapter, or a generic data/trigger/traffic execute command |
 
 The adapter exposes AgentCore's port `8080`, `POST /invocations`, and
 `GET /ping` contract, then forwards requests to the existing container's
 configured port and paths.
+
+## Responsibilities
+
+| Role | Responsibility |
+|---|---|
+| **Platform operator** | Prepare the isolated environment, complete the manifest, build the target, run accelerator verification, and retain sanitized evidence |
+| **Customer system owner** | Define and execute any data, connectivity, event-source, traffic, and rollback procedure outside the accelerator |
+| **Separate approver** | Review the exact plan digest, evidence, abort thresholds, rollback, and approval window before readiness can pass |
 
 The following are not automatically changed by this migration path:
 

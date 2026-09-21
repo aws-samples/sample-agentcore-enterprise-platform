@@ -168,11 +168,35 @@ See [Security controls](SECURITY_CONTROLS.md).
 
 The `agents.pattern` setting selects which agent ships onto identical
 infrastructure — Strands, LangGraph, Claude Agent SDK (single and multi-agent),
-AG-UI variants, or the delegating orchestrator. Migration is not a rewrite:
-your LangGraph code stays LangGraph; what changes is that tools, state,
-identity, and model choice move out of the agent into managed services. The
-`migration` profile goes one step further and lands your *existing* container
-on the platform behind an adapter — `deploy.sh migrate plan` shows the path.
+AG-UI variants, or the delegating orchestrator. Each pattern uses the same
+platform interfaces and controls, while its framework code remains in its
+runtime container.
+
+## Migrate an existing agent
+
+The `migration` profile lands a compatible existing container on AgentCore
+Runtime behind an adapter. The adapter exposes AgentCore's invocation and
+health contract, then forwards requests to the container's configured port and
+paths. The supported path is an arm64 image—or source the accelerator builds
+as arm64—using `migration.target.runtime: agentcore` and
+`migration.target.mode: adapter`.
+
+| Accelerator deploys and verifies | Customer owns and approves |
+|---|---|
+| arm64 build or immutable image, adapter, AgentCore Runtime, basic live invocation | source application behavior, business and non-functional acceptance |
+| fixed VPC-side DNS and TLS probe for declared private dependencies | existing VPN or Transit Gateway, private DNS, private CA, and destination access |
+| canonical data, trigger, traffic, runtime, and network plans with expiring evidence gates | data procedures, event-source changes, routing, cutover, and rollback execution |
+
+The profile does not automatically move tools to Gateway or state to Memory.
+The built-in `retain-source-v1` data adapter moves no records: the migrated
+runtime continues using the customer's existing datastore over separately
+approved connectivity. Generic data-copy, webhook, schedule, queue, and
+traffic execution are intentionally unavailable.
+
+Use `deploy.sh migrate plan` for the target-only plan and
+`deploy.sh migrate readiness` for the fail-closed cutover summary. Follow the
+[EBA migration runbook](MIGRATION_RUNBOOK.md) before using this path with a
+customer.
 
 ## Grow when ready
 
