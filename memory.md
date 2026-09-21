@@ -101,6 +101,7 @@ Open evidence and ownership work:
 
 ### 2026-09-21 — Docsify project-path fallback correction
 
+- PR #89 contains the focused fallback-path correction.
 - GitHub Pages built PR #88 successfully from merge commit `ed45ca3`. Live
   desktop navigation, migration scope, favicon, and mobile table containment
   pass with no console errors on valid routes.
@@ -850,3 +851,6 @@ Never copy credential values into this file.
 - `bf82e96` — `Run documentation checks on stacked PRs`
 - Stacked pull request:
   [#88 — Make migration documentation EBA-ready](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/88)
+- `6548ba4` — `Fix Docsify sidebar fallback path`
+- Pull request:
+  [#89 — Fix Docsify sidebar fallback path](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/89)
