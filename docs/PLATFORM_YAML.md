@@ -136,7 +136,8 @@ Migrate an existing agent onto the platform.
 | `migration.network.gate.approved_at` | datetime, optional | absent | — | Timestamp with UTC offset. Supplying it asserts final approval and requires every other gate field. |
 | `migration.network.gate.evidence` | list of str | `[]` | — | One or more references in the customer's approved evidence system; do not paste payloads or secrets. |
 | `migration.network.gate.rollback` | str | `""` | — | Concise reversal procedure or reference. Required before the gate can pass. |
-| `migration.stages.data.strategy` | one of: `none`, `external-copy` | `'none'` | — | `none` keeps data movement out of scope. `external-copy` records and gates a separately designed source-specific copy; it does not execute it. |
+| `migration.stages.data.strategy` | one of: `none`, `retain-source`, `external-copy` | `'none'` | — | `none` keeps data movement out of scope. `retain-source` uses versioned retain-source dataset contracts. `external-copy` records and gates a separately designed customer procedure; neither strategy runs a copy during deployment. |
+| `migration.stages.data.datasets` | list of block | `[]` | — | Up to 25 versioned retain-source dataset contracts. Each names a declared private dependency plus customer-approved classification, retention, identity-mapping, and validation references. |
 | `migration.stages.data.gate.owner` | str | `""` | — | Team or alias accountable for executing and reversing this stage. |
 | `migration.stages.data.gate.approver` | str | `""` | — | Separate team or alias that accepted the referenced evidence. |
 | `migration.stages.data.gate.approved_at` | datetime, optional | absent | — | Timestamp with UTC offset. Supplying it asserts final approval and requires every other gate field. |
@@ -316,7 +317,7 @@ migration:
     # blocks cutover until each enabled stage has owner/approver/evidence/
     # rollback/approved_at recorded under its gate.
     data:
-      strategy: none          # external-copy after a source-specific plan is approved
+      strategy: none          # retain-source or external-copy after a source-specific plan is approved
     triggers:
       strategy: none          # external-shadow; required before event-source cutover
     traffic:

@@ -19,6 +19,7 @@ platform.yaml is optional — every existing flag keeps working without it.
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import os
@@ -677,13 +678,68 @@ class MigrationGate(BaseModel):
         return not self.blockers
 
 
-class MigrationDataStage(BaseModel):
-    """Optional customer-data move; execution remains source-specific."""
+class MigrationRetainedDataset(BaseModel):
+    """One existing private datastore retained behind the migrated runtime."""
 
-    strategy: Literal["none", "external-copy"] = "none"
+    name: str = Field(pattern=r"^[a-z][a-z0-9-]{2,40}$")
+    adapter: Literal["retain-source-v1"] = "retain-source-v1"
+    dependency: str
+    classification_reference: str = Field(min_length=1, max_length=500)
+    retention_reference: str = Field(min_length=1, max_length=500)
+    identity_mapping_reference: str = Field(min_length=1, max_length=500)
+    validation_reference: str = Field(min_length=1, max_length=500)
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("dependency")
+    @classmethod
+    def _dependency_is_a_hostname(cls, v: str) -> str:
+        if not _HOSTNAME_RE.fullmatch(v):
+            raise ValueError(
+                "dependency must be a hostname without scheme, port, or path"
+            )
+        return v
+
+    @field_validator(
+        "classification_reference",
+        "retention_reference",
+        "identity_mapping_reference",
+        "validation_reference",
+    )
+    @classmethod
+    def _references_are_single_line(cls, v: str) -> str:
+        if v != v.strip() or "\n" in v or "\r" in v:
+            raise ValueError("must be a trimmed single-line evidence reference")
+        return v
+
+
+class MigrationDataStage(BaseModel):
+    """Optional customer-data handling; execution remains source-specific."""
+
+    strategy: Literal["none", "retain-source", "external-copy"] = "none"
+    datasets: list[MigrationRetainedDataset] = Field(
+        default_factory=list, max_length=25
+    )
     gate: MigrationGate = Field(default_factory=MigrationGate)
 
     model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def _strategy_has_the_right_dataset_contract(self) -> MigrationDataStage:
+        if self.strategy == "retain-source" and not self.datasets:
+            raise ValueError(
+                "strategy 'retain-source' requires at least one dataset using "
+                "adapter 'retain-source-v1'"
+            )
+        if self.strategy != "retain-source" and self.datasets:
+            raise ValueError(
+                "datasets are currently supported only with strategy "
+                "'retain-source'; executable copy adapters are not installed"
+            )
+        names = [dataset.name for dataset in self.datasets]
+        if len(names) != len(set(names)):
+            raise ValueError("dataset names must be unique")
+        return self
 
 
 class MigrationTriggerStage(BaseModel):
@@ -827,6 +883,17 @@ class MigrationConfig(BaseModel):
                 "requires migration.stages.triggers.strategy='external-shadow'; "
                 "shift the event source through a disabled/shadow target before "
                 "moving traffic"
+            )
+        retained_dependencies = {
+            dataset.dependency for dataset in self.stages.data.datasets
+        }
+        undeclared = sorted(
+            retained_dependencies - set(self.network.private_dependencies)
+        )
+        if undeclared:
+            raise ValueError(
+                "retain-source datasets must name dependencies from "
+                f"migration.network.private_dependencies; missing {undeclared}"
             )
         return self
 
@@ -1444,6 +1511,64 @@ class MigrationReadinessCheck:
     detail: str
 
 
+def migration_data_plan_document(config: PlatformConfig) -> dict:
+    """Canonical, secret-free data plan whose digest can be approved."""
+    m = config.migration
+    if m is None:
+        return {}
+    document = {
+        "version": "migration-data-plan/v1",
+        "project": config.project,
+        "environment": config.environment,
+        "region": config.region,
+        "target": {
+            "runtime": m.target.runtime,
+            "mode": m.target.mode,
+        },
+        "strategy": m.stages.data.strategy,
+        "datasets": [
+            dataset.model_dump(mode="json")
+            for dataset in sorted(m.stages.data.datasets, key=lambda item: item.name)
+        ],
+    }
+    canonical = json.dumps(
+        document,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    return {
+        **document,
+        "digest": f"sha256:{hashlib.sha256(canonical).hexdigest()}",
+    }
+
+
+def _data_stage_check(config: PlatformConfig) -> MigrationReadinessCheck:
+    m = config.migration
+    assert m is not None
+    stage = m.stages.data
+    check = _gated_stage(
+        "data",
+        stage.strategy != "none",
+        stage.gate,
+        ready_detail=f"{stage.strategy} evidence approved",
+        skipped_detail="strategy is none",
+    )
+    if check.status != "READY":
+        return check
+    digest = migration_data_plan_document(config)["digest"]
+    if digest not in stage.gate.evidence:
+        return MigrationReadinessCheck(
+            "data",
+            "BLOCKED",
+            f"gate evidence must include this exact plan digest: {digest}",
+        )
+    return MigrationReadinessCheck(
+        "data",
+        "READY",
+        f"{stage.strategy} plan {digest} approved",
+    )
+
+
 def _gated_stage(
     name: str,
     required: bool,
@@ -1491,13 +1616,7 @@ def migration_readiness(config: PlatformConfig) -> list[MigrationReadinessCheck]
             ),
             skipped_detail="no private dependencies declared",
         ),
-        _gated_stage(
-            "data",
-            m.stages.data.strategy != "none",
-            m.stages.data.gate,
-            ready_detail=f"{m.stages.data.strategy} evidence approved",
-            skipped_detail="strategy is none",
-        ),
+        _data_stage_check(config),
         _gated_stage(
             "triggers",
             m.stages.triggers.strategy != "none",
@@ -1514,6 +1633,69 @@ def migration_readiness(config: PlatformConfig) -> list[MigrationReadinessCheck]
         ),
     ]
     return checks
+
+
+def migration_data_ready(config: PlatformConfig) -> bool:
+    """Whether the declared data stage is not required or fully approved."""
+    m = config.migration
+    if m is None:
+        return False
+    checks = {check.name: check for check in migration_readiness(config)}
+    required = ["data"]
+    if m.network.private_dependencies:
+        required.append("networking")
+    return all(checks[name].status in {"READY", "NOT REQUIRED"} for name in required)
+
+
+def migration_data_plan_lines(config: PlatformConfig) -> list[str]:
+    """Human-readable data plan with the approval-bound digest."""
+    m = config.migration
+    if m is None:
+        return ["Migration data plan: no migration block."]
+    stage = m.stages.data
+    if stage.strategy == "none":
+        return [
+            "Migration data plan:",
+            "  NOT REQUIRED: strategy is none; no customer data will be moved",
+        ]
+
+    document = migration_data_plan_document(config)
+    lines = [
+        "Migration data plan:",
+        f"  Strategy: {stage.strategy}",
+        f"  Digest: {document['digest']}",
+    ]
+    if stage.strategy == "retain-source":
+        lines += [
+            (
+                "  Execution: no copy; the migrated runtime keeps the existing "
+                "private datastore"
+            ),
+            "  Datasets:",
+        ]
+        lines += [
+            (
+                f"    {dataset.name}: {dataset.adapter} via {dataset.dependency}; "
+                f"classification={dataset.classification_reference}; "
+                f"retention={dataset.retention_reference}; "
+                f"identity={dataset.identity_mapping_reference}; "
+                f"validation={dataset.validation_reference}"
+            )
+            for dataset in sorted(stage.datasets, key=lambda item: item.name)
+        ]
+    else:
+        lines.append(
+            "  Execution: external only; this accelerator has no generic copy adapter"
+        )
+
+    data_check = {check.name: check for check in migration_readiness(config)}["data"]
+    lines.append(f"  Gate: {data_check.status} — {data_check.detail}")
+    if data_check.status != "READY":
+        lines.append(
+            "  Approval: add the exact digest above to gate.evidence with the "
+            "customer evidence reference"
+        )
+    return lines
 
 
 def migration_cutover_ready(config: PlatformConfig) -> bool:
@@ -1635,6 +1817,8 @@ def migration_plan(config: PlatformConfig, account: str = "") -> list[str]:
                 "the customer side."
             ),
         ]
+    if m.stages.data.strategy != "none":
+        lines += ["", *migration_data_plan_lines(config)]
     lines += ["", *migration_readiness_lines(config)]
     if m.warnings:
         lines += ["", "Warnings:"]
@@ -1797,7 +1981,17 @@ def resolve_region(root: Path | None = None) -> str:
 def _main() -> int:
     flags = {a for a in sys.argv[1:] if a.startswith("--")}
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    if flags & {"--plan", "--design", "--readiness"} and not args:
+    if (
+        flags
+        & {
+            "--plan",
+            "--design",
+            "--readiness",
+            "--data-plan",
+            "--data-readiness",
+        }
+        and not args
+    ):
         # --plan alone reads the deployment manifest, like deploy.sh does.
         root = Path(__file__).resolve().parents[1]
         args = [os.environ.get("PLATFORM_CONFIG") or str(root / "platform.yaml")]
@@ -1807,6 +2001,8 @@ def _main() -> int:
         "--plan",
         "--design",
         "--readiness",
+        "--data-plan",
+        "--data-readiness",
     }
     if (
         len(args) != 1
@@ -1818,13 +2014,16 @@ def _main() -> int:
             "--plan",
             "--design",
             "--readiness",
+            "--data-plan",
+            "--data-readiness",
             "--effective-env",
         }
         or ("--effective-env" in flags and not action_flags)
     ):
         print(
             "usage: python -m infra_utils.platform_config "
-            "[--export | --stacks | --plan | --design | --readiness] "
+            "[--export | --stacks | --plan | --design | --readiness | "
+            "--data-plan | --data-readiness] "
             "[--effective-env] <platform.yaml>",
             file=sys.stderr,
         )
@@ -1876,6 +2075,12 @@ def _main() -> int:
     if "--readiness" in flags:
         print("\n".join(migration_readiness_lines(config)))
         return 0 if migration_cutover_ready(config) else 1
+    if "--data-plan" in flags:
+        print("\n".join(migration_data_plan_lines(config)))
+        return 0
+    if "--data-readiness" in flags:
+        print("\n".join(migration_data_plan_lines(config)))
+        return 0 if migration_data_ready(config) else 1
     print(f"OK: {args[0]}")
     print(config.model_dump_json(indent=2))
     return 0

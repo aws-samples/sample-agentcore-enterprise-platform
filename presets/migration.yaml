@@ -46,7 +46,7 @@ migration:
     # blocks cutover until each enabled stage has owner/approver/evidence/
     # rollback/approved_at recorded under its gate.
     data:
-      strategy: none          # external-copy after a source-specific plan is approved
+      strategy: none          # retain-source or external-copy after a source-specific plan is approved
     triggers:
       strategy: none          # external-shadow; required before event-source cutover
     traffic:
