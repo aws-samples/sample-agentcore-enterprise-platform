@@ -4,7 +4,6 @@ Start here
 - [Overview](home.md)
 - [How it works](how-it-works.md)
 - [Getting started](https://github.com/aws-samples/sample-agentcore-enterprise-platform#getting-started)
-- [platform.yaml reference](PLATFORM_YAML.md)
 
 Design
 - [platform.yaml reference](PLATFORM_YAML.md)
@@ -27,6 +26,10 @@ Build
 - [Choose an agent framework](https://github.com/aws-samples/sample-agentcore-enterprise-platform#choose-an-agent-framework)
 - [Add gateway tools](GATEWAY_TARGETS.md)
 - [Build a use case](PLATFORM_INTERFACE.md)
+
+Migrate
+- [EBA migration runbook](MIGRATION_RUNBOOK.md)
+- [Migration configuration](PLATFORM_YAML.md?id=migration)
 
 Verify
 - [Testing and verification](TESTING.md)

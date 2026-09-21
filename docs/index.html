@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="description" content="Agentic AI Platform EBA documentation — deploy a governed agent platform on Amazon Bedrock AgentCore in under an hour." />
+  <meta name="description" content="Design, build, verify, and migrate governed agent platforms on Amazon Bedrock AgentCore." />
   <title>Agentic AI Platform EBA Docs</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
@@ -146,6 +147,16 @@
     .app-name-link { color: var(--ink) !important; font-family: "Fraunces", serif; }
     .markdown-section strong { color: var(--ink); }
     body.close .sidebar-toggle { background-color: transparent; }
+    @media screen and (max-width: 768px) {
+      .markdown-section { padding: 2rem 1.5rem 4rem; }
+      .markdown-section table {
+        display: block;
+        width: 100%;
+        max-width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+    }
   </style>
 </head>
 <body>

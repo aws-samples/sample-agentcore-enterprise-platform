@@ -13,15 +13,15 @@ operational readiness review.
 
 ## Current milestone
 
-**G1 — production design baseline merged; migration EBA path awaiting roll-up**
+**G1 — production design and migration merged; documentation ready for review**
 
-Branch: `feat/migration-cutover-plan`
+Branch: `docs-migration-eba-site` (PR #88 targets `main`)
 
 G0 merged through PR #79. G1 implementation merged through PR #76. PR #80
 reached `main`, but PRs #81–#86 merged into their stacked base branches rather
-than `main`. PR #87 rolls the intact final stack tip onto `main`; until it
-merges, GitHub Pages cannot publish the migration runbook or current generated
-configuration reference.
+than `main`. PR #87 landed the intact final migration stack on `main` on
+2026-09-21. PR #88 now contains only the customer-facing documentation and
+documentation-integrity changes.
 
 - [x] Add explicit `workshop` and `production` deployment modes.
 - [x] Add a production preset that requires enterprise identity, networking,
@@ -68,6 +68,36 @@ Open evidence and ownership work:
   accelerator-managed runtime work from customer-operated data/network/
   trigger/traffic changes, qualify live-verification claims, add a useful 404
   page and favicon, and enforce internal-link/sidebar integrity in CI.
+
+### 2026-09-21 — customer-facing migration documentation remediation
+
+- PR #87 merged and PR #88 was explicitly retargeted to `main`; its diff
+  contains only the intended documentation and documentation-integrity files.
+- The homepage and workflow guide now describe the implemented migration path
+  precisely: compatible arm64 source/image, adapter, AgentCore Runtime, and
+  configuration-aware verification. They no longer claim that migration
+  automatically extracts tools or state.
+- Customer-operated connectivity, data, event-source, traffic, cutover, and
+  rollback work is separated from accelerator-managed work. The runbook opens
+  with supported/evidence-gated/unsupported scope and accountable roles.
+- A dedicated Migrate navigation section links both the EBA runbook and the
+  generated migration configuration. The duplicate top-level
+  `platform.yaml` link was removed.
+- Mobile reference tables now remain inside the 390-pixel document and scroll
+  horizontally within their 342-pixel content area. The site also has a local
+  favicon and a useful `_404.md`; the expected missing-page request returns
+  404 once and the fallback page itself loads successfully.
+- `scripts/check_docs.py` and a SHA-pinned GitHub Actions workflow now fail on
+  broken local Markdown targets, duplicate or missing required sidebar routes,
+  missing local HTML assets, or a missing Docsify not-found page.
+- Evidence passes: 504 repository tests; documentation integrity across 32
+  Markdown files and 126 local links; Ruff check/format; diff whitespace; and
+  browser checks for desktop navigation/search, runbook rendering, mobile
+  table containment, favicon loading, and the not-found fallback.
+- PR #88's documentation-integrity and label checks pass. The documentation
+  workflow intentionally runs on stacked pull requests as well as `main`.
+- This branch changes documentation and repository CI only. It performs no AWS,
+  customer network, data, event-source, or traffic mutation.
 
 ### 2026-09-21 — staged migration readiness and next implementation boundary
 
@@ -799,3 +829,7 @@ Never copy credential values into this file.
   [#82 — Add migration verification and EBA runbook](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/82)
 - Roll-up pull request:
   [#87 — Land migration hardening stack onto main](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/87)
+- `52b717a` — `Make migration documentation EBA-ready`
+- `bf82e96` — `Run documentation checks on stacked PRs`
+- Stacked pull request:
+  [#88 — Make migration documentation EBA-ready](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/88)
