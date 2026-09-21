@@ -13,15 +13,15 @@ operational readiness review.
 
 ## Current milestone
 
-**G1 — production design baseline merged; migration EBA path live-validated**
+**G1 — production design baseline merged; migration EBA path awaiting roll-up**
 
 Branch: `feat/migration-cutover-plan`
 
-G0 merged through PR #79. G1 implementation merged through PR #76. Migration
-hardening is split across stacked PRs #80, #81, and #82. The migration
-readiness gate is in PR #83, private-dependency validation is in PR #84, and
-the source-specific data plan is in PR #85. Trigger/traffic cutover planning
-continues in PR #86, stacked after #85.
+G0 merged through PR #79. G1 implementation merged through PR #76. PR #80
+reached `main`, but PRs #81–#86 merged into their stacked base branches rather
+than `main`. PR #87 rolls the intact final stack tip onto `main`; until it
+merges, GitHub Pages cannot publish the migration runbook or current generated
+configuration reference.
 
 - [x] Add explicit `workshop` and `production` deployment modes.
 - [x] Add a production preset that requires enterprise identity, networking,
@@ -48,6 +48,26 @@ Open evidence and ownership work:
   the retired client allow-list/checkpoints and verify the final state.
 - [ ] Populate, review, and approve the five G1 governance artifacts for the
   specific customer; draft templates and green synthesis do not close G1.
+
+### 2026-09-21 — migration stack landing and documentation audit
+
+- GitHub's remote graph confirmed that PR #80 reached `main`, while PRs
+  #81–#86 merged sideways into their stacked base branches. Their review state
+  was complete, but their adapter, verification, networking, data, cutover,
+  and documentation commits were absent from `main`.
+- PR #87 targets `main` from the intact `feat/migration-cutover-plan` tip. It
+  is a landing correction only and performs no AWS or customer-system change.
+- The public GitHub Pages site consequently returned 404 for
+  `MIGRATION_RUNBOOK`, served an older `platform.yaml` reference, and offered
+  no migration navigation.
+- The local final-stack documentation renders the runbook successfully at
+  desktop and mobile widths. The generated `platform.yaml` tables overflow
+  their 390-pixel mobile viewport, however, and need a bounded horizontal
+  scroll treatment.
+- Follow-up documentation work must add migration navigation, distinguish
+  accelerator-managed runtime work from customer-operated data/network/
+  trigger/traffic changes, qualify live-verification claims, add a useful 404
+  page and favicon, and enforce internal-link/sidebar integrity in CI.
 
 ### 2026-09-21 — staged migration readiness and next implementation boundary
 
@@ -777,3 +797,5 @@ Never copy credential values into this file.
 - `1eaa1bd` — `Fix migration source image build syntax`
 - Stacked pull request:
   [#82 — Add migration verification and EBA runbook](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/82)
+- Roll-up pull request:
+  [#87 — Land migration hardening stack onto main](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/87)
