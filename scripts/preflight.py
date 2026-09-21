@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import re
 import shutil
-import subprocess
+import subprocess  # nosec B404 — fixed argv, no shell, exact AWS read allow-list
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -48,7 +48,7 @@ class CommandRunner:
         ):
             return CommandResult(1, stderr="blocked non-read-only AWS command")
         try:
-            completed = subprocess.run(
+            completed = subprocess.run(  # nosec B603, B607 — see class contract
                 list(args),
                 check=False,
                 capture_output=True,
