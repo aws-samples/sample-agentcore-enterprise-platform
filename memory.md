@@ -21,7 +21,7 @@ G0 merged through PR #79. G1 implementation merged through PR #76. Migration
 hardening is split across stacked PRs #80, #81, and #82. The migration
 readiness gate is in PR #83, private-dependency validation is in PR #84, and
 the source-specific data plan is in PR #85. Trigger/traffic cutover planning
-continues on the current branch stacked after #85.
+continues in PR #86, stacked after #85.
 
 - [x] Add explicit `workshop` and `production` deployment modes.
 - [x] Add a production preset that requires enterprise identity, networking,
