@@ -94,6 +94,8 @@ Open evidence and ownership work:
   Markdown files and 126 local links; Ruff check/format; diff whitespace; and
   browser checks for desktop navigation/search, runbook rendering, mobile
   table containment, favicon loading, and the not-found fallback.
+- PR #88's documentation-integrity and label checks pass. The documentation
+  workflow intentionally runs on stacked pull requests as well as `main`.
 - This branch changes documentation and repository CI only. It performs no AWS,
   customer network, data, event-source, or traffic mutation.
 
@@ -828,5 +830,6 @@ Never copy credential values into this file.
 - Roll-up pull request:
   [#87 — Land migration hardening stack onto main](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/87)
 - `52b717a` — `Make migration documentation EBA-ready`
+- `bf82e96` — `Run documentation checks on stacked PRs`
 - Stacked pull request:
   [#88 — Make migration documentation EBA-ready](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/88)
