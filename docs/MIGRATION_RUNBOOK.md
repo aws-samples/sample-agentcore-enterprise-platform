@@ -70,21 +70,24 @@ all of them in `platform.yaml`, then run `design` again. At minimum, review:
 - which `migration.stages` are truly in scope; leave their strategy `none`
   until a customer-specific execution and rollback plan exists
 
-An enabled external stage uses this gate shape (references only—do not paste
-customer data or credentials):
+An enabled stage uses this gate shape (references only—do not paste customer
+data or credentials). Add the exact digest printed for a data, trigger, or
+traffic plan before setting `approved_at`:
 
 ```yaml
-migration:
-  stages:
-    traffic:
-      strategy: external-canary
-      gate:
-        owner: platform-migration-team
-        approver: customer-change-approver
-        evidence: [CHG-12345/canary-rehearsal]
-        rollback: CHG-12345/rollback-procedure
-        approved_at: 2026-09-21T12:00:00+00:00
+gate:
+  owner: platform-migration-team
+  approver: customer-change-approver
+  evidence:
+    - CHG-12345/rehearsal
+    - "sha256:<exact-plan-digest>"
+  rollback: CHG-12345/rollback-procedure
+  approved_at: 2026-09-21T07:00:00+00:00
+  expires_at: 2026-09-21T11:00:00+00:00
 ```
+
+Approval must still be valid at readiness time and cannot last more than seven
+days. Use the customer's shorter change window when one exists.
 
 ### Retain the existing datastore
 
@@ -110,7 +113,7 @@ migration:
           identity_mapping_reference: IDENTITY-MAP-123
           validation_reference: DATA-TEST-123
       gate:
-        # owner, approver, rollback, approved_at, and evidence are required
+        # owner, approver, rollback, approved_at, expires_at, and evidence required
         evidence: [CHG-12345/data-review]
 ```
 
@@ -136,6 +139,75 @@ procedure, but the accelerator has no generic executable copy adapter. It
 never starts data movement during `design`, `build`, or `verify`. Add an
 executable adapter only after defining source snapshot semantics, identity
 mapping, encryption, idempotency, reconciliation, and reverse replication.
+
+### Plan the source trigger and traffic cutover
+
+The cutover contract is source-specific and does not create or modify the
+customer's event source or router:
+
+- HTTP can use a customer-owned percentage canary. An optional shadow rehearsal
+  must be read-only or idempotent.
+- Webhooks require signature-validation evidence plus a read-only or idempotent
+  shadow path before a customer-owned percentage canary.
+- Schedules require a dry-run or idempotent shadow target followed by an atomic
+  switch; percentage canaries are rejected.
+- Queues require producer-side dual-publish to a separate shadow destination,
+  with idempotency evidence, followed by an atomic switch. Never add a second
+  migration consumer to the source queue: it would steal production work.
+
+For example, a webhook rehearsal and canary records the full external
+procedure:
+
+```yaml
+migration:
+  source:
+    trigger: webhook
+  stages:
+    triggers:
+      strategy: external-shadow
+      source_reference: WEBHOOK-SOURCE-123
+      shadow_reference: WEBHOOK-SHADOW-123
+      safety_mode: idempotent
+      idempotency_reference: IDEMPOTENCY-123
+      signature_validation_reference: WEBHOOK-SIGNATURE-123
+      validation_reference: WEBHOOK-TEST-123
+    traffic:
+      strategy: external-canary
+      router_reference: ROUTER-123
+      source_reference: SOURCE-ROUTE-123
+      target_reference: TARGET-ROUTE-123
+      metrics_reference: DASHBOARD-123
+      canary_steps_percent: [5, 25, 100]
+      abort:
+        max_error_rate_percent: 1
+        max_p95_latency_ms: 5000
+        max_failed_events: 0
+        observation_minutes: 15
+```
+
+Render the plans before approval:
+
+```bash
+./scripts/deploy.sh migrate cutover plan
+```
+
+Before deployment this intentionally reports a missing runtime receipt. After
+the live verification in step 5, add the printed runtime digest to
+`runtime.gate.evidence`, the network digest to `network.gate.evidence` when
+private dependencies exist, the trigger digest to `triggers.gate.evidence`,
+and the traffic digest to `traffic.gate.evidence`. Complete every applicable
+gate, then run:
+
+```bash
+./scripts/deploy.sh migrate cutover readiness
+```
+
+Changing the AWS account, runtime source or effective identity/model/security
+configuration, deployed artifact, VPC placement, network/DNS/CA configuration,
+trigger safety, traffic step, abort threshold, or in-scope data plan changes
+the relevant digest and invalidates the prior approval. Traffic approval must
+follow every required prerequisite approval. The readiness command is
+read-only; execution remains an approved customer operation.
 
 Do not put secret values in `platform.yaml`. Prefer a source build because the
 remote CodeBuild job produces arm64. If supplying an image, verify its arm64
@@ -188,6 +260,8 @@ repository:
 
 - The current event source can route to AgentCore, and its payload is accepted
   by the migrated agent.
+- Webhook signatures are validated; schedules have a dry-run/idempotent
+  rehearsal; and queue shadows use producer dual-publish to a separate queue.
 - Webhook, scheduler, or queue cutover has a tested reversal procedure.
 - Required private destinations are reachable from the target VPC through an
   existing, approved VPN or Transit Gateway path.
@@ -222,7 +296,7 @@ Then run configuration-aware verification:
 ```
 
 This verifies the target, not permission to move traffic. Check the independent
-cutover gate:
+cutover summary:
 
 ```bash
 ./scripts/deploy.sh migrate readiness
@@ -231,6 +305,8 @@ cutover gate:
 The command exits non-zero while traffic strategy is `none` or any enabled
 stage lacks its evidence. A non-zero result does not prevent a safe
 target-only rehearsal; it prevents treating that rehearsal as cutover-ready.
+Use `migrate cutover plan` and `migrate cutover readiness` for the detailed
+trigger/traffic procedure and approval-bound digests.
 
 When `migration.network.private_dependencies` is non-empty, the networking
 stack adds a fixed allow-list probe in the runtime's private subnets and
@@ -258,10 +334,26 @@ basic invoke proves availability of the adapter path; it does not prove the
 agent's business behavior, authorization model, data correctness, capacity, or
 private dependency access.
 
+After a successful live verification, complete
+`migration.stages.runtime` with the target AWS account, the runtime stack's
+`RuntimeArn` and `SourceHash` outputs, the immutable ECR image digest resolved
+from its `ImageUri`, and a reference to the retained verification evidence.
+Complete its owner/approver gate and add the runtime digest printed by
+`migrate cutover plan`. A mutable ECR tag or a successful synthesis is not a
+runtime receipt.
+
+When private dependencies are declared, also complete
+`migration.network.receipt` with the deployed VPC ID, private subnet IDs,
+security group IDs, the retained probe-verification reference, and the exact
+tested Secrets Manager CA version when a private CA is used. Add the printed
+network digest to `network.gate.evidence`. Replacing the VPC/probe or rotating
+the CA requires another probe run and approval.
+
 ## 6. Cut over with an immediate rollback path
 
-Only cut over after `deploy.sh migrate readiness` returns zero and the
-customer accepts the referenced evidence and rollback trigger.
+Only cut over after `deploy.sh migrate cutover readiness` returns zero and the
+customer accepts the referenced evidence, abort thresholds, and rollback
+trigger. The command grants no permission and changes no external system.
 Record the source endpoint/configuration before changing traffic.
 
 If a cutover check fails:
@@ -309,11 +401,16 @@ was pre-approved. Production mode never sweeps retained service log groups.
 - [ ] Secret names, ownership, rotation, and access policies reviewed
 - [ ] Build and CloudFormation results retained
 - [ ] `deploy.sh verify` output retained, including the successful live invoke
+- [ ] Runtime account, ARN, SourceHash, immutable ECR digest, and plan digest approved
+- [ ] VPC/subnet/security-group/probe receipt and tested CA version approved
 - [ ] Customer business-flow tests and expected outputs retained
 - [ ] Identity, authorization, data-boundary, and private dependency tests retained
 - [ ] Logs, traces, alarms, dashboards, and support ownership demonstrated
 - [ ] Capacity, timeout, retry, idempotency, and failure tests completed
 - [ ] Event/private-connectivity prerequisites and cutover owner confirmed
+- [ ] Trigger plan digest recorded and approved when trigger work is in scope
+- [ ] Traffic plan digest, steps/switch, metrics, and abort thresholds approved
+- [ ] All gate expirations cover the cutover window and remain valid
 - [ ] `deploy.sh migrate readiness` passed for the completed customer manifest
 - [ ] Rollback trigger, source endpoint, reversal steps, and decision owner recorded
 - [ ] Rollback rehearsal completed and timed

@@ -26,7 +26,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -63,6 +63,13 @@ _BLOB_RE = re.compile(r"^[A-Za-z0-9+=]{32,}$")
 # (check-contract.sh) and a real customer cannot be allocated a
 # repeating-digit id, so accepting it costs nothing.
 _ACCOUNT_SENTINELS = {"000000000000", "123456789012"}
+
+
+def _single_line_reference(value: str, label: str = "reference") -> str:
+    """Reject terminal controls and ambiguous surrounding whitespace."""
+    if value != value.strip() or (value and not value.isprintable()):
+        raise ValueError(f"must be a trimmed, printable single-line {label}")
+    return value
 
 
 def placeholders_allowed() -> bool:
@@ -627,13 +634,28 @@ class MigrationGate(BaseModel):
     the audit record to be complete.
     """
 
-    owner: str = ""
-    approver: str = ""
+    owner: str = Field(default="", max_length=200)
+    approver: str = Field(default="", max_length=200)
     approved_at: datetime | None = None
-    evidence: list[str] = Field(default_factory=list)
-    rollback: str = ""
+    expires_at: datetime | None = None
+    evidence: list[str] = Field(default_factory=list, max_length=50)
+    rollback: str = Field(default="", max_length=2000)
 
     model_config = {"extra": "forbid"}
+
+    @field_validator("owner", "approver", "rollback")
+    @classmethod
+    def _text_is_safe_to_render(cls, v: str) -> str:
+        return _single_line_reference(v)
+
+    @field_validator("evidence")
+    @classmethod
+    def _evidence_is_safe_to_render(cls, v: list[str]) -> list[str]:
+        for item in v:
+            if len(item) > 500:
+                raise ValueError("evidence references must be at most 500 characters")
+            _single_line_reference(item, "evidence reference")
+        return v
 
     @model_validator(mode="after")
     def _approval_is_complete(self) -> MigrationGate:
@@ -646,8 +668,10 @@ class MigrationGate(BaseModel):
                 "owner and approver must be different for separation of duties"
             )
         if self.approved_at is None:
+            if self.expires_at is not None:
+                raise ValueError("expires_at requires approved_at")
             return self
-        missing = self.blockers
+        missing = self._missing_fields()
         if missing:
             raise ValueError(
                 "approved_at requires a complete gate; missing " + ", ".join(missing)
@@ -656,10 +680,18 @@ class MigrationGate(BaseModel):
             raise ValueError(
                 "approved_at must include a UTC offset, for example +00:00"
             )
+        if self.approved_at > datetime.now(timezone.utc) + timedelta(minutes=5):
+            raise ValueError("approved_at cannot be in the future")
+        assert self.expires_at is not None
+        if self.expires_at.tzinfo is None:
+            raise ValueError("expires_at must include a UTC offset, for example +00:00")
+        if self.expires_at <= self.approved_at:
+            raise ValueError("expires_at must be later than approved_at")
+        if self.expires_at > self.approved_at + timedelta(days=7):
+            raise ValueError("approval validity must not exceed 7 days")
         return self
 
-    @property
-    def blockers(self) -> list[str]:
+    def _missing_fields(self) -> list[str]:
         missing: list[str] = []
         if not self.owner.strip():
             missing.append("owner")
@@ -671,7 +703,18 @@ class MigrationGate(BaseModel):
             missing.append("rollback")
         if self.approved_at is None:
             missing.append("approved_at")
+        if self.expires_at is None:
+            missing.append("expires_at")
         return missing
+
+    @property
+    def blockers(self) -> list[str]:
+        blockers = self._missing_fields()
+        if self.expires_at is not None and self.expires_at <= datetime.now(
+            timezone.utc
+        ):
+            blockers.append("approval expired")
+        return blockers
 
     @property
     def ready(self) -> bool:
@@ -708,9 +751,7 @@ class MigrationRetainedDataset(BaseModel):
     )
     @classmethod
     def _references_are_single_line(cls, v: str) -> str:
-        if v != v.strip() or "\n" in v or "\r" in v:
-            raise ValueError("must be a trimmed single-line evidence reference")
-        return v
+        return _single_line_reference(v, "evidence reference")
 
 
 class MigrationDataStage(BaseModel):
@@ -742,22 +783,232 @@ class MigrationDataStage(BaseModel):
         return self
 
 
+class MigrationRuntimeStage(BaseModel):
+    """Immutable deployed target and its live verification receipt."""
+
+    account_id: str = Field(default="", pattern=r"^(?:|\d{12})$")
+    runtime_arn: str = Field(default="", max_length=500)
+    source_hash: str = Field(default="", pattern=r"^(?:|[a-f0-9]{16})$")
+    image_digest: str = Field(default="", pattern=r"^(?:|sha256:[a-f0-9]{64})$")
+    verification_reference: str = Field(default="", max_length=500)
+    gate: MigrationGate = Field(default_factory=MigrationGate)
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("account_id")
+    @classmethod
+    def _account_is_not_a_placeholder(cls, v: str) -> str:
+        if v in _ACCOUNT_SENTINELS:
+            raise ValueError("must be the real target AWS account, not a placeholder")
+        return v
+
+    @field_validator("runtime_arn", "verification_reference")
+    @classmethod
+    def _references_are_single_line(cls, v: str) -> str:
+        return _single_line_reference(v)
+
+    @field_validator("runtime_arn")
+    @classmethod
+    def _runtime_arn_is_agentcore(cls, v: str) -> str:
+        if v and not re.fullmatch(
+            r"arn:[^:]+:bedrock-agentcore:[a-z0-9-]+:\d{12}:runtime/\S+",
+            v,
+        ):
+            raise ValueError("must be an AgentCore Runtime ARN")
+        return v
+
+    @property
+    def blockers(self) -> list[str]:
+        return [
+            name
+            for name, value in (
+                ("account_id", self.account_id),
+                ("runtime_arn", self.runtime_arn),
+                ("source_hash", self.source_hash),
+                ("image_digest", self.image_digest),
+                ("verification_reference", self.verification_reference),
+            )
+            if not value
+        ]
+
+
 class MigrationTriggerStage(BaseModel):
     """Optional shadowing of the source event trigger."""
 
     strategy: Literal["none", "external-shadow"] = "none"
+    source_reference: str = Field(default="", max_length=500)
+    shadow_reference: str = Field(default="", max_length=500)
+    safety_mode: (
+        Literal["read-only", "dry-run", "idempotent", "dual-publish"] | None
+    ) = None
+    idempotency_reference: str = Field(default="", max_length=500)
+    signature_validation_reference: str = Field(default="", max_length=500)
+    validation_reference: str = Field(default="", max_length=500)
     gate: MigrationGate = Field(default_factory=MigrationGate)
 
     model_config = {"extra": "forbid"}
+
+    @field_validator(
+        "source_reference",
+        "shadow_reference",
+        "idempotency_reference",
+        "signature_validation_reference",
+        "validation_reference",
+    )
+    @classmethod
+    def _references_are_single_line(cls, v: str) -> str:
+        return _single_line_reference(v)
+
+    @model_validator(mode="after")
+    def _shadow_plan_is_complete(self) -> MigrationTriggerStage:
+        planned = any(
+            (
+                self.source_reference,
+                self.shadow_reference,
+                self.safety_mode,
+                self.idempotency_reference,
+                self.signature_validation_reference,
+                self.validation_reference,
+            )
+        )
+        if self.strategy == "none":
+            if planned:
+                raise ValueError(
+                    "trigger plan fields require strategy 'external-shadow'"
+                )
+            return self
+        missing = [
+            name
+            for name, value in (
+                ("source_reference", self.source_reference),
+                ("shadow_reference", self.shadow_reference),
+                ("safety_mode", self.safety_mode),
+                ("validation_reference", self.validation_reference),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(
+                "strategy 'external-shadow' requires " + ", ".join(missing)
+            )
+        if self.source_reference == self.shadow_reference:
+            raise ValueError("source_reference and shadow_reference must be different")
+        return self
+
+
+class MigrationAbortThresholds(BaseModel):
+    """Customer-approved stop conditions for a traffic step."""
+
+    max_error_rate_percent: float = Field(ge=0, le=100)
+    max_p95_latency_ms: int = Field(ge=1, le=3_600_000)
+    max_failed_events: int = Field(ge=0)
+    observation_minutes: int = Field(ge=1, le=1440)
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("max_error_rate_percent", mode="before")
+    @classmethod
+    def _error_rate_is_a_number_not_a_boolean(cls, v: object) -> object:
+        if type(v) not in {int, float}:
+            raise ValueError("must be a number, not a boolean or string")
+        return v
+
+    @field_validator(
+        "max_p95_latency_ms",
+        "max_failed_events",
+        "observation_minutes",
+        mode="before",
+    )
+    @classmethod
+    def _counts_are_integers_not_booleans(cls, v: object) -> object:
+        if type(v) is not int:
+            raise ValueError("must be an integer, not a boolean or string")
+        return v
 
 
 class MigrationTrafficStage(BaseModel):
     """Optional traffic shift; the external router remains customer-owned."""
 
-    strategy: Literal["none", "external-canary"] = "none"
+    strategy: Literal["none", "external-canary", "external-switch"] = "none"
+    router_reference: str = Field(default="", max_length=500)
+    source_reference: str = Field(default="", max_length=500)
+    target_reference: str = Field(default="", max_length=500)
+    metrics_reference: str = Field(default="", max_length=500)
+    canary_steps_percent: list[int] = Field(default_factory=list, max_length=10)
+    abort: MigrationAbortThresholds | None = None
     gate: MigrationGate = Field(default_factory=MigrationGate)
 
     model_config = {"extra": "forbid"}
+
+    @field_validator(
+        "router_reference",
+        "source_reference",
+        "target_reference",
+        "metrics_reference",
+    )
+    @classmethod
+    def _references_are_single_line(cls, v: str) -> str:
+        return _single_line_reference(v)
+
+    @field_validator("canary_steps_percent", mode="before")
+    @classmethod
+    def _steps_are_integers_not_booleans(cls, v: object) -> object:
+        if not isinstance(v, list) or any(type(step) is not int for step in v):
+            raise ValueError(
+                "must be a list of integers, not booleans or numeric strings"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _traffic_plan_is_complete(self) -> MigrationTrafficStage:
+        planned = any(
+            (
+                self.router_reference,
+                self.source_reference,
+                self.target_reference,
+                self.metrics_reference,
+                self.canary_steps_percent,
+                self.abort,
+            )
+        )
+        if self.strategy == "none":
+            if planned:
+                raise ValueError("traffic plan fields require a non-none strategy")
+            return self
+        missing = [
+            name
+            for name, value in (
+                ("router_reference", self.router_reference),
+                ("source_reference", self.source_reference),
+                ("target_reference", self.target_reference),
+                ("metrics_reference", self.metrics_reference),
+                ("abort", self.abort),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(
+                f"strategy {self.strategy!r} requires " + ", ".join(missing)
+            )
+        if self.source_reference == self.target_reference:
+            raise ValueError("source_reference and target_reference must be different")
+        if self.strategy == "external-canary":
+            steps = self.canary_steps_percent
+            if (
+                not steps
+                or any(step < 1 or step > 100 for step in steps)
+                or steps != sorted(set(steps))
+                or steps[-1] != 100
+            ):
+                raise ValueError(
+                    "external-canary requires unique, increasing "
+                    "canary_steps_percent between 1 and 100, ending at 100"
+                )
+        elif self.canary_steps_percent:
+            raise ValueError(
+                "external-switch is atomic and must not set canary_steps_percent"
+            )
+        return self
 
 
 class MigrationStages(BaseModel):
@@ -769,11 +1020,76 @@ class MigrationStages(BaseModel):
     of record, event sources, or traffic routers.
     """
 
+    runtime: MigrationRuntimeStage = Field(default_factory=MigrationRuntimeStage)
     data: MigrationDataStage = Field(default_factory=MigrationDataStage)
     triggers: MigrationTriggerStage = Field(default_factory=MigrationTriggerStage)
     traffic: MigrationTrafficStage = Field(default_factory=MigrationTrafficStage)
 
     model_config = {"extra": "forbid"}
+
+
+class MigrationNetworkReceipt(BaseModel):
+    """Deployed VPC placement and private-dependency probe evidence."""
+
+    vpc_id: str = Field(default="", pattern=r"^(?:|vpc-[0-9a-f]{8,17})$")
+    private_subnet_ids: list[str] = Field(default_factory=list, max_length=20)
+    security_group_ids: list[str] = Field(default_factory=list, max_length=20)
+    ca_bundle_version_id: str = Field(default="", max_length=256)
+    probe_verification_reference: str = Field(default="", max_length=500)
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("private_subnet_ids")
+    @classmethod
+    def _subnets_are_unique_ids(cls, v: list[str]) -> list[str]:
+        if len(v) != len(set(v)):
+            raise ValueError("private_subnet_ids must not contain duplicates")
+        bad = [item for item in v if not re.fullmatch(r"subnet-[0-9a-f]{8,17}", item)]
+        if bad:
+            raise ValueError(f"private_subnet_ids contain invalid subnet IDs: {bad}")
+        return v
+
+    @field_validator("security_group_ids")
+    @classmethod
+    def _security_groups_are_unique_ids(cls, v: list[str]) -> list[str]:
+        if len(v) != len(set(v)):
+            raise ValueError("security_group_ids must not contain duplicates")
+        bad = [item for item in v if not re.fullmatch(r"sg-[0-9a-f]{8,17}", item)]
+        if bad:
+            raise ValueError(
+                f"security_group_ids contain invalid security group IDs: {bad}"
+            )
+        return v
+
+    @field_validator("ca_bundle_version_id", "probe_verification_reference")
+    @classmethod
+    def _references_are_single_line(cls, v: str) -> str:
+        return _single_line_reference(v)
+
+    @property
+    def blockers(self) -> list[str]:
+        return [
+            name
+            for name, value in (
+                ("vpc_id", self.vpc_id),
+                ("private_subnet_ids", self.private_subnet_ids),
+                ("security_group_ids", self.security_group_ids),
+                ("probe_verification_reference", self.probe_verification_reference),
+            )
+            if not value
+        ]
+
+    @property
+    def populated(self) -> bool:
+        return any(
+            (
+                self.vpc_id,
+                self.private_subnet_ids,
+                self.security_group_ids,
+                self.ca_bundle_version_id,
+                self.probe_verification_reference,
+            )
+        )
 
 
 class MigrationNetwork(BaseModel):
@@ -785,6 +1101,7 @@ class MigrationNetwork(BaseModel):
     connectivity: Literal["vpn", "transit-gateway", "none"] = "none"
     dns_forwarders: list[str] = Field(default_factory=list)  # IPv4 resolvers
     ca_bundle_secret_name: str = ""  # Secrets Manager NAME of a private CA bundle
+    receipt: MigrationNetworkReceipt = Field(default_factory=MigrationNetworkReceipt)
     gate: MigrationGate = Field(default_factory=MigrationGate)
 
     model_config = {"extra": "forbid"}
@@ -830,6 +1147,14 @@ class MigrationNetwork(BaseModel):
                 "secret value"
             )
         return v
+
+    @model_validator(mode="after")
+    def _ca_receipt_matches_plan(self) -> MigrationNetwork:
+        if self.receipt.ca_bundle_version_id and not self.ca_bundle_secret_name:
+            raise ValueError(
+                "receipt.ca_bundle_version_id requires ca_bundle_secret_name"
+            )
+        return self
 
 
 class MigrationConfig(BaseModel):
@@ -884,6 +1209,43 @@ class MigrationConfig(BaseModel):
                 "shift the event source through a disabled/shadow target before "
                 "moving traffic"
             )
+        trigger_stage = self.stages.triggers
+        if trigger_stage.strategy != "none":
+            allowed_safety = {
+                "http": {"read-only", "idempotent"},
+                "webhook": {"read-only", "idempotent"},
+                "schedule": {"dry-run", "idempotent"},
+                "queue": {"dual-publish"},
+            }[src.trigger]
+            if trigger_stage.safety_mode not in allowed_safety:
+                raise ValueError(
+                    f"source trigger {src.trigger!r} requires safety_mode in "
+                    f"{sorted(allowed_safety)}, got {trigger_stage.safety_mode!r}"
+                )
+            if (
+                trigger_stage.safety_mode in {"idempotent", "dual-publish"}
+                and not trigger_stage.idempotency_reference
+            ):
+                raise ValueError(
+                    f"safety_mode {trigger_stage.safety_mode!r} requires "
+                    "idempotency_reference"
+                )
+            if src.trigger == "webhook" and not (
+                trigger_stage.signature_validation_reference
+            ):
+                raise ValueError(
+                    "webhook shadowing requires signature_validation_reference; "
+                    "a generic unauthenticated webhook is not supported"
+                )
+        traffic_stage = self.stages.traffic
+        if traffic_stage.strategy == "external-canary" and src.trigger in {
+            "schedule",
+            "queue",
+        }:
+            raise ValueError(
+                f"source trigger {src.trigger!r} cannot use a percentage canary; "
+                "use strategy 'external-switch' after a safe shadow rehearsal"
+            )
         retained_dependencies = {
             dataset.dependency for dataset in self.stages.data.datasets
         }
@@ -910,11 +1272,11 @@ class MigrationConfig(BaseModel):
             )
         net = self.network
         if not net.private_dependencies and (
-            net.dns_forwarders or net.ca_bundle_secret_name
+            net.dns_forwarders or net.ca_bundle_secret_name or net.receipt.populated
         ):
             out.append(
-                "migration.network.dns_forwarders / ca_bundle_secret_name are set "
-                "but private_dependencies is empty — nothing will use them."
+                "migration.network DNS/CA/receipt fields are set but "
+                "private_dependencies is empty — nothing will use them."
             )
         for name, stage in (
             ("data", self.stages.data),
@@ -927,6 +1289,7 @@ class MigrationConfig(BaseModel):
                     gate.owner,
                     gate.approver,
                     gate.approved_at,
+                    gate.expires_at,
                     gate.evidence,
                     gate.rollback,
                 )
@@ -940,6 +1303,7 @@ class MigrationConfig(BaseModel):
                 net.gate.owner,
                 net.gate.approver,
                 net.gate.approved_at,
+                net.gate.expires_at,
                 net.gate.evidence,
                 net.gate.rollback,
             )
@@ -1092,6 +1456,44 @@ class PlatformConfig(BaseModel):
                     "customer network: set migration.network.connectivity to "
                     "'vpn' or 'transit-gateway'"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _migration_runtime_receipt_matches_target(self) -> PlatformConfig:
+        m = self.migration
+        if m is None:
+            return self
+        runtime = m.stages.runtime
+        if runtime.runtime_arn:
+            arn = runtime.runtime_arn.split(":", 5)
+            arn_region, arn_account = arn[3], arn[4]
+            if arn_region != self.region:
+                raise ValueError(
+                    "migration.stages.runtime.runtime_arn must use platform "
+                    f"region {self.region!r}, got {arn_region!r}"
+                )
+            if runtime.account_id and arn_account != runtime.account_id:
+                raise ValueError(
+                    "migration.stages.runtime.runtime_arn account must match "
+                    "migration.stages.runtime.account_id"
+                )
+        account = runtime.account_id
+        if not account:
+            return self
+        if self.deployment.strategy == "federated":
+            if account not in self.deployment.workload_accounts:
+                raise ValueError(
+                    "migration.stages.runtime.account_id must be one of "
+                    "deployment.workload_accounts for a federated migration"
+                )
+        elif (
+            self.deployment.platform_account
+            and account != self.deployment.platform_account
+        ):
+            raise ValueError(
+                "migration.stages.runtime.account_id must match "
+                "deployment.platform_account"
+            )
         return self
 
     @model_validator(mode="after")
@@ -1511,6 +1913,15 @@ class MigrationReadinessCheck:
     detail: str
 
 
+def _plan_digest(document: dict) -> str:
+    canonical = json.dumps(
+        document,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    return f"sha256:{hashlib.sha256(canonical).hexdigest()}"
+
+
 def migration_data_plan_document(config: PlatformConfig) -> dict:
     """Canonical, secret-free data plan whose digest can be approved."""
     m = config.migration
@@ -1531,15 +1942,220 @@ def migration_data_plan_document(config: PlatformConfig) -> dict:
             for dataset in sorted(m.stages.data.datasets, key=lambda item: item.name)
         ],
     }
-    canonical = json.dumps(
-        document,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode()
     return {
         **document,
-        "digest": f"sha256:{hashlib.sha256(canonical).hexdigest()}",
+        "digest": _plan_digest(document),
     }
+
+
+def migration_runtime_plan_document(config: PlatformConfig) -> dict:
+    """Canonical deployed-runtime receipt whose digest can be approved."""
+    m = config.migration
+    if m is None:
+        return {}
+    source = m.source.model_dump(mode="json")
+    source["secrets"] = sorted(source["secrets"])
+    document = {
+        "version": "migration-runtime-plan/v1",
+        "project": config.project,
+        "environment": config.environment,
+        "region": config.region,
+        "deployment": {
+            "mode": config.deployment.mode,
+            "strategy": config.deployment.strategy,
+            "platformAccount": config.deployment.platform_account,
+            "workloadAccounts": sorted(config.deployment.workload_accounts),
+        },
+        "source": source,
+        "target": {
+            **m.target.model_dump(mode="json"),
+            "runtimeGeneration": config.agents.orchestrator_runtime_generation,
+        },
+        "effectiveConfiguration": {
+            "identity": config.identity.model_dump(mode="json"),
+            "agents": config.agents.model_dump(mode="json"),
+            "security": config.security.model_dump(mode="json"),
+        },
+        "receipt": m.stages.runtime.model_dump(mode="json", exclude={"gate"}),
+    }
+    return {**document, "digest": _plan_digest(document)}
+
+
+def migration_network_plan_document(config: PlatformConfig) -> dict:
+    """Canonical private-connectivity plan bound to the runtime account."""
+    m = config.migration
+    if m is None:
+        return {}
+    document = {
+        "version": "migration-network-plan/v1",
+        "project": config.project,
+        "environment": config.environment,
+        "region": config.region,
+        "runtimeAccount": m.stages.runtime.account_id,
+        "plan": {
+            "privateDependencies": sorted(m.network.private_dependencies),
+            "connectivity": m.network.connectivity,
+            "dnsForwarders": sorted(m.network.dns_forwarders),
+            "caBundleSecretName": m.network.ca_bundle_secret_name,
+            "receipt": {
+                "vpcId": m.network.receipt.vpc_id,
+                "privateSubnetIds": sorted(m.network.receipt.private_subnet_ids),
+                "securityGroupIds": sorted(m.network.receipt.security_group_ids),
+                "caBundleVersionId": m.network.receipt.ca_bundle_version_id,
+                "probeVerificationReference": (
+                    m.network.receipt.probe_verification_reference
+                ),
+            },
+        },
+    }
+    return {**document, "digest": _plan_digest(document)}
+
+
+def migration_trigger_plan_document(config: PlatformConfig) -> dict:
+    """Canonical event-source shadow plan, excluding its approval gate."""
+    m = config.migration
+    if m is None:
+        return {}
+    document = {
+        "version": "migration-trigger-plan/v1",
+        "project": config.project,
+        "environment": config.environment,
+        "region": config.region,
+        "sourceTrigger": m.source.trigger,
+        "plan": m.stages.triggers.model_dump(mode="json", exclude={"gate"}),
+    }
+    return {**document, "digest": _plan_digest(document)}
+
+
+def migration_traffic_plan_document(config: PlatformConfig) -> dict:
+    """Canonical traffic plan bound to data, trigger, and network decisions."""
+    m = config.migration
+    if m is None:
+        return {}
+    document = {
+        "version": "migration-traffic-plan/v1",
+        "project": config.project,
+        "environment": config.environment,
+        "region": config.region,
+        "sourceTrigger": m.source.trigger,
+        "target": {
+            "runtime": m.target.runtime,
+            "mode": m.target.mode,
+        },
+        "runtimePlanDigest": migration_runtime_plan_document(config)["digest"],
+        "networkPlanDigest": (
+            migration_network_plan_document(config)["digest"]
+            if m.network.private_dependencies
+            else ""
+        ),
+        "dataPlanDigest": (
+            migration_data_plan_document(config)["digest"]
+            if m.stages.data.strategy != "none"
+            else ""
+        ),
+        "triggerPlanDigest": (
+            migration_trigger_plan_document(config)["digest"]
+            if m.stages.triggers.strategy != "none"
+            else ""
+        ),
+        "operationalConfiguration": {
+            "gateway": config.gateway.model_dump(mode="json"),
+            "observability": config.observability.model_dump(mode="json"),
+        },
+        "plan": m.stages.traffic.model_dump(mode="json", exclude={"gate"}),
+    }
+    return {**document, "digest": _plan_digest(document)}
+
+
+def _runtime_stage_check(config: PlatformConfig) -> MigrationReadinessCheck:
+    m = config.migration
+    assert m is not None
+    stage = m.stages.runtime
+    if stage.blockers:
+        return MigrationReadinessCheck(
+            "runtime",
+            "BLOCKED",
+            "missing deployed target receipt: " + ", ".join(stage.blockers),
+        )
+    check = _gated_stage(
+        "runtime",
+        True,
+        stage.gate,
+        ready_detail="deployed target and live verification approved",
+        skipped_detail="",
+    )
+    if check.status != "READY":
+        return check
+    digest = migration_runtime_plan_document(config)["digest"]
+    if digest not in stage.gate.evidence:
+        return MigrationReadinessCheck(
+            "runtime",
+            "BLOCKED",
+            f"gate evidence must include this exact plan digest: {digest}",
+        )
+    return MigrationReadinessCheck(
+        "runtime",
+        "READY",
+        f"deployed target plan {digest} approved",
+    )
+
+
+def _network_receipt_blockers(migration: MigrationConfig) -> list[str]:
+    blockers = list(migration.network.receipt.blockers)
+    if (
+        migration.network.ca_bundle_secret_name
+        and not migration.network.receipt.ca_bundle_version_id
+    ):
+        blockers.append("ca_bundle_version_id")
+    return blockers
+
+
+def _network_stage_check(config: PlatformConfig) -> MigrationReadinessCheck:
+    m = config.migration
+    assert m is not None
+    if not m.network.private_dependencies:
+        return MigrationReadinessCheck(
+            "networking",
+            "NOT REQUIRED",
+            "no private dependencies declared",
+        )
+    if not m.stages.runtime.account_id:
+        return MigrationReadinessCheck(
+            "networking",
+            "BLOCKED",
+            "missing migration.stages.runtime.account_id for the target VPC",
+        )
+    receipt_blockers = _network_receipt_blockers(m)
+    if receipt_blockers:
+        return MigrationReadinessCheck(
+            "networking",
+            "BLOCKED",
+            "missing deployed network/probe receipt: " + ", ".join(receipt_blockers),
+        )
+    check = _gated_stage(
+        "networking",
+        True,
+        m.network.gate,
+        ready_detail=(
+            f"{m.network.connectivity} path approved for "
+            f"{len(m.network.private_dependencies)} private dependency(s)"
+        ),
+        skipped_detail="",
+    )
+    if check.status != "READY":
+        return check
+    digest = migration_network_plan_document(config)["digest"]
+    if digest not in m.network.gate.evidence:
+        return MigrationReadinessCheck(
+            "networking",
+            "BLOCKED",
+            f"gate evidence must include this exact plan digest: {digest}",
+        )
+    return MigrationReadinessCheck(
+        "networking",
+        "READY",
+        f"{m.network.connectivity} plan {digest} approved",
+    )
 
 
 def _data_stage_check(config: PlatformConfig) -> MigrationReadinessCheck:
@@ -1564,6 +2180,84 @@ def _data_stage_check(config: PlatformConfig) -> MigrationReadinessCheck:
         )
     return MigrationReadinessCheck(
         "data",
+        "READY",
+        f"{stage.strategy} plan {digest} approved",
+    )
+
+
+def _trigger_stage_check(config: PlatformConfig) -> MigrationReadinessCheck:
+    m = config.migration
+    assert m is not None
+    stage = m.stages.triggers
+    check = _gated_stage(
+        "triggers",
+        stage.strategy != "none",
+        stage.gate,
+        ready_detail=f"{stage.strategy} evidence approved",
+        skipped_detail="strategy is none",
+    )
+    if check.status != "READY":
+        return check
+    digest = migration_trigger_plan_document(config)["digest"]
+    if digest not in stage.gate.evidence:
+        return MigrationReadinessCheck(
+            "triggers",
+            "BLOCKED",
+            f"gate evidence must include this exact plan digest: {digest}",
+        )
+    return MigrationReadinessCheck(
+        "triggers",
+        "READY",
+        f"{stage.strategy} plan {digest} approved",
+    )
+
+
+def _traffic_stage_check(config: PlatformConfig) -> MigrationReadinessCheck:
+    m = config.migration
+    assert m is not None
+    stage = m.stages.traffic
+    check = _gated_stage(
+        "traffic",
+        stage.strategy != "none",
+        stage.gate,
+        ready_detail=f"{stage.strategy} evidence approved",
+        skipped_detail="strategy is none; no cutover requested",
+    )
+    if check.status != "READY":
+        return check
+    digest = migration_traffic_plan_document(config)["digest"]
+    if digest not in stage.gate.evidence:
+        return MigrationReadinessCheck(
+            "traffic",
+            "BLOCKED",
+            f"gate evidence must include this exact plan digest: {digest}",
+        )
+    traffic_approval = stage.gate.approved_at
+    assert traffic_approval is not None
+    prerequisite_approvals = [
+        m.stages.runtime.gate.approved_at,
+        (m.network.gate.approved_at if m.network.private_dependencies else None),
+        (m.stages.data.gate.approved_at if m.stages.data.strategy != "none" else None),
+        (
+            m.stages.triggers.gate.approved_at
+            if m.stages.triggers.strategy != "none"
+            else None
+        ),
+    ]
+    newer = [
+        approved_at
+        for approved_at in prerequisite_approvals
+        if approved_at is not None and approved_at > traffic_approval
+    ]
+    if newer:
+        return MigrationReadinessCheck(
+            "traffic",
+            "BLOCKED",
+            "traffic approval predates a required runtime, network, data, or "
+            "trigger approval",
+        )
+    return MigrationReadinessCheck(
+        "traffic",
         "READY",
         f"{stage.strategy} plan {digest} approved",
     )
@@ -1601,36 +2295,11 @@ def migration_readiness(config: PlatformConfig) -> list[MigrationReadinessCheck]
         return []
 
     checks = [
-        MigrationReadinessCheck(
-            "runtime",
-            "READY",
-            f"{m.target.runtime}/{m.target.mode} is the supported deployment path",
-        ),
-        _gated_stage(
-            "networking",
-            bool(m.network.private_dependencies),
-            m.network.gate,
-            ready_detail=(
-                f"{m.network.connectivity} path approved for "
-                f"{len(m.network.private_dependencies)} private dependency(s)"
-            ),
-            skipped_detail="no private dependencies declared",
-        ),
+        _runtime_stage_check(config),
+        _network_stage_check(config),
         _data_stage_check(config),
-        _gated_stage(
-            "triggers",
-            m.stages.triggers.strategy != "none",
-            m.stages.triggers.gate,
-            ready_detail=f"{m.stages.triggers.strategy} evidence approved",
-            skipped_detail="strategy is none",
-        ),
-        _gated_stage(
-            "traffic",
-            m.stages.traffic.strategy != "none",
-            m.stages.traffic.gate,
-            ready_detail=f"{m.stages.traffic.strategy} evidence approved",
-            skipped_detail="strategy is none; no cutover requested",
-        ),
+        _trigger_stage_check(config),
+        _traffic_stage_check(config),
     ]
     return checks
 
@@ -1695,6 +2364,128 @@ def migration_data_plan_lines(config: PlatformConfig) -> list[str]:
             "  Approval: add the exact digest above to gate.evidence with the "
             "customer evidence reference"
         )
+    if m.network.private_dependencies:
+        network_document = migration_network_plan_document(config)
+        receipt_blockers = _network_receipt_blockers(m)
+        network_check = {check.name: check for check in migration_readiness(config)}[
+            "networking"
+        ]
+        lines += [
+            "  Private-network prerequisite:",
+            (
+                f"    Digest: {network_document['digest']}"
+                if not receipt_blockers
+                else "    Digest: PENDING — populate the deployed network/probe "
+                "receipt before approval"
+            ),
+            f"    Gate: {network_check.status} — {network_check.detail}",
+        ]
+    return lines
+
+
+def migration_cutover_plan_lines(config: PlatformConfig) -> list[str]:
+    """Human-readable runtime, network, trigger, and traffic approval plans."""
+    m = config.migration
+    if m is None:
+        return ["Migration cutover plan: no migration block."]
+    trigger = m.stages.triggers
+    traffic = m.stages.traffic
+    if trigger.strategy == "none" and traffic.strategy == "none":
+        return [
+            "Migration cutover plan:",
+            "  NOT ENABLED: source trigger and traffic router remain unchanged",
+        ]
+
+    checks = {check.name: check for check in migration_readiness(config)}
+    runtime = m.stages.runtime
+    runtime_document = migration_runtime_plan_document(config)
+    runtime_digest = (
+        runtime_document["digest"]
+        if not runtime.blockers
+        else "PENDING — populate the deployed target receipt before approval"
+    )
+    lines = [
+        "Migration cutover plan:",
+        (
+            f"  Runtime: account={runtime.account_id or '(missing)'}, "
+            f"arn={runtime.runtime_arn or '(missing)'}"
+        ),
+        (
+            f"    Artifact: source-hash={runtime.source_hash or '(missing)'}, "
+            f"image={runtime.image_digest or '(missing)'}"
+        ),
+        f"    Verification: {runtime.verification_reference or '(missing)'}",
+        f"    Digest: {runtime_digest}",
+        f"    Gate: {checks['runtime'].status} — {checks['runtime'].detail}",
+    ]
+    if m.network.private_dependencies:
+        network_document = migration_network_plan_document(config)
+        network_receipt_blockers = _network_receipt_blockers(m)
+        lines += [
+            (
+                f"  Network: {m.network.connectivity}, "
+                f"{len(m.network.private_dependencies)} private dependency(s)"
+            ),
+            (
+                f"    Digest: {network_document['digest']}"
+                if not network_receipt_blockers
+                else "    Digest: PENDING — populate the deployed network/probe "
+                "receipt before approval"
+            ),
+            (
+                f"    Gate: {checks['networking'].status} — "
+                f"{checks['networking'].detail}"
+            ),
+        ]
+    if trigger.strategy != "none":
+        trigger_document = migration_trigger_plan_document(config)
+        lines += [
+            (
+                f"  Trigger: {m.source.trigger}, {trigger.strategy}, "
+                f"safety={trigger.safety_mode}"
+            ),
+            f"    Source: {trigger.source_reference}",
+            f"    Shadow: {trigger.shadow_reference}",
+            f"    Validation: {trigger.validation_reference}",
+            f"    Digest: {trigger_document['digest']}",
+            f"    Gate: {checks['triggers'].status} — {checks['triggers'].detail}",
+        ]
+    if traffic.strategy != "none":
+        traffic_document = migration_traffic_plan_document(config)
+        abort = traffic.abort
+        assert abort is not None
+        traffic_digest = (
+            traffic_document["digest"]
+            if not runtime.blockers
+            and (not m.network.private_dependencies or not _network_receipt_blockers(m))
+            else "PENDING — a required runtime or network receipt is incomplete"
+        )
+        lines += [
+            f"  Traffic: {traffic.strategy} via {traffic.router_reference}",
+            f"    Source: {traffic.source_reference}",
+            f"    Target: {traffic.target_reference}",
+            (
+                "    Steps: "
+                + (
+                    ", ".join(f"{step}%" for step in traffic.canary_steps_percent)
+                    if traffic.canary_steps_percent
+                    else "atomic switch"
+                )
+            ),
+            (
+                f"    Abort: error>{abort.max_error_rate_percent}%, "
+                f"p95>{abort.max_p95_latency_ms}ms, "
+                f"failed-events>{abort.max_failed_events}; "
+                f"observe {abort.observation_minutes}m"
+            ),
+            f"    Metrics: {traffic.metrics_reference}",
+            f"    Digest: {traffic_digest}",
+            f"    Gate: {checks['traffic'].status} — {checks['traffic'].detail}",
+        ]
+    lines.append(
+        "  Execution: customer-operated; this command does not change an event "
+        "source or router"
+    )
     return lines
 
 
@@ -1819,6 +2610,8 @@ def migration_plan(config: PlatformConfig, account: str = "") -> list[str]:
         ]
     if m.stages.data.strategy != "none":
         lines += ["", *migration_data_plan_lines(config)]
+    if m.stages.triggers.strategy != "none" or m.stages.traffic.strategy != "none":
+        lines += ["", *migration_cutover_plan_lines(config)]
     lines += ["", *migration_readiness_lines(config)]
     if m.warnings:
         lines += ["", "Warnings:"]
@@ -1989,6 +2782,8 @@ def _main() -> int:
             "--readiness",
             "--data-plan",
             "--data-readiness",
+            "--cutover-plan",
+            "--cutover-readiness",
         }
         and not args
     ):
@@ -2003,6 +2798,8 @@ def _main() -> int:
         "--readiness",
         "--data-plan",
         "--data-readiness",
+        "--cutover-plan",
+        "--cutover-readiness",
     }
     if (
         len(args) != 1
@@ -2016,6 +2813,8 @@ def _main() -> int:
             "--readiness",
             "--data-plan",
             "--data-readiness",
+            "--cutover-plan",
+            "--cutover-readiness",
             "--effective-env",
         }
         or ("--effective-env" in flags and not action_flags)
@@ -2023,7 +2822,8 @@ def _main() -> int:
         print(
             "usage: python -m infra_utils.platform_config "
             "[--export | --stacks | --plan | --design | --readiness | "
-            "--data-plan | --data-readiness] "
+            "--data-plan | --data-readiness | --cutover-plan | "
+            "--cutover-readiness] "
             "[--effective-env] <platform.yaml>",
             file=sys.stderr,
         )
@@ -2081,6 +2881,14 @@ def _main() -> int:
     if "--data-readiness" in flags:
         print("\n".join(migration_data_plan_lines(config)))
         return 0 if migration_data_ready(config) else 1
+    if "--cutover-plan" in flags:
+        print("\n".join(migration_cutover_plan_lines(config)))
+        return 0
+    if "--cutover-readiness" in flags:
+        print("\n".join(migration_cutover_plan_lines(config)))
+        print()
+        print("\n".join(migration_readiness_lines(config)))
+        return 0 if migration_cutover_ready(config) else 1
     print(f"OK: {args[0]}")
     print(config.model_dump_json(indent=2))
     return 0

@@ -15,13 +15,13 @@ operational readiness review.
 
 **G1 — production design baseline merged; migration EBA path live-validated**
 
-Branch: `feat/migration-data-plan`
+Branch: `feat/migration-cutover-plan`
 
 G0 merged through PR #79. G1 implementation merged through PR #76. Migration
 hardening is split across stacked PRs #80, #81, and #82. The migration
-readiness gate is in PR #83; private-dependency validation continues on a
-branch stacked in PR #84. Data planning continues on a branch stacked after
-#84.
+readiness gate is in PR #83, private-dependency validation is in PR #84, and
+the source-specific data plan is in PR #85. Trigger/traffic cutover planning
+continues on the current branch stacked after #85.
 
 - [x] Add explicit `workshop` and `production` deployment modes.
 - [x] Add a production preset that requires enterprise identity, networking,
@@ -135,6 +135,42 @@ Open evidence and ownership work:
 - Evidence passes: 472 repository tests, all 12 deployment-contract syntheses,
   deployment configuration checks, changed-file Python lint/format,
   generated-reference parity, ShellCheck, shell syntax, and diff whitespace.
+
+### 2026-09-21 — source-specific migration cutover plans
+
+- Generic event-source or router automation remains intentionally unavailable.
+  `migrate cutover plan` and `migrate cutover readiness` are configuration-only
+  commands; there is no `execute` action and no AWS or customer-system mutation.
+- Runtime readiness is no longer inferred from choosing a supported target. A
+  cutover requires the target AWS account, AgentCore Runtime ARN, stack
+  `SourceHash`, immutable ECR image digest, retained live-verification
+  reference, owner/approver gate, and the exact runtime plan digest. The digest
+  also binds the effective identity, agent/model/memory, security, and
+  networking-mode configuration.
+- Private-network approval is bound to a versioned digest over the runtime
+  account, connectivity type, dependency allow-list, DNS forwarders, and
+  private-CA secret name plus the deployed VPC, private subnets, security
+  groups, probe evidence, and tested CA secret version. VPC/probe/DNS/CA
+  changes invalidate the network and downstream traffic approvals.
+- HTTP/webhook traffic may use an externally operated percentage canary.
+  Webhooks require signature-validation evidence and a read-only or idempotent
+  shadow. Schedules require a dry-run/idempotent shadow and an atomic switch.
+  Queues require producer dual-publish to a separate destination with
+  idempotency evidence and an atomic switch; a competing consumer on the
+  source queue is explicitly rejected as unsafe.
+- Every traffic plan records its router, source rollback route, target,
+  metrics, ordered steps or atomic switch, observation window, and abort
+  thresholds. Its digest chains the exact runtime, network, data, and trigger
+  plans plus gateway and observability settings. Traffic approval must be
+  newer than every required prerequisite approval.
+- Operator-provided references reject terminal control characters, numeric
+  thresholds reject YAML boolean/string coercion, approval timestamps cannot
+  be materially in the future, approvals expire within at most seven days,
+  and source/shadow or source/target references must differ.
+- Evidence passes: 504 repository tests, all 12 deployment-contract syntheses,
+  deployment configuration checks, changed-file Python lint/format,
+  generated-reference parity, ShellCheck at warning severity, shell syntax,
+  and diff whitespace. No live deployment or external cutover was performed.
 
 ### 2026-09-21 — migration profile implementation audit
 

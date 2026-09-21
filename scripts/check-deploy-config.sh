@@ -586,6 +586,20 @@ out=$(run_migrate data execute 2>&1) \
     && fail "migrate data accepted an executable action"
 grep -q "execute" <<<"$out" || fail "bad data sub-action not named: $out"
 
+: > "$AWS_ARGS"
+out=$(run_migrate cutover plan 2>&1) || fail "migrate cutover plan failed: $out"
+grep -q "NOT ENABLED: source trigger and traffic router remain unchanged" <<<"$out" \
+    || fail "cutover plan did not report the safe target-only scope: $out"
+out=$(run_migrate cutover readiness 2>&1) \
+    && fail "cutover readiness accepted a manifest with no traffic plan"
+grep -q "safe target-only deployment" <<<"$out" \
+    || fail "cutover readiness did not fail closed: $out"
+[ ! -s "$AWS_ARGS" ] \
+    || fail "migrate cutover plan/readiness made an AWS call: $(cat "$AWS_ARGS")"
+out=$(run_migrate cutover execute 2>&1) \
+    && fail "migrate cutover accepted an executable action"
+grep -q "execute" <<<"$out" || fail "bad cutover sub-action not named: $out"
+
 out=$(run_migrate bogus 2>&1) && fail "unknown migrate sub-action was accepted"
 grep -q "bogus" <<<"$out" || fail "bad sub-action not named: $out"
 out=$(run_migrate plan --stack x 2>&1) && fail "migrate accepted a deploy option"
