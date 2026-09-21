@@ -11,15 +11,19 @@ The adapter exposes AgentCore's port `8080`, `POST /invocations`, and
 `GET /ping` contract, then forwards requests to the existing container's
 configured port and paths.
 
-The following are not delivered by this migration path:
+The following are not automatically changed by this migration path:
 
 - ECS-on-EC2 or amd64-only targets
 - native mode without the adapter
 - creation of VPN, Transit Gateway, private DNS, or private CA integration
-- webhook, scheduler, or queue cutover
+- customer data, webhook, scheduler, queue, or traffic-router changes
 
-Treat private connectivity and event-source cutover as external prerequisites
-with named owners, tested procedures, and independent rollback plans.
+The manifest can explicitly put data copy, trigger shadowing, and canary
+traffic in scope as `external-*` stages. `deploy.sh migrate readiness` then
+fails closed until their named owner, separate approver, evidence reference,
+rollback procedure, and timestamped approval are recorded. These are
+customer-operated stages and evidence gates, not generic infrastructure
+automation.
 
 ## 1. Prepare an isolated rehearsal
 
@@ -63,6 +67,24 @@ all of them in `platform.yaml`, then run `design` again. At minimum, review:
 - plain `env` entries and secret environment-variable names under `secrets`
 - `migration.target.runtime: agentcore`
 - `migration.target.mode: adapter`
+- which `migration.stages` are truly in scope; leave their strategy `none`
+  until a customer-specific execution and rollback plan exists
+
+An enabled external stage uses this gate shape (references only—do not paste
+customer data or credentials):
+
+```yaml
+migration:
+  stages:
+    traffic:
+      strategy: external-canary
+      gate:
+        owner: platform-migration-team
+        approver: customer-change-approver
+        evidence: [CHG-12345/canary-rehearsal]
+        rollback: CHG-12345/rollback-procedure
+        approved_at: 2026-09-21T12:00:00+00:00
+```
 
 Do not put secret values in `platform.yaml`. Prefer a source build because the
 remote CodeBuild job produces arm64. If supplying an image, verify its arm64
@@ -124,8 +146,9 @@ repository:
 - Monitoring, data handling, quotas, timeout, retry, and idempotency
   expectations are agreed with the customer.
 
-The `migration.network` and `migration.source.trigger` fields document these
-requirements in the plan; they do not provision or cut over those systems.
+The `migration.network`, `migration.source.trigger`, and
+`migration.stages` fields document and gate these requirements; they do not
+provision or cut over customer-owned systems.
 
 ## 5. Plan, build, and verify
 
@@ -147,6 +170,17 @@ Then run configuration-aware verification:
 ./scripts/deploy.sh verify
 ```
 
+This verifies the target, not permission to move traffic. Check the independent
+cutover gate:
+
+```bash
+./scripts/deploy.sh migrate readiness
+```
+
+The command exits non-zero while traffic strategy is `none` or any enabled
+stage lacks its evidence. A non-zero result does not prevent a safe
+target-only rehearsal; it prevents treating that rehearsal as cutover-ready.
+
 For a migration, verification performs a real basic invocation against the
 migrated AgentCore runtime. It deliberately does not require accelerator
 pattern-specific tools such as Code Interpreter, because `migration.source`
@@ -167,7 +201,8 @@ private dependency access.
 
 ## 6. Cut over with an immediate rollback path
 
-Only cut over after the customer accepts the evidence and rollback trigger.
+Only cut over after `deploy.sh migrate readiness` returns zero and the
+customer accepts the referenced evidence and rollback trigger.
 Record the source endpoint/configuration before changing traffic.
 
 If a cutover check fails:
@@ -190,10 +225,10 @@ digest or source revision in `platform.yaml`, then run:
 ./scripts/deploy.sh verify
 ```
 
-There is no automated rollback of external event sources or private-network
-changes. Do not destroy the source during the EBA. After traffic has been
-restored or the rehearsal is accepted and evidence retained, remove the
-isolated accelerator environment with:
+There is no automated rollback of external data, event-source, traffic-router,
+or private-network changes. Do not destroy the source during the EBA. After
+traffic has been restored or the rehearsal is accepted and evidence retained,
+remove the isolated accelerator environment with:
 
 ```bash
 ./scripts/deploy.sh destroy
@@ -220,6 +255,7 @@ was pre-approved. Production mode never sweeps retained service log groups.
 - [ ] Logs, traces, alarms, dashboards, and support ownership demonstrated
 - [ ] Capacity, timeout, retry, idempotency, and failure tests completed
 - [ ] Event/private-connectivity prerequisites and cutover owner confirmed
+- [ ] `deploy.sh migrate readiness` passed for the completed customer manifest
 - [ ] Rollback trigger, source endpoint, reversal steps, and decision owner recorded
 - [ ] Rollback rehearsal completed and timed
 - [ ] Customer acceptance, exceptions, and follow-up actions recorded

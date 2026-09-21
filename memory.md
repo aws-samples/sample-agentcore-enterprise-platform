@@ -15,11 +15,11 @@ operational readiness review.
 
 **G1 — production design baseline merged; migration EBA path live-validated**
 
-Branch: `feat/migration-eba-verification`
+Branch: `feat/migration-readiness-gates`
 
 G0 merged through PR #79. G1 implementation merged through PR #76. Migration
-hardening is split across stacked PRs #80, #81, and #82; merge them in that
-order.
+hardening is split across stacked PRs #80, #81, and #82. The migration
+readiness work continues on a branch stacked after #82.
 
 - [x] Add explicit `workshop` and `production` deployment modes.
 - [x] Add a production preset that requires enterprise identity, networking,
@@ -46,6 +46,38 @@ Open evidence and ownership work:
   the retired client allow-list/checkpoints and verify the final state.
 - [ ] Populate, review, and approve the five G1 governance artifacts for the
   specific customer; draft templates and green synthesis do not close G1.
+
+### 2026-09-21 — staged migration readiness and next implementation boundary
+
+- The next migration scope is deliberately split into runtime, networking,
+  data, triggers, and traffic. Runtime deployment remains independently usable
+  for a target-only EBA rehearsal; every surrounding stage is opt-in.
+- `migration.stages` now records `external-copy`, `external-shadow`, and
+  `external-canary` only when those customer-operated procedures are in scope.
+  `none` is a safe, visible decision and remains the default.
+- `migration.network.gate` becomes mandatory for cutover readiness whenever
+  private dependencies are declared. A declared VPN or Transit Gateway path
+  no longer looks sufficient by itself.
+- Every in-scope external stage requires a named owner, separate approver,
+  evidence references, rollback procedure, and timezone-qualified approval
+  timestamp. `deploy.sh migrate readiness` is configuration-only and exits
+  non-zero until traffic is explicitly in scope and every required gate is
+  complete. It does not mutate AWS or customer systems.
+- Generic data movement was rejected as unsafe: schemas, identity mappings,
+  consistency, residency, retention, reconciliation, and reverse replication
+  are source-specific. Keep the existing datastore connected during the EBA,
+  then add one versioned adapter at a time, starting with a retain-source
+  contract and only implementing copy adapters when a customer source is
+  known.
+- Generic trigger shadowing was also rejected. HTTP/webhook routing can use a
+  dedicated authenticated proxy; schedules need idempotent/dry-run behavior;
+  and a second consumer on the same queue can steal source work. Future
+  trigger PRs must be trigger-specific, disabled by default, and preserve an
+  immediate rollback path.
+- Evidence passes: 461 repository tests, all 11 deployment-contract
+  syntheses, deployment configuration and workshop-flow checks, changed-file
+  Python lint/format, ShellCheck, generated-reference drift, shell syntax, and
+  diff whitespace validation.
 
 ### 2026-09-21 — migration profile implementation audit
 

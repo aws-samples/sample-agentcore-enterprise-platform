@@ -131,6 +131,29 @@ Migrate an existing agent onto the platform.
 | `migration.network.connectivity` | one of: `vpn`, `transit-gateway`, `none` | `'none'` | `MIGRATION_CONNECTIVITY` | Records the existing external path from the platform VPC to the customer network. The accelerator does not provision VPN or Transit Gateway resources. |
 | `migration.network.dns_forwarders` | list of str | `[]` | `MIGRATION_DNS_FORWARDERS` | Records externally managed IPv4 resolvers for private hostnames. The accelerator does not create resolver endpoints or rules. |
 | `migration.network.ca_bundle_secret_name` | str | `""` | `MIGRATION_CA_BUNDLE_SECRET_NAME` | Records the Secrets Manager NAME of a private CA bundle for migration planning and ownership. The accelerator does not currently inject it into the image. |
+| `migration.network.gate.owner` | str | `""` | — | Team or alias accountable for executing and reversing this stage. |
+| `migration.network.gate.approver` | str | `""` | — | Separate team or alias that accepted the referenced evidence. |
+| `migration.network.gate.approved_at` | datetime, optional | absent | — | Timestamp with UTC offset. Supplying it asserts final approval and requires every other gate field. |
+| `migration.network.gate.evidence` | list of str | `[]` | — | One or more references in the customer's approved evidence system; do not paste payloads or secrets. |
+| `migration.network.gate.rollback` | str | `""` | — | Concise reversal procedure or reference. Required before the gate can pass. |
+| `migration.stages.data.strategy` | one of: `none`, `external-copy` | `'none'` | — | `none` keeps data movement out of scope. `external-copy` records and gates a separately designed source-specific copy; it does not execute it. |
+| `migration.stages.data.gate.owner` | str | `""` | — | Team or alias accountable for executing and reversing this stage. |
+| `migration.stages.data.gate.approver` | str | `""` | — | Separate team or alias that accepted the referenced evidence. |
+| `migration.stages.data.gate.approved_at` | datetime, optional | absent | — | Timestamp with UTC offset. Supplying it asserts final approval and requires every other gate field. |
+| `migration.stages.data.gate.evidence` | list of str | `[]` | — | One or more references in the customer's approved evidence system; do not paste payloads or secrets. |
+| `migration.stages.data.gate.rollback` | str | `""` | — | Concise reversal procedure or reference. Required before the gate can pass. |
+| `migration.stages.triggers.strategy` | one of: `none`, `external-shadow` | `'none'` | — | `none` leaves the source trigger unchanged. `external-shadow` records and gates a customer-operated disabled/shadow target. |
+| `migration.stages.triggers.gate.owner` | str | `""` | — | Team or alias accountable for executing and reversing this stage. |
+| `migration.stages.triggers.gate.approver` | str | `""` | — | Separate team or alias that accepted the referenced evidence. |
+| `migration.stages.triggers.gate.approved_at` | datetime, optional | absent | — | Timestamp with UTC offset. Supplying it asserts final approval and requires every other gate field. |
+| `migration.stages.triggers.gate.evidence` | list of str | `[]` | — | One or more references in the customer's approved evidence system; do not paste payloads or secrets. |
+| `migration.stages.triggers.gate.rollback` | str | `""` | — | Concise reversal procedure or reference. Required before the gate can pass. |
+| `migration.stages.traffic.strategy` | one of: `none`, `external-canary` | `'none'` | — | `none` means safe target-only deployment. `external-canary` records and gates a customer-operated canary; the accelerator does not change the router. |
+| `migration.stages.traffic.gate.owner` | str | `""` | — | Team or alias accountable for executing and reversing this stage. |
+| `migration.stages.traffic.gate.approver` | str | `""` | — | Separate team or alias that accepted the referenced evidence. |
+| `migration.stages.traffic.gate.approved_at` | datetime, optional | absent | — | Timestamp with UTC offset. Supplying it asserts final approval and requires every other gate field. |
+| `migration.stages.traffic.gate.evidence` | list of str | `[]` | — | One or more references in the customer's approved evidence system; do not paste payloads or secrets. |
+| `migration.stages.traffic.gate.rollback` | str | `""` | — | Concise reversal procedure or reference. Required before the gate can pass. |
 
 ## Presets
 
@@ -287,6 +310,17 @@ migration:
   network:
     private_dependencies: []  # customer-side hostnames the agent must reach (needs networking + connectivity)
     connectivity: none        # vpn|transit-gateway once private_dependencies is filled
+  stages:
+    # Runtime deployment is already in scope. These surrounding stages are
+    # explicit opt-ins and remain customer-operated; `migrate readiness`
+    # blocks cutover until each enabled stage has owner/approver/evidence/
+    # rollback/approved_at recorded under its gate.
+    data:
+      strategy: none          # external-copy after a source-specific plan is approved
+    triggers:
+      strategy: none          # external-shadow; required before event-source cutover
+    traffic:
+      strategy: none          # external-canary; leaving none keeps this target-only
 ```
 
 </details>

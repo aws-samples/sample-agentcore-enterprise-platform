@@ -40,3 +40,14 @@ migration:
   network:
     private_dependencies: []  # customer-side hostnames the agent must reach (needs networking + connectivity)
     connectivity: none        # vpn|transit-gateway once private_dependencies is filled
+  stages:
+    # Runtime deployment is already in scope. These surrounding stages are
+    # explicit opt-ins and remain customer-operated; `migrate readiness`
+    # blocks cutover until each enabled stage has owner/approver/evidence/
+    # rollback/approved_at recorded under its gate.
+    data:
+      strategy: none          # external-copy after a source-specific plan is approved
+    triggers:
+      strategy: none          # external-shadow; required before event-source cutover
+    traffic:
+      strategy: none          # external-canary; leaving none keeps this target-only
