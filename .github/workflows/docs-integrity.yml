@@ -6,11 +6,13 @@ on:
     paths:
       - "docs/**"
       - "scripts/check_docs.py"
+      - "memory.md"
       - ".github/workflows/docs-integrity.yml"
   pull_request:
     paths:
       - "docs/**"
       - "scripts/check_docs.py"
+      - "memory.md"
       - ".github/workflows/docs-integrity.yml"
 
 permissions:
