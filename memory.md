@@ -88,6 +88,10 @@ Open evidence and ownership work:
   fallback used for local session IDs. The fallback now uses
   `crypto.getRandomValues`, and a source regression test prevents insecure
   randomness from returning.
+- On remediation head `fc1573c`, every required GitHub check passes: the
+  aggregate CodeQL gate and all three language analyses, ASH, secret-boundary
+  scanning, contract parity, documentation integrity, Python and shell
+  quality, labeler, and both control-library jobs.
 - Running unscoped `pytest -q` also collects the standalone
   `scripts/test_memory.py` utility, whose command-style functions require five
   nonexistent pytest fixtures. The supported `pytest tests -q` workflow is
