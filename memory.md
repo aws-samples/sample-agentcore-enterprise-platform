@@ -13,9 +13,9 @@ operational readiness review.
 
 ## Current milestone
 
-**v0.1.0 release candidate — customer preflight and honest support boundary**
+**v0.1.0 published — customer preflight and honest support boundary**
 
-Branch: `feat/customer-preflight-v0.1`
+Branch: `docs/record-v0.1.0-release`
 
 G0 merged through PR #79. G1 implementation merged through PR #76. PR #80
 reached `main`, but PRs #81–#86 merged into their stacked base branches rather
@@ -49,6 +49,18 @@ Open evidence and ownership work:
   the retired client allow-list/checkpoints and verify the final state.
 - [ ] Populate, review, and approve the five G1 governance artifacts for the
   specific customer; draft templates and green synthesis do not close G1.
+
+### 2026-09-21 — v0.1.0 published
+
+- PR #90 merged to `main` as `8f0a7b1` after every required GitHub check
+  passed.
+- The annotated `v0.1.0` tag resolves exactly to that reviewed merge commit.
+- The public GitHub release
+  `https://github.com/aws-samples/sample-agentcore-enterprise-platform/releases/tag/v0.1.0`
+  was published at 09:14 UTC as a normal release, not a draft or prerelease,
+  using the reviewed `docs/releases/v0.1.0.md` notes.
+- Tag and release publication changed no AWS resource, secret, customer
+  system, or deployed application.
 
 ### 2026-09-21 — v0.1.0 customer preflight and release candidate
 
