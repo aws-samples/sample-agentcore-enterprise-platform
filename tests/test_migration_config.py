@@ -19,6 +19,9 @@ from infra_utils.platform_config import (
     PlatformConfig,
     load_platform_config,
     migration_cutover_ready,
+    migration_data_plan_document,
+    migration_data_plan_lines,
+    migration_data_ready,
     migration_plan,
     migration_readiness,
     migration_readiness_lines,
@@ -306,8 +309,6 @@ def test_enabled_external_stage_is_blocked_until_gate_is_complete():
 def test_complete_external_cutover_is_ready_for_http_source():
     migration = deep(
         ("source.trigger", "http"),
-        ("stages.data.strategy", "external-copy"),
-        ("stages.data.gate", COMPLETE_GATE),
         ("stages.traffic.strategy", "external-canary"),
         ("stages.traffic.gate", COMPLETE_GATE),
     )
@@ -365,6 +366,124 @@ def test_gate_requires_separate_owner_and_approver():
 def test_populated_gate_on_out_of_scope_stage_warns():
     m = cfg(deep(("stages.data.gate.owner", "unused-owner"))).migration
     assert any("data.gate is populated" in warning for warning in m.warnings)
+
+
+# ── source-specific data plan ────────────────────────────────────────────────
+
+
+def retained_data(*datasets):
+    default = {
+        "name": "operational-state",
+        "adapter": "retain-source-v1",
+        "dependency": "database.corp.internal",
+        "classification_reference": "DATA-CLASS-123",
+        "retention_reference": "RETENTION-123",
+        "identity_mapping_reference": "IDENTITY-MAP-123",
+        "validation_reference": "DATA-TEST-123",
+    }
+    selected = list(datasets) or [default]
+    return deep(
+        ("network.private_dependencies", ["database.corp.internal"]),
+        ("network.connectivity", "vpn"),
+        ("stages.data.strategy", "retain-source"),
+        ("stages.data.datasets", selected),
+    )
+
+
+def test_retain_source_requires_versioned_datasets_on_declared_dependencies():
+    missing = deep(("stages.data.strategy", "retain-source"))
+    assert "requires at least one dataset" in err(missing)
+
+    undeclared = retained_data()
+    undeclared["network"]["private_dependencies"] = ["other.corp.internal"]
+    assert "retain-source datasets must name dependencies" in err(
+        undeclared, security={"networking": True}
+    )
+
+    c = cfg(retained_data(), security={"networking": True})
+    dataset = c.migration.stages.data.datasets[0]
+    assert dataset.adapter == "retain-source-v1"
+    assert dataset.dependency == "database.corp.internal"
+
+
+def test_data_plan_is_deterministic_and_contains_no_gate_assertions():
+    one = {
+        "name": "zeta-state",
+        "dependency": "database.corp.internal",
+        "classification_reference": "CLASS-Z",
+        "retention_reference": "RET-Z",
+        "identity_mapping_reference": "IDENT-Z",
+        "validation_reference": "TEST-Z",
+    }
+    two = {
+        "name": "alpha-state",
+        "dependency": "database.corp.internal",
+        "classification_reference": "CLASS-A",
+        "retention_reference": "RET-A",
+        "identity_mapping_reference": "IDENT-A",
+        "validation_reference": "TEST-A",
+    }
+    first = cfg(retained_data(one, two), security={"networking": True})
+    second = cfg(retained_data(two, one), security={"networking": True})
+    assert migration_data_plan_document(first) == migration_data_plan_document(second)
+    document = migration_data_plan_document(first)
+    assert document["digest"].startswith("sha256:")
+    assert [item["name"] for item in document["datasets"]] == [
+        "alpha-state",
+        "zeta-state",
+    ]
+    assert "gate" not in json.dumps(document).lower()
+
+
+def test_data_readiness_is_bound_to_the_exact_plan_digest():
+    migration = retained_data()
+    migration["stages"]["data"]["gate"] = COMPLETE_GATE
+    blocked = cfg(migration, security={"networking": True})
+    assert migration_data_ready(blocked) is False
+    assert (
+        "exact plan digest"
+        in {check.name: check.detail for check in migration_readiness(blocked)}["data"]
+    )
+
+    digest = migration_data_plan_document(blocked)["digest"]
+    migration["stages"]["data"]["gate"]["evidence"].append(digest)
+    migration["network"]["gate"] = COMPLETE_GATE
+    ready = cfg(migration, security={"networking": True})
+    assert migration_data_ready(ready) is True
+    lines = "\n".join(migration_data_plan_lines(ready))
+    assert digest in lines
+    assert "Execution: no copy" in lines
+    assert "Gate: READY" in lines
+
+
+def test_data_dataset_references_are_trimmed_single_lines_and_names_unique():
+    duplicate = retained_data(
+        {
+            "name": "same-state",
+            "dependency": "database.corp.internal",
+            "classification_reference": "CLASS",
+            "retention_reference": "RET",
+            "identity_mapping_reference": "IDENT",
+            "validation_reference": "TEST",
+        },
+        {
+            "name": "same-state",
+            "dependency": "database.corp.internal",
+            "classification_reference": "CLASS",
+            "retention_reference": "RET",
+            "identity_mapping_reference": "IDENT",
+            "validation_reference": "TEST",
+        },
+    )
+    assert "dataset names must be unique" in err(
+        duplicate, security={"networking": True}
+    )
+
+    newline = retained_data()
+    newline["stages"]["data"]["datasets"][0]["validation_reference"] = "TEST\npayload"
+    assert "single-line evidence reference" in err(
+        newline, security={"networking": True}
+    )
 
 
 # ── to_env(): the names app.py and deploy.sh consume ─────────────────────────

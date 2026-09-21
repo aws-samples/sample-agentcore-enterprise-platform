@@ -104,7 +104,8 @@ DESCRIPTIONS: dict[str, str] = {
     "migration.network.connectivity": "Records the existing external path from the platform VPC to the customer network. The accelerator does not provision VPN or Transit Gateway resources.",
     "migration.network.dns_forwarders": "Records externally managed IPv4 resolvers for private hostnames. The accelerator does not create resolver endpoints or rules.",
     "migration.network.ca_bundle_secret_name": "Secrets Manager NAME of a private CA bundle used by the network probe. The bundle is read in memory and is not injected into the customer image or returned as evidence.",
-    "migration.stages.data.strategy": "`none` keeps data movement out of scope. `external-copy` records and gates a separately designed source-specific copy; it does not execute it.",
+    "migration.stages.data.strategy": "`none` keeps data movement out of scope. `retain-source` uses versioned retain-source dataset contracts. `external-copy` records and gates a separately designed customer procedure; neither strategy runs a copy during deployment.",
+    "migration.stages.data.datasets": "Up to 25 versioned retain-source dataset contracts. Each names a declared private dependency plus customer-approved classification, retention, identity-mapping, and validation references.",
     "migration.stages.triggers.strategy": "`none` leaves the source trigger unchanged. `external-shadow` records and gates a customer-operated disabled/shadow target.",
     "migration.stages.traffic.strategy": "`none` means safe target-only deployment. `external-canary` records and gates a customer-operated canary; the accelerator does not change the router.",
 }

@@ -86,6 +86,57 @@ migration:
         approved_at: 2026-09-21T12:00:00+00:00
 ```
 
+### Retain the existing datastore
+
+The only built-in data adapter is `retain-source-v1`: it moves no records. The
+migrated runtime keeps using a private datastore that is already governed by
+the customer. Declare every retained dataset and bind it to a hostname already
+listed under `migration.network.private_dependencies`:
+
+```yaml
+migration:
+  network:
+    private_dependencies: [database.corp.internal]
+    connectivity: transit-gateway
+  stages:
+    data:
+      strategy: retain-source
+      datasets:
+        - name: operational-state
+          adapter: retain-source-v1
+          dependency: database.corp.internal
+          classification_reference: DATA-CLASS-123
+          retention_reference: RETENTION-123
+          identity_mapping_reference: IDENTITY-MAP-123
+          validation_reference: DATA-TEST-123
+      gate:
+        # owner, approver, rollback, approved_at, and evidence are required
+        evidence: [CHG-12345/data-review]
+```
+
+Render the canonical plan before approval:
+
+```bash
+./scripts/deploy.sh migrate data plan
+```
+
+Add the printed `sha256:…` digest to `data.gate.evidence`, then run:
+
+```bash
+./scripts/deploy.sh migrate data readiness
+```
+
+Readiness also requires the private-network gate because retaining the source
+is only safe if the runtime can reach it. The digest excludes approval fields,
+so approval is bound to the source/target, adapter version, and governance
+references without becoming circular.
+
+`external-copy` can record and gate a customer-operated, source-specific
+procedure, but the accelerator has no generic executable copy adapter. It
+never starts data movement during `design`, `build`, or `verify`. Add an
+executable adapter only after defining source snapshot semantics, identity
+mapping, encryption, idempotency, reconciliation, and reverse replication.
+
 Do not put secret values in `platform.yaml`. Prefer a source build because the
 remote CodeBuild job produces arm64. If supplying an image, verify its arm64
 manifest and pin an immutable digest before the EBA.

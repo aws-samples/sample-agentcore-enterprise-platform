@@ -574,6 +574,18 @@ grep -q "safe target-only deployment" <<<"$out" \
 [ ! -s "$AWS_ARGS" ] \
     || fail "migrate readiness made an AWS call: $(cat "$AWS_ARGS")"
 
+: > "$AWS_ARGS"
+out=$(run_migrate data plan 2>&1) || fail "migrate data plan failed: $out"
+grep -q "NOT REQUIRED: strategy is none" <<<"$out" \
+    || fail "data plan did not report the default scope: $out"
+out=$(run_migrate data readiness 2>&1) \
+    || fail "out-of-scope data should satisfy its own readiness check: $out"
+[ ! -s "$AWS_ARGS" ] \
+    || fail "migrate data plan/readiness made an AWS call: $(cat "$AWS_ARGS")"
+out=$(run_migrate data execute 2>&1) \
+    && fail "migrate data accepted an executable action"
+grep -q "execute" <<<"$out" || fail "bad data sub-action not named: $out"
+
 out=$(run_migrate bogus 2>&1) && fail "unknown migrate sub-action was accepted"
 grep -q "bogus" <<<"$out" || fail "bad sub-action not named: $out"
 out=$(run_migrate plan --stack x 2>&1) && fail "migrate accepted a deploy option"

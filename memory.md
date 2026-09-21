@@ -15,12 +15,13 @@ operational readiness review.
 
 **G1 — production design baseline merged; migration EBA path live-validated**
 
-Branch: `feat/migration-network-probe`
+Branch: `feat/migration-data-plan`
 
 G0 merged through PR #79. G1 implementation merged through PR #76. Migration
 hardening is split across stacked PRs #80, #81, and #82. The migration
 readiness gate is in PR #83; private-dependency validation continues on a
-branch stacked after #83.
+branch stacked in PR #84. Data planning continues on a branch stacked after
+#84.
 
 - [x] Add explicit `workshop` and `production` deployment modes.
 - [x] Add a production preset that requires enterprise identity, networking,
@@ -106,6 +107,34 @@ Open evidence and ownership work:
   including a private-dependency migration footprint, changed-file Python
   lint/format, generated-reference parity, ShellCheck, and diff whitespace
   checks.
+
+### 2026-09-21 — source-specific migration data plan
+
+- Generic data copy remains intentionally unavailable. `migrate data execute`
+  is not a command, and CDK design/build/verify never starts data movement.
+- The first versioned data adapter is `retain-source-v1`: the AgentCore
+  runtime keeps using an existing customer datastore over a declared and
+  verified private dependency. It moves no records and creates no data
+  migration role.
+- Every retained dataset has a stable name and requires customer evidence
+  references for classification, retention, identity mapping, and data
+  validation. Its dependency must be one of
+  `migration.network.private_dependencies`, so the VPC probe and network gate
+  apply.
+- `migrate data plan` renders a canonical, sorted, secret-free plan and a
+  SHA-256 digest over the project, environment, Region, target, strategy,
+  adapter version, dependency, and governance references. Approval fields are
+  excluded to avoid a circular digest.
+- `migrate data readiness` requires both the data and network gates and
+  requires the exact plan digest in `data.gate.evidence`. A configuration edit
+  therefore invalidates the prior data approval.
+- `external-copy` remains an evidence-only strategy for a separately designed
+  customer procedure. Executable copy adapters require an immutable snapshot,
+  narrow migration role, encrypted checkpoints, identity mapping,
+  reconciliation, and reverse-replication design for the actual source.
+- Evidence passes: 472 repository tests, all 12 deployment-contract syntheses,
+  deployment configuration checks, changed-file Python lint/format,
+  generated-reference parity, ShellCheck, shell syntax, and diff whitespace.
 
 ### 2026-09-21 — migration profile implementation audit
 
