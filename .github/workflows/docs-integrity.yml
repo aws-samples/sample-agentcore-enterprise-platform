@@ -8,7 +8,6 @@ on:
       - "scripts/check_docs.py"
       - ".github/workflows/docs-integrity.yml"
   pull_request:
-    branches: [ main ]
     paths:
       - "docs/**"
       - "scripts/check_docs.py"
