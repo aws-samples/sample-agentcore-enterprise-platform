@@ -22,6 +22,11 @@ REQUIRED_SIDEBAR_ROUTES = {
     "MIGRATION_RUNBOOK.md",
     "PLATFORM_YAML.md?id=migration",
 }
+REQUIRED_DOCSIFY_CONFIG = {
+    '"/.*/_sidebar.md": "/_sidebar.md",',
+    'const docsBasePath = window.location.pathname.replace(/[^/]*$/, "");',
+    "basePath: docsBasePath,",
+}
 
 
 class _LocalAssetParser(HTMLParser):
@@ -110,12 +115,20 @@ def check_sidebar() -> list[str]:
 def check_site_assets() -> list[str]:
     errors: list[str] = []
     index = DOCS_ROOT / "index.html"
+    index_text = index.read_text(encoding="utf-8")
     parser = _LocalAssetParser()
-    parser.feed(index.read_text(encoding="utf-8"))
+    parser.feed(index_text)
     for target in parser.assets:
         resolved = _resolved_target(index, target)
         if resolved is not None and not resolved.is_file():
             errors.append(f"docs/index.html: missing local asset: {target}")
+
+    for snippet in sorted(REQUIRED_DOCSIFY_CONFIG):
+        if snippet not in index_text:
+            errors.append(
+                "docs/index.html: missing project-path-safe Docsify configuration: "
+                f"{snippet}"
+            )
 
     if not (DOCS_ROOT / "_404.md").is_file():
         errors.append("docs/_404.md: required Docsify not-found page is missing")

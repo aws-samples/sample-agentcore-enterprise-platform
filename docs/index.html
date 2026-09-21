@@ -162,7 +162,12 @@
 <body>
   <div id="app">Loading the accelerator docs…</div>
   <script>
+    const docsBasePath = window.location.pathname.replace(/[^/]*$/, "");
     window.$docsify = {
+      alias: {
+        "/.*/_sidebar.md": "/_sidebar.md",
+      },
+      basePath: docsBasePath,
       name: "Agentic AI Platform EBA",
       nameLink: "#/",
       repo: "https://github.com/aws-samples/sample-agentcore-enterprise-platform",

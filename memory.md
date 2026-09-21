@@ -13,15 +13,15 @@ operational readiness review.
 
 ## Current milestone
 
-**G1 — production design and migration merged; documentation ready for review**
+**G1 — production design, migration, and customer documentation merged**
 
-Branch: `docs-migration-eba-site` (PR #88 targets `main`)
+Branch: `fix/docsify-project-path`
 
 G0 merged through PR #79. G1 implementation merged through PR #76. PR #80
 reached `main`, but PRs #81–#86 merged into their stacked base branches rather
 than `main`. PR #87 landed the intact final migration stack on `main` on
-2026-09-21. PR #88 now contains only the customer-facing documentation and
-documentation-integrity changes.
+2026-09-21. PR #88 landed the customer-facing documentation and
+documentation-integrity changes on `main` the same day.
 
 - [x] Add explicit `workshop` and `production` deployment modes.
 - [x] Add a production preset that requires enterprise identity, networking,
@@ -98,6 +98,24 @@ Open evidence and ownership work:
   workflow intentionally runs on stacked pull requests as well as `main`.
 - This branch changes documentation and repository CI only. It performs no AWS,
   customer network, data, event-source, or traffic mutation.
+
+### 2026-09-21 — Docsify project-path fallback correction
+
+- PR #89 contains the focused fallback-path correction.
+- GitHub Pages built PR #88 successfully from merge commit `ed45ca3`. Live
+  desktop navigation, migration scope, favicon, and mobile table containment
+  pass with no console errors on valid routes.
+- An unknown live route rendered `_404.md` but then requested
+  `/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform/_sidebar.md`.
+  The same defect reproduced locally when the docs were served below `/docs/`.
+- Docsify now receives an explicit base path derived from the current document
+  pathname plus a root-sidebar alias for every nested route. The documentation
+  integrity checker requires both settings so a future theme/configuration
+  edit cannot silently restore the duplicated request.
+- The nested-path browser regression now records only the expected 404 for the
+  deliberately missing page; `_404.md`, `_sidebar.md`, the favicon, and search
+  index pages load from the correct base. Evidence also passes 504 repository
+  tests, 32-page/126-link documentation integrity, Ruff, and diff whitespace.
 
 ### 2026-09-21 — staged migration readiness and next implementation boundary
 
@@ -833,3 +851,6 @@ Never copy credential values into this file.
 - `bf82e96` — `Run documentation checks on stacked PRs`
 - Stacked pull request:
   [#88 — Make migration documentation EBA-ready](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/88)
+- `6548ba4` — `Fix Docsify sidebar fallback path`
+- Pull request:
+  [#89 — Fix Docsify sidebar fallback path](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/89)
