@@ -145,7 +145,8 @@ materialize_preset() {
 
 # Pre-scan argv: materialization must precede apply_platform_config below so
 # the manifest it writes participates with the right precedence. Skipped for
-# the config action and for --dry-run (a dry run must not mutate config).
+# the config/doctor actions and for --dry-run (read-only commands must not
+# mutate config).
 PRESCAN_PROFILE=""; PRESCAN_YES=0; PRESCAN_DRY=0
 _prev=""
 for _a in "$@"; do
@@ -156,7 +157,10 @@ for _a in "$@"; do
     esac
     _prev="$_a"
 done
-if [ -n "$PRESCAN_PROFILE" ] && [ "${1:-}" != "config" ] && [ "$PRESCAN_DRY" != "1" ]; then
+if [ -n "$PRESCAN_PROFILE" ] \
+    && [ "${1:-}" != "config" ] \
+    && [ "${1:-}" != "doctor" ] \
+    && [ "$PRESCAN_DRY" != "1" ]; then
     if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "plan" ]; then
         # Planning a shipped migration preset must be genuinely read-only:
         # inspect it in place instead of replacing a customer's platform.yaml.

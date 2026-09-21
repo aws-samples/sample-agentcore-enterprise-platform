@@ -63,7 +63,9 @@ Open evidence and ownership work:
 - The preflight command has an exact AWS read-call allow-list and does not
   install CDK, create or update secrets, bootstrap, synthesize, or deploy. It
   stops account-scoped secret/model reads when the active account does not
-  match the manifest.
+  match the manifest. Its early action dispatcher also prevents deployment
+  flags from materializing a preset before an invalid doctor invocation is
+  rejected.
 - A live read-only run found the shell currently resolves to development
   account `…4125`, while the checked-in manifest pins `…1817`. The command
   reported both, exited non-zero, and made no secret or Bedrock call in the

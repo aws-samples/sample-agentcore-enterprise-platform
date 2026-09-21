@@ -352,6 +352,17 @@ echo "$out" | grep -q -- "-identity" || fail "full-name hint missing: $out"
 # the run must get PAST parsing and die on the misspelled profile instead.
 out=$(run_deploy deploy --yes --profile greenfied 2>&1) && fail "--yes+bad profile accepted"
 echo "$out" | grep -q "Unknown profile" || fail "--yes not parsed as a flag: $out"
+
+# A malformed doctor invocation must remain read-only. The argv pre-scan runs
+# before the doctor dispatcher, so `--profile ... --yes` must not materialize a
+# preset over an operator's manifest before argparse rejects the unsupported
+# options.
+DOCTOR_MANIFEST="$TMP/doctor-platform.yaml"
+printf 'project: hand-edited-doctor-manifest\n' > "$DOCTOR_MANIFEST"
+out=$(PLATFORM_CONFIG="$DOCTOR_MANIFEST" run_deploy doctor --profile greenfield --yes 2>&1) \
+    && fail "doctor accepted deployment flags"
+grep -q 'hand-edited-doctor-manifest' "$DOCTOR_MANIFEST" \
+    || fail "doctor modified platform.yaml before rejecting deployment flags: $out"
 echo "PASS: invalid CLI input fails closed before any AWS call"
 
 # (o) the full-footprint gate: --yes and NON_INTERACTIVE skip it; an answer
