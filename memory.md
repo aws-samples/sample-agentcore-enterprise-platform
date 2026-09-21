@@ -61,6 +61,9 @@ Open evidence and ownership work:
   using the reviewed `docs/releases/v0.1.0.md` notes.
 - Tag and release publication changed no AWS resource, secret, customer
   system, or deployed application.
+- Follow-up PR
+  [#91 — Record v0.1.0 release publication](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/91)
+  carries this documentation-only handover record.
 
 ### 2026-09-21 — v0.1.0 customer preflight and release candidate
 
