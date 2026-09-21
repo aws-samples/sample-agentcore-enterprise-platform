@@ -18,7 +18,10 @@ from pydantic import ValidationError
 from infra_utils.platform_config import (
     PlatformConfig,
     load_platform_config,
+    migration_cutover_ready,
     migration_plan,
+    migration_readiness,
+    migration_readiness_lines,
     migration_secret_name,
     to_env,
 )
@@ -229,6 +232,111 @@ def test_dns_forwarders_must_be_ipv4():
     assert "IPv4" in err(bad, security={"networking": True})
 
 
+# ── staged cutover scope and evidence gates ──────────────────────────────────
+
+
+COMPLETE_GATE = {
+    "owner": "migration-owner",
+    "approver": "change-approver",
+    "approved_at": "2026-09-21T12:00:00+00:00",
+    "evidence": ["EBA-123/network-rehearsal"],
+    "rollback": "Restore the recorded source route.",
+}
+
+
+def readiness(migration) -> dict[str, tuple[str, str]]:
+    return {
+        check.name: (check.status, check.detail)
+        for check in migration_readiness(cfg(migration))
+    }
+
+
+def test_cutover_stages_default_out_of_scope_and_not_ready():
+    c = cfg(BASE)
+    got = readiness(BASE)
+    assert got["runtime"][0] == "READY"
+    assert got["networking"][0] == "NOT REQUIRED"
+    assert got["data"][0] == "NOT REQUIRED"
+    assert got["triggers"][0] == "NOT REQUIRED"
+    assert got["traffic"][0] == "NOT REQUIRED"
+    assert migration_cutover_ready(c) is False
+    assert "safe target-only deployment" in "\n".join(migration_readiness_lines(c))
+
+
+def test_enabled_external_stage_is_blocked_until_gate_is_complete():
+    migration = deep(("stages.data.strategy", "external-copy"))
+    status, detail = readiness(migration)["data"]
+    assert status == "BLOCKED"
+    assert all(
+        field in detail
+        for field in ("owner", "approver", "evidence", "rollback", "approved_at")
+    )
+
+
+def test_complete_external_cutover_is_ready_for_http_source():
+    migration = deep(
+        ("source.trigger", "http"),
+        ("stages.data.strategy", "external-copy"),
+        ("stages.data.gate", COMPLETE_GATE),
+        ("stages.traffic.strategy", "external-canary"),
+        ("stages.traffic.gate", COMPLETE_GATE),
+    )
+    c = cfg(migration)
+    assert migration_cutover_ready(c) is True
+    assert "Overall: READY" in "\n".join(migration_readiness_lines(c))
+
+
+@pytest.mark.parametrize("trigger", ["webhook", "schedule", "queue"])
+def test_event_cutover_requires_trigger_shadowing(trigger):
+    migration = deep(
+        ("source.trigger", trigger),
+        ("stages.traffic.strategy", "external-canary"),
+    )
+    msg = err(migration)
+    assert "requires migration.stages.triggers.strategy='external-shadow'" in msg
+
+
+def test_private_connectivity_becomes_a_mandatory_gate():
+    migration = deep(
+        ("network.private_dependencies", ["git.internal"]),
+        ("network.connectivity", "vpn"),
+    )
+    c = cfg(migration, security={"networking": True})
+    network = {check.name: check for check in migration_readiness(c)}["networking"]
+    assert network.status == "BLOCKED"
+    assert "approved_at" in network.detail
+
+
+def test_approved_gate_requires_audit_fields_and_timezone():
+    partial = deep(
+        ("stages.data.strategy", "external-copy"),
+        ("stages.data.gate.approved_at", "2026-09-21T12:00:00+00:00"),
+    )
+    assert "approved_at requires a complete gate" in err(partial)
+
+    naive = deep(
+        ("stages.data.strategy", "external-copy"),
+        ("stages.data.gate", {**COMPLETE_GATE, "approved_at": "2026-09-21T12:00:00"}),
+    )
+    assert "must include a UTC offset" in err(naive)
+
+
+def test_gate_requires_separate_owner_and_approver():
+    migration = deep(
+        ("stages.data.strategy", "external-copy"),
+        (
+            "stages.data.gate",
+            {**COMPLETE_GATE, "approver": COMPLETE_GATE["owner"].upper()},
+        ),
+    )
+    assert "owner and approver must be different" in err(migration)
+
+
+def test_populated_gate_on_out_of_scope_stage_warns():
+    m = cfg(deep(("stages.data.gate.owner", "unused-owner"))).migration
+    assert any("data.gate is populated" in warning for warning in m.warnings)
+
+
 # ── to_env(): the names app.py and deploy.sh consume ─────────────────────────
 
 
@@ -275,6 +383,8 @@ def test_plan_covers_target_mapping_secrets_and_stacks():
     assert "proj/dev/migration/GIT_TOKEN" in text
     assert "proj-dev-runtime-orchestrator" in text  # the reused stack name
     assert "agents.pattern" in text  # says the pattern is ignored
+    assert "Migration cutover readiness:" in text
+    assert "safe target-only deployment" in text
 
 
 @pytest.mark.parametrize("trigger", ["http", "webhook", "schedule", "queue"])

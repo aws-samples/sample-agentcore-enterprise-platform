@@ -104,7 +104,26 @@ DESCRIPTIONS: dict[str, str] = {
     "migration.network.connectivity": "Records the existing external path from the platform VPC to the customer network. The accelerator does not provision VPN or Transit Gateway resources.",
     "migration.network.dns_forwarders": "Records externally managed IPv4 resolvers for private hostnames. The accelerator does not create resolver endpoints or rules.",
     "migration.network.ca_bundle_secret_name": "Records the Secrets Manager NAME of a private CA bundle for migration planning and ownership. The accelerator does not currently inject it into the image.",
+    "migration.stages.data.strategy": "`none` keeps data movement out of scope. `external-copy` records and gates a separately designed source-specific copy; it does not execute it.",
+    "migration.stages.triggers.strategy": "`none` leaves the source trigger unchanged. `external-shadow` records and gates a customer-operated disabled/shadow target.",
+    "migration.stages.traffic.strategy": "`none` means safe target-only deployment. `external-canary` records and gates a customer-operated canary; the accelerator does not change the router.",
 }
+
+for _gate_prefix in (
+    "migration.network.gate",
+    "migration.stages.data.gate",
+    "migration.stages.triggers.gate",
+    "migration.stages.traffic.gate",
+):
+    DESCRIPTIONS.update(
+        {
+            f"{_gate_prefix}.owner": "Team or alias accountable for executing and reversing this stage.",
+            f"{_gate_prefix}.approver": "Separate team or alias that accepted the referenced evidence.",
+            f"{_gate_prefix}.approved_at": "Timestamp with UTC offset. Supplying it asserts final approval and requires every other gate field.",
+            f"{_gate_prefix}.evidence": "One or more references in the customer's approved evidence system; do not paste payloads or secrets.",
+            f"{_gate_prefix}.rollback": "Concise reversal procedure or reference. Required before the gate can pass.",
+        }
+    )
 
 # Dotted key → the name to_env() emits for it. Checked against a fully
 # populated to_env() at generation time so this cannot drift from the code.

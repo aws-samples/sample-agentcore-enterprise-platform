@@ -24,6 +24,8 @@ import json
 import os
 import re
 import sys
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
@@ -614,6 +616,110 @@ class MigrationTarget(BaseModel):
         return v
 
 
+class MigrationGate(BaseModel):
+    """Customer evidence required before an external migration stage proceeds.
+
+    A gate is deliberately evidence, not an executable switch. The
+    accelerator may deploy and verify the target while a gate is incomplete,
+    but ``migrate readiness`` reports the stage as BLOCKED. Adding
+    ``approved_at`` is the final assertion and therefore requires the rest of
+    the audit record to be complete.
+    """
+
+    owner: str = ""
+    approver: str = ""
+    approved_at: datetime | None = None
+    evidence: list[str] = Field(default_factory=list)
+    rollback: str = ""
+
+    model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def _approval_is_complete(self) -> MigrationGate:
+        if (
+            self.owner.strip()
+            and self.approver.strip()
+            and self.owner.strip().casefold() == self.approver.strip().casefold()
+        ):
+            raise ValueError(
+                "owner and approver must be different for separation of duties"
+            )
+        if self.approved_at is None:
+            return self
+        missing = self.blockers
+        if missing:
+            raise ValueError(
+                "approved_at requires a complete gate; missing " + ", ".join(missing)
+            )
+        if self.approved_at.tzinfo is None:
+            raise ValueError(
+                "approved_at must include a UTC offset, for example +00:00"
+            )
+        return self
+
+    @property
+    def blockers(self) -> list[str]:
+        missing: list[str] = []
+        if not self.owner.strip():
+            missing.append("owner")
+        if not self.approver.strip():
+            missing.append("approver")
+        if not self.evidence or not all(item.strip() for item in self.evidence):
+            missing.append("evidence")
+        if not self.rollback.strip():
+            missing.append("rollback")
+        if self.approved_at is None:
+            missing.append("approved_at")
+        return missing
+
+    @property
+    def ready(self) -> bool:
+        return not self.blockers
+
+
+class MigrationDataStage(BaseModel):
+    """Optional customer-data move; execution remains source-specific."""
+
+    strategy: Literal["none", "external-copy"] = "none"
+    gate: MigrationGate = Field(default_factory=MigrationGate)
+
+    model_config = {"extra": "forbid"}
+
+
+class MigrationTriggerStage(BaseModel):
+    """Optional shadowing of the source event trigger."""
+
+    strategy: Literal["none", "external-shadow"] = "none"
+    gate: MigrationGate = Field(default_factory=MigrationGate)
+
+    model_config = {"extra": "forbid"}
+
+
+class MigrationTrafficStage(BaseModel):
+    """Optional traffic shift; the external router remains customer-owned."""
+
+    strategy: Literal["none", "external-canary"] = "none"
+    gate: MigrationGate = Field(default_factory=MigrationGate)
+
+    model_config = {"extra": "forbid"}
+
+
+class MigrationStages(BaseModel):
+    """Opt-in work around the runtime move.
+
+    ``none`` is a real, visible scope decision. The currently supported
+    non-none strategies are intentionally named ``external-*`` because this
+    repository validates their evidence but does not mutate customer systems
+    of record, event sources, or traffic routers.
+    """
+
+    data: MigrationDataStage = Field(default_factory=MigrationDataStage)
+    triggers: MigrationTriggerStage = Field(default_factory=MigrationTriggerStage)
+    traffic: MigrationTrafficStage = Field(default_factory=MigrationTrafficStage)
+
+    model_config = {"extra": "forbid"}
+
+
 class MigrationNetwork(BaseModel):
     """What the migrated agent must still reach on the customer side."""
 
@@ -621,6 +727,7 @@ class MigrationNetwork(BaseModel):
     connectivity: Literal["vpn", "transit-gateway", "none"] = "none"
     dns_forwarders: list[str] = Field(default_factory=list)  # IPv4 resolvers
     ca_bundle_secret_name: str = ""  # Secrets Manager NAME of a private CA bundle
+    gate: MigrationGate = Field(default_factory=MigrationGate)
 
     model_config = {"extra": "forbid"}
 
@@ -665,6 +772,7 @@ class MigrationConfig(BaseModel):
     source: MigrationSource
     target: MigrationTarget = Field(default_factory=MigrationTarget)
     network: MigrationNetwork = Field(default_factory=MigrationNetwork)
+    stages: MigrationStages = Field(default_factory=MigrationStages)
 
     model_config = {"extra": "forbid"}
 
@@ -688,6 +796,17 @@ class MigrationConfig(BaseModel):
                 "contract (8080, /invocations, /ping) — drop migration.source.port "
                 "and migration.source.invoke_path, or use mode 'adapter'"
             )
+        if (
+            self.stages.traffic.strategy != "none"
+            and src.trigger in {"webhook", "schedule", "queue"}
+            and self.stages.triggers.strategy == "none"
+        ):
+            raise ValueError(
+                f"migration.stages.traffic for source trigger {src.trigger!r} "
+                "requires migration.stages.triggers.strategy='external-shadow'; "
+                "shift the event source through a disabled/shadow target before "
+                "moving traffic"
+            )
         return self
 
     @property
@@ -708,6 +827,38 @@ class MigrationConfig(BaseModel):
             out.append(
                 "migration.network.dns_forwarders / ca_bundle_secret_name are set "
                 "but private_dependencies is empty — nothing will use them."
+            )
+        for name, stage in (
+            ("data", self.stages.data),
+            ("triggers", self.stages.triggers),
+            ("traffic", self.stages.traffic),
+        ):
+            gate = stage.gate
+            if stage.strategy == "none" and any(
+                (
+                    gate.owner,
+                    gate.approver,
+                    gate.approved_at,
+                    gate.evidence,
+                    gate.rollback,
+                )
+            ):
+                out.append(
+                    f"migration.stages.{name}.gate is populated but strategy is "
+                    "'none'; the stage remains out of scope"
+                )
+        if not net.private_dependencies and any(
+            (
+                net.gate.owner,
+                net.gate.approver,
+                net.gate.approved_at,
+                net.gate.evidence,
+                net.gate.rollback,
+            )
+        ):
+            out.append(
+                "migration.network.gate is populated but private_dependencies is "
+                "empty; connectivity remains out of scope"
             )
         return out
 
@@ -1263,6 +1414,119 @@ def migration_secret_name(config: PlatformConfig, env_name: str) -> str:
     return f"{config.project}/{config.environment}/migration/{env_name}"
 
 
+@dataclass(frozen=True)
+class MigrationReadinessCheck:
+    """One cutover prerequisite and the evidence still missing for it."""
+
+    name: str
+    status: Literal["READY", "BLOCKED", "NOT REQUIRED"]
+    detail: str
+
+
+def _gated_stage(
+    name: str,
+    required: bool,
+    gate: MigrationGate,
+    *,
+    ready_detail: str,
+    skipped_detail: str,
+) -> MigrationReadinessCheck:
+    if not required:
+        return MigrationReadinessCheck(name, "NOT REQUIRED", skipped_detail)
+    if gate.ready:
+        return MigrationReadinessCheck(name, "READY", ready_detail)
+    return MigrationReadinessCheck(
+        name,
+        "BLOCKED",
+        "missing " + ", ".join(gate.blockers),
+    )
+
+
+def migration_readiness(config: PlatformConfig) -> list[MigrationReadinessCheck]:
+    """Return the fail-closed gates for shifting customer traffic.
+
+    Runtime deployment is always in scope. Data, trigger, and traffic work is
+    opt-in, while private connectivity becomes mandatory when dependencies
+    are declared. This is pure configuration evaluation: external evidence is
+    referenced, not fetched or trusted implicitly.
+    """
+    m = config.migration
+    if m is None:
+        return []
+
+    checks = [
+        MigrationReadinessCheck(
+            "runtime",
+            "READY",
+            f"{m.target.runtime}/{m.target.mode} is the supported deployment path",
+        ),
+        _gated_stage(
+            "networking",
+            bool(m.network.private_dependencies),
+            m.network.gate,
+            ready_detail=(
+                f"{m.network.connectivity} path approved for "
+                f"{len(m.network.private_dependencies)} private dependency(s)"
+            ),
+            skipped_detail="no private dependencies declared",
+        ),
+        _gated_stage(
+            "data",
+            m.stages.data.strategy != "none",
+            m.stages.data.gate,
+            ready_detail=f"{m.stages.data.strategy} evidence approved",
+            skipped_detail="strategy is none",
+        ),
+        _gated_stage(
+            "triggers",
+            m.stages.triggers.strategy != "none",
+            m.stages.triggers.gate,
+            ready_detail=f"{m.stages.triggers.strategy} evidence approved",
+            skipped_detail="strategy is none",
+        ),
+        _gated_stage(
+            "traffic",
+            m.stages.traffic.strategy != "none",
+            m.stages.traffic.gate,
+            ready_detail=f"{m.stages.traffic.strategy} evidence approved",
+            skipped_detail="strategy is none; no cutover requested",
+        ),
+    ]
+    return checks
+
+
+def migration_cutover_ready(config: PlatformConfig) -> bool:
+    """True only when traffic cutover is explicitly requested and unblocked."""
+    m = config.migration
+    if m is None or m.stages.traffic.strategy == "none":
+        return False
+    return all(check.status != "BLOCKED" for check in migration_readiness(config))
+
+
+def migration_readiness_lines(config: PlatformConfig) -> list[str]:
+    """Human-readable cutover gate used by Design and deploy.sh."""
+    checks = migration_readiness(config)
+    if not checks:
+        return ["Migration readiness: no migration block."]
+    width = max(len(check.status) for check in checks)
+    lines = ["Migration cutover readiness:"]
+    lines += [
+        f"  {check.status:<{width}}  {check.name}: {check.detail}" for check in checks
+    ]
+    if migration_cutover_ready(config):
+        lines += ["  Overall: READY — approved for the declared traffic cutover"]
+    elif config.migration.stages.traffic.strategy == "none":
+        lines += [
+            (
+                "  Overall: NOT READY — traffic cutover is not enabled "
+                "(safe target-only deployment)"
+            )
+        ]
+    else:
+        lines += ["  Overall: BLOCKED — do not shift customer traffic"]
+    return lines
+
+
 def migration_plan(config: PlatformConfig, account: str = "") -> list[str]:
     """Render the migration as plain text: what moves where, what the operator
     must create first, and how to check each private dependency. Pure — no
@@ -1346,6 +1610,7 @@ def migration_plan(config: PlatformConfig, account: str = "") -> list[str]:
                 "the customer side."
             ),
         ]
+    lines += ["", *migration_readiness_lines(config)]
     if m.warnings:
         lines += ["", "Warnings:"]
         lines += [f"  - {w}" for w in m.warnings]
@@ -1507,21 +1772,34 @@ def resolve_region(root: Path | None = None) -> str:
 def _main() -> int:
     flags = {a for a in sys.argv[1:] if a.startswith("--")}
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    if flags & {"--plan", "--design"} and not args:
+    if flags & {"--plan", "--design", "--readiness"} and not args:
         # --plan alone reads the deployment manifest, like deploy.sh does.
         root = Path(__file__).resolve().parents[1]
         args = [os.environ.get("PLATFORM_CONFIG") or str(root / "platform.yaml")]
-    action_flags = flags & {"--export", "--stacks", "--plan", "--design"}
+    action_flags = flags & {
+        "--export",
+        "--stacks",
+        "--plan",
+        "--design",
+        "--readiness",
+    }
     if (
         len(args) != 1
         or len(action_flags) > 1
         or not flags
-        <= {"--export", "--stacks", "--plan", "--design", "--effective-env"}
+        <= {
+            "--export",
+            "--stacks",
+            "--plan",
+            "--design",
+            "--readiness",
+            "--effective-env",
+        }
         or ("--effective-env" in flags and not action_flags)
     ):
         print(
             "usage: python -m infra_utils.platform_config "
-            "[--export | --stacks | --plan | --design] "
+            "[--export | --stacks | --plan | --design | --readiness] "
             "[--effective-env] <platform.yaml>",
             file=sys.stderr,
         )
@@ -1570,6 +1848,9 @@ def _main() -> int:
             "\n".join(migration_plan(config, os.environ.get("CDK_DEFAULT_ACCOUNT", "")))
         )
         return 0
+    if "--readiness" in flags:
+        print("\n".join(migration_readiness_lines(config)))
+        return 0 if migration_cutover_ready(config) else 1
     print(f"OK: {args[0]}")
     print(config.model_dump_json(indent=2))
     return 0

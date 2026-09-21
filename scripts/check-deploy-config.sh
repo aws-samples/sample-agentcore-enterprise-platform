@@ -566,10 +566,22 @@ grep -q -- "--secret-string file:///dev/stdin" <<<"$out" \
 ! grep -vE "get-caller-identity|configure get|describe-secret" "$AWS_ARGS" | grep -q . \
     || fail "migrate plan made a non-read AWS call: $(cat "$AWS_ARGS")"
 
+: > "$AWS_ARGS"
+out=$(run_migrate readiness 2>&1) \
+    && fail "migrate readiness accepted a manifest with no traffic cutover gate"
+grep -q "safe target-only deployment" <<<"$out" \
+    || fail "readiness did not explain the safe non-cutover state: $out"
+[ ! -s "$AWS_ARGS" ] \
+    || fail "migrate readiness made an AWS call: $(cat "$AWS_ARGS")"
+
 out=$(run_migrate bogus 2>&1) && fail "unknown migrate sub-action was accepted"
 grep -q "bogus" <<<"$out" || fail "bad sub-action not named: $out"
 out=$(run_migrate plan --stack x 2>&1) && fail "migrate accepted a deploy option"
-echo "PASS: migrate plan renders the contract, reads AWS only, fails closed otherwise"
+out=$(run_migrate readiness --profile migration 2>&1) \
+    && fail "migrate readiness accepted a preset instead of the completed manifest"
+grep -q "readiness requires your completed platform.yaml" <<<"$out" \
+    || fail "readiness did not explain why --profile is unsafe: $out"
+echo "PASS: migration plan/readiness are read-only and fail closed"
 
 # (u) Design → Build → Verify glue. `design --profile X` materializes the
 # preset and prints the plan without deploying; a preset with placeholders is
