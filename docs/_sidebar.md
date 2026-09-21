@@ -32,11 +32,15 @@ Migrate
 - [Migration configuration](PLATFORM_YAML.md?id=migration)
 
 Verify
+- [Customer preflight](how-it-works.md?id=customer-preflight)
 - [Testing and verification](TESTING.md)
 - [Tracing](TRACING.md)
 - [Troubleshooting](TROUBLESHOOTING.md)
 
 Own
+- [v0.1.0 release notes](releases/v0.1.0.md)
+- [Support matrix](SUPPORT_MATRIX.md)
+- [Known limitations](KNOWN_LIMITATIONS.md)
 - [Participant guide](PARTICIPANT_GUIDE.md)
 - [Production readiness plan](PRODUCTION_READINESS_PLAN.md)
 - [Threat model template](THREAT_MODEL.md)

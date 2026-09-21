@@ -54,6 +54,11 @@ verifies it, and owns it.
 Read [How it works](how-it-works.md), then head to
 [Getting started](https://github.com/aws-samples/sample-agentcore-enterprise-platform#getting-started).
 
+Before a customer session, review the [v0.1.0 release notes](releases/v0.1.0.md),
+[support matrix](SUPPORT_MATRIX.md), and
+[known limitations](KNOWN_LIMITATIONS.md), then run the read-only
+`./scripts/deploy.sh doctor` preflight against the completed design.
+
 ## What makes it different
 
 Core accelerator-managed paths have been **verified live** in the repository's

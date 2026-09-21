@@ -11,6 +11,11 @@ Deploy a secure, governed foundation for production AI agents on Amazon Bedrock 
 > work and release evidence required before describing a deployment as
 > production-ready.
 
+Current release: **v0.1.0**. Review the
+[`support matrix`](docs/SUPPORT_MATRIX.md),
+[`known limitations`](docs/KNOWN_LIMITATIONS.md), and
+[`release notes`](docs/releases/v0.1.0.md) before using it with a customer.
+
 ## What You Get
 
 - **An AI platform for production agents:** AgentCore Runtime, Gateway, Identity, Memory, and observability.
@@ -30,7 +35,9 @@ Three phases, three commands: **Design → Build → Verify**.
 | **Build** | Stand up the platform and every use case in the design with one command. | `./scripts/deploy.sh build` | [Build](#build) |
 | **Verify** | Re-test every promise the design made, platform and use cases alike; exits non-zero on any failure. | `./scripts/deploy.sh verify` | [Verify](#verify), [Dashboard](#dashboard) |
 
-Before you build, check your account, tools, AWS Region, and expected costs in [Prerequisites](#prerequisites).
+Before you build, run `./scripts/deploy.sh doctor`. It checks your local tools,
+effective account and Region, required secret references, Bedrock model
+metadata, and migration image inputs without changing AWS resources.
 
 > **Doing this as a workshop?** [`docs/PARTICIPANT_GUIDE.md`](docs/PARTICIPANT_GUIDE.md)
 > walks the modules in order with expected timings and what proves each one worked.
@@ -48,7 +55,7 @@ Pick the profile that looks most like your job today. It is a starting point, yo
 | Profile | Good fit when you are... | Scope (guided modules) |
 |---------|--------------------------|------------------------|
 | `greenfield` | Building new agents from scratch | Identity, gateway, one agent runtime, and observability |
-| `migration` | Moving agents from EC2, ECS, or Lambda | Identity, runtime migration, gateway integration, and observability |
+| `migration` | Rehosting a compatible container or source build as an arm64 AgentCore Runtime behind the supplied adapter | Identity, runtime migration, gateway integration, and observability |
 | `multi-agent` | Building specialist agents that work together | Gateway, orchestrator, A2A runtimes, and observability |
 | `platform-team` | Setting up shared infrastructure for your organization | Full platform, including memory, A2A, networking, and security |
 | `security-focused` | Starting with compliance and hardening | One-agent platform, networking, security, policy, egress, and traceability controls |
@@ -81,9 +88,21 @@ Before you deploy:
 
 - **AWS credentials:** permission to create IAM, Cognito, ECR, CodeBuild, Amazon Bedrock and Bedrock AgentCore resources. The deploy script validates them before making changes.
 - **Bedrock model access:** enable access to the model your agents use (default: Anthropic Claude) in the Amazon Bedrock console, in the Region you deploy to. Deployment succeeds without it, but every agent invocation fails at runtime.
-- **Local tooling:** Python 3.13 (as `python3.13`), Node.js/npm, the AWS CLI, and bash 4+ (macOS ships 3.2 — `brew install bash`). The script checks these and installs the AWS CDK CLI if it is missing. A container runtime is **not** required: agent images are built remotely in AWS CodeBuild, and it is only useful for testing an image locally.
+- **Local tooling:** Python 3.13 (as `python3.13`), a CDK-supported Node.js LTS release (20, 22, or 24) with npm, AWS CLI v2, and bash 4+ (macOS ships 3.2 — `brew install bash`). The script checks these and installs the AWS CDK CLI if it is missing. A container runtime is **not** required: agent images are built remotely in AWS CodeBuild, and it is only useful for testing an image locally.
 - **Region:** pick a Region where AgentCore and your chosen Bedrock model are available. The default is `us-east-1`.
 - **Cost awareness:** networking profiles create a NAT gateway and VPC endpoints with hourly billing. Enabling Transaction Search changes account-level span pricing. Tear down resources when you finish testing.
+
+After creating and completing `platform.yaml`, run the read-only preflight:
+
+```bash
+./scripts/deploy.sh doctor
+```
+
+Every `[FAIL]` is a build blocker. `[WARN]` identifies a decision or check that
+still needs human validation, such as the architecture of a pre-built
+migration image. A green model metadata check proves that the configured model
+or inference profile can be discovered; `deploy.sh verify` proves actual
+inference access after deployment.
 
 ### Architecture
 
@@ -113,6 +132,9 @@ pip install -r requirements.txt
 # Edit platform.yaml (accounts, IdP and identity.mode, framework, controls...)
 # and re-run `design` to re-validate. Every key: docs/PLATFORM_YAML.md
 ./scripts/deploy.sh design
+
+# Read-only check of tools, AWS target, secrets, model, and migration inputs
+./scripts/deploy.sh doctor
 
 # Add your use case to the design (scaffolds use-cases/<name>/ and enables it)
 ./scripts/deploy.sh usecase new my-agent

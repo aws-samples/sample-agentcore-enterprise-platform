@@ -25,8 +25,8 @@ an access error.
 | Tool | Required? | Note |
 |---|---|---|
 | `python3.13` | Yes | exactly this name on PATH, not `python3` |
-| `node` + `npm` | Yes | the CDK CLI runs through npx |
-| `aws` CLI | Yes | configured with working credentials |
+| `node` + `npm` | Yes | CDK-supported LTS major 20, 22, or 24; CDK runs through npx |
+| `aws` CLI | Yes | v2, configured with working credentials |
 | `bash` 4+ | Yes | macOS ships 3.2 — `brew install bash` |
 | Docker / finch | **No** | images build in AWS CodeBuild |
 
@@ -34,6 +34,17 @@ an access error.
 python3.13 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
+
+After you have selected a profile and completed `platform.yaml`, run:
+
+```bash
+./scripts/deploy.sh doctor
+```
+
+It is read-only and reports the active account and Region, missing or
+unreadable secret references, model metadata availability, local tooling, and
+migration image prerequisites together. Resolve every `[FAIL]` before the
+facilitated build; review every `[WARN]` with the facilitator.
 
 **Region.** Pick one where AgentCore and your chosen model both exist;
 `us-east-1` is the safe default. Some features are region-gated (the built-in

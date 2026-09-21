@@ -13,15 +13,16 @@ operational readiness review.
 
 ## Current milestone
 
-**G1 — production design, migration, and customer documentation merged**
+**v0.1.0 release candidate — customer preflight and honest support boundary**
 
-Branch: `fix/docsify-project-path`
+Branch: `feat/customer-preflight-v0.1`
 
 G0 merged through PR #79. G1 implementation merged through PR #76. PR #80
 reached `main`, but PRs #81–#86 merged into their stacked base branches rather
 than `main`. PR #87 landed the intact final migration stack on `main` on
 2026-09-21. PR #88 landed the customer-facing documentation and
-documentation-integrity changes on `main` the same day.
+documentation-integrity changes on `main` the same day. PR #89 fixed nested
+Docsify routes and was merged before the v0.1.0 release-candidate work began.
 
 - [x] Add explicit `workshop` and `production` deployment modes.
 - [x] Add a production preset that requires enterprise identity, networking,
@@ -48,6 +49,44 @@ Open evidence and ownership work:
   the retired client allow-list/checkpoints and verify the final state.
 - [ ] Populate, review, and approve the five G1 governance artifacts for the
   specific customer; draft templates and green synthesis do not close G1.
+
+### 2026-09-21 — v0.1.0 customer preflight and release candidate
+
+- PR #90 targets `main` with the complete customer-preflight and release
+  candidate; it is not stacked on another feature branch.
+- `deploy.sh doctor` is a distinct read-only path that runs before normal
+  manifest application and deployment setup. It validates the local Python,
+  supported Node LTS, npm, AWS CLI v2, Bash, CDK, and optional Docker state;
+  the effective manifest; active AWS identity, pinned account, and Region;
+  required non-empty Secrets Manager strings; Bedrock model/inference-profile
+  metadata; and migration build/image architecture prerequisites.
+- The preflight command has an exact AWS read-call allow-list and does not
+  install CDK, create or update secrets, bootstrap, synthesize, or deploy. It
+  stops account-scoped secret/model reads when the active account does not
+  match the manifest. Its early action dispatcher also prevents deployment
+  flags from materializing a preset before an invalid doctor invocation is
+  rejected.
+- A live read-only run found the shell currently resolves to development
+  account `…4125`, while the checked-in manifest pins `…1817`. The command
+  reported both, exited non-zero, and made no secret or Bedrock call in the
+  wrong account. This is accepted fail-closed evidence, not target-account
+  secret/model evidence.
+- The release candidate adds `VERSION` 0.1.0, a changelog, release/upgrade/
+  rollback notes, an evidence-qualified support matrix, and explicit known
+  limitations. It does not claim production approval, non-`us-east-1` live
+  coverage, or accelerator ownership of customer data/network/trigger/traffic
+  changes.
+- The `v0.1.0` Git tag and GitHub release must be created only after the
+  release-candidate pull request merges, so the tag points to reviewed `main`.
+- Evidence passes: 510 repository tests, deployment configuration contracts,
+  documentation integrity across 35 Markdown files and 144 local links,
+  changed-file Ruff check/format, ShellCheck, shell syntax, and diff
+  whitespace. The first sandboxed full-suite attempt was blocked by jsii cache
+  permissions; the identical suite passed with normal cache access.
+- GitHub checks pass on implementation head `4f1b491`: CodeQL for all
+  languages and its aggregate gate, ASH, secret-boundary scanning, contract
+  parity, documentation integrity, Python and shell quality, labeler, and both
+  control-library jobs.
 
 ### 2026-09-21 — migration stack landing and documentation audit
 
@@ -854,3 +893,6 @@ Never copy credential values into this file.
 - `6548ba4` — `Fix Docsify sidebar fallback path`
 - Pull request:
   [#89 — Fix Docsify sidebar fallback path](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/89)
+- `505be1a` — `Add customer preflight and v0.1.0 release docs`
+- Pull request:
+  [#90 — Add customer preflight and prepare v0.1.0](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/90)

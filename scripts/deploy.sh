@@ -31,6 +31,7 @@ fi
 #   ./deploy.sh diff
 #   ./deploy.sh export
 #   ./deploy.sh config [--reset]
+#   ./deploy.sh doctor                         # Read-only customer preflight
 #   ./deploy.sh migrate plan [--profile PROFILE]
 #   ./deploy.sh migrate readiness
 #   ./deploy.sh migrate data plan|readiness
@@ -144,7 +145,8 @@ materialize_preset() {
 
 # Pre-scan argv: materialization must precede apply_platform_config below so
 # the manifest it writes participates with the right precedence. Skipped for
-# the config action and for --dry-run (a dry run must not mutate config).
+# the config/doctor actions and for --dry-run (read-only commands must not
+# mutate config).
 PRESCAN_PROFILE=""; PRESCAN_YES=0; PRESCAN_DRY=0
 _prev=""
 for _a in "$@"; do
@@ -155,7 +157,10 @@ for _a in "$@"; do
     esac
     _prev="$_a"
 done
-if [ -n "$PRESCAN_PROFILE" ] && [ "${1:-}" != "config" ] && [ "$PRESCAN_DRY" != "1" ]; then
+if [ -n "$PRESCAN_PROFILE" ] \
+    && [ "${1:-}" != "config" ] \
+    && [ "${1:-}" != "doctor" ] \
+    && [ "$PRESCAN_DRY" != "1" ]; then
     if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "plan" ]; then
         # Planning a shipped migration preset must be genuinely read-only:
         # inspect it in place instead of replacing a customer's platform.yaml.
@@ -223,6 +228,24 @@ if [ "${1:-}" = "usecase" ]; then
     shift
     py="$PROJECT_DIR/.venv/bin/python"; [ -x "$py" ] || py="python3"
     cd "$PROJECT_DIR" && exec "$py" scripts/usecase.py --manifest "$PLATFORM_CONFIG" "$@"
+fi
+
+# ── 'doctor' action: read-only local + AWS preflight ──
+# This runs before apply_platform_config and the normal deployment flow so a
+# missing dependency or invalid manifest becomes a diagnostic, never a
+# fallback to defaults. preflight.py uses only bounded read APIs.
+if [ "${1:-}" = "doctor" ]; then
+    shift
+    py="$PROJECT_DIR/.venv/bin/python"
+    if [ ! -x "$py" ]; then
+        py="$(command -v python3.13 || command -v python3 || true)"
+    fi
+    if [ -z "$py" ]; then
+        log_error "Python is not installed. Install Python 3.13 and retry."
+        exit 1
+    fi
+    cd "$PROJECT_DIR" && exec "$py" scripts/preflight.py \
+        --manifest "$PLATFORM_CONFIG" "$@"
 fi
 
 apply_platform_config
@@ -2268,9 +2291,10 @@ case "$ACTION" in
         ;;
 
     *)
-        echo "Usage: $0 [design|build|verify|usecase|deploy|workshop|destroy|synth|diff|export|ls|config|migrate] [OPTIONS]"
+        echo "Usage: $0 [doctor|design|build|verify|usecase|deploy|workshop|destroy|synth|diff|export|ls|config|migrate] [OPTIONS]"
         echo ""
         echo "Actions (Design → Build → Verify):"
+        echo "  doctor             Read-only checks for tools, account, Region, secrets, model, and migration image"
         echo "  design [--profile P]  Write platform.yaml from a preset, validate it, print the plan; deploys nothing"
         echo "  build              Deploy what platform.yaml describes (same as deploy)"
         echo "  usecase new NAME   Scaffold use-cases/NAME/ and enable it in platform.yaml; usecase list"

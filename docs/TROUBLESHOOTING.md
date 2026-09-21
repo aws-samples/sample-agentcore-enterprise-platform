@@ -44,6 +44,7 @@ during development or a live workshop run, not a hypothetical.
 | Redeploy changed nothing | [Image tags](#i-changed-agent-code-and-the-redeploy-changed-nothing) |
 | `platform.yaml is invalid` | [Config validation](#platformyaml-is-invalid) |
 | Stale answers keep coming back | [workshop.env](#old-answers-keep-coming-back) |
+| Several setup checks fail together | [Customer preflight](#customer-preflight-fails) |
 
 ---
 
@@ -92,6 +93,21 @@ runtime if you want to build and run an agent image locally while developing.
 ---
 
 ## Credentials and permissions
+
+### Customer preflight fails
+
+Run `./scripts/deploy.sh doctor` after completing `platform.yaml`. It makes
+only bounded read calls and reports all local, account, Region, secret, model,
+and migration-image blockers together.
+
+- A secret failure names the account, Region, and Secrets Manager **name**, but
+  never reads the value to the terminal. Create or repair that exact secret
+  before building.
+- A Bedrock pass confirms metadata discovery only. Actual inference access is
+  proven by `./scripts/deploy.sh verify` after deployment.
+- Missing Docker is only a warning because CodeBuild builds deployment images.
+  A pre-built migration image still needs independent `linux/arm64` and digest
+  verification.
 
 ### `AWS credentials invalid or expired`
 

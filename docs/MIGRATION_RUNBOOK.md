@@ -81,6 +81,18 @@ all of them in `platform.yaml`, then run `design` again. At minimum, review:
 - which `migration.stages` are truly in scope; leave their strategy `none`
   until a customer-specific execution and rollback plan exists
 
+Before building, run the customer preflight:
+
+```bash
+./scripts/deploy.sh doctor
+```
+
+For a source build it verifies that the context and Dockerfile exist and
+confirms that CodeBuild will target `linux/arm64`. For a pre-built image it
+warns until the customer independently confirms an arm64 manifest and an
+immutable digest. It also checks every migration secret name without
+displaying its value.
+
 An enabled stage uses this gate shape (references only—do not paste customer
 data or credentials). Add the exact digest printed for a data, trigger, or
 traffic plan before setting `approved_at`:
