@@ -52,6 +52,8 @@ Open evidence and ownership work:
 
 ### 2026-09-21 — v0.1.0 customer preflight and release candidate
 
+- PR #90 targets `main` with the complete customer-preflight and release
+  candidate; it is not stacked on another feature branch.
 - `deploy.sh doctor` is a distinct read-only path that runs before normal
   manifest application and deployment setup. It validates the local Python,
   supported Node LTS, npm, AWS CLI v2, Bash, CDK, and optional Docker state;
@@ -885,3 +887,6 @@ Never copy credential values into this file.
 - `6548ba4` — `Fix Docsify sidebar fallback path`
 - Pull request:
   [#89 — Fix Docsify sidebar fallback path](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/89)
+- `505be1a` — `Add customer preflight and v0.1.0 release docs`
+- Pull request:
+  [#90 — Add customer preflight and prepare v0.1.0](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/90)
