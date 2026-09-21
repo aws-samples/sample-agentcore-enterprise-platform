@@ -87,7 +87,7 @@ Who issues the tokens the platform trusts.
 
 | Key | Type | Default | Env override | Description |
 |---|---|---|---|---|
-| `security.networking` ✦ | bool | `False` | `ENABLE_NETWORKING` | VPC mode: runtimes in private subnets behind a NAT gateway and VPC endpoints. Adds the `networking` stack; required by `migration.target.runtime: ec2` and by private dependencies. |
+| `security.networking` ✦ | bool | `False` | `ENABLE_NETWORKING` | VPC mode: runtimes in private subnets behind a NAT gateway and VPC endpoints. Adds the `networking` stack; required by migration private dependencies. |
 | `security.cloudtrail_alerting` ✦ | bool | `False` | `ENABLE_SECURITY` | The `security` stack: a CloudTrail trail plus alerting. Needed for `traceability` to fire at all. |
 | `security.resource_policies` | bool | `False` | `ENABLE_RESOURCE_POLICIES` | In-account-only resource policy on the Memory store, with an org deny guard. Needs `org_id`. |
 | `security.egress_filter` | bool | `False` | `ENABLE_EGRESS_FILTER` | Bedrock Guardrail plus an interceptor Lambda on the gateway; masks PII in tool traffic rather than blocking it (docs/SECURITY_CONTROLS.md). |
@@ -119,18 +119,18 @@ Migrate an existing agent onto the platform.
 | `migration.source.build.context` | str | **required** | `MIGRATION_BUILD_CONTEXT` | Docker build context, relative to the repo root. |
 | `migration.source.build.dockerfile` | str | `'Dockerfile'` | `MIGRATION_BUILD_DOCKERFILE` | Dockerfile path, relative to `context`. |
 | `migration.source.registry_secret_name` | str | `""` | `MIGRATION_REGISTRY_SECRET_NAME` | Secrets Manager NAME holding docker-login credentials for a private registry. |
-| `migration.source.port` | int (1–65535), optional | absent | `MIGRATION_PORT` | What the container listens on. Required in `adapter` mode; must be absent in `native` mode. |
-| `migration.source.invoke_path` | str | `""` | `MIGRATION_INVOKE_PATH` | Where the container takes a request; the adapter forwards `POST /invocations` there. Required in `adapter` mode; absent in `native`. |
+| `migration.source.port` | int (1–65535), optional | absent | `MIGRATION_PORT` | What the container listens on. Required by the supported `adapter` mode. |
+| `migration.source.invoke_path` | str | `""` | `MIGRATION_INVOKE_PATH` | Where the container takes a request. Required by the supported adapter mode, which forwards `POST /invocations` there. |
 | `migration.source.health_path` | str | `'/'` | `MIGRATION_HEALTH_PATH` | What the adapter polls to answer `GET /ping`. |
-| `migration.source.trigger` | one of: `webhook`, `schedule`, `http`, `queue` | `'http'` | `MIGRATION_TRIGGER` | How work arrives today. Documented for the plan; the event-driven triggers are not wired yet. |
-| `migration.source.env` | map of str → str | `{}` | `MIGRATION_ENV` | Plain configuration for the container. Secret-shaped keys (`*_SECRET`, `*_TOKEN`, `*_KEY`, …) are refused because env values render in clear. |
+| `migration.source.trigger` | one of: `webhook`, `schedule`, `http`, `queue` | `'http'` | `MIGRATION_TRIGGER` | How work arrives today. Discovery metadata only: trigger and cutover infrastructure are external and are not deployed. |
+| `migration.source.env` | map of str → str | `{}` | `MIGRATION_ENV_JSON` | Plain configuration for the container. Secret-shaped keys (`*_SECRET`, `*_TOKEN`, `*_KEY`, …) are refused because env values render in clear. |
 | `migration.source.secrets` | list of str | `[]` | `MIGRATION_SECRETS` | Environment variable NAMES only. Each value lives in Secrets Manager under `<project>/<environment>/migration/<NAME>`; the plan lists what to create. |
-| `migration.target.runtime` | one of: `agentcore`, `ec2` | `'agentcore'` | `MIGRATION_TARGET_RUNTIME` | `agentcore` runs on AgentCore Runtime (arm64, the 8080 `/invocations` contract). `ec2` runs on ECS-on-EC2 inside the platform VPC for amd64-only images; needs `security.networking`. |
-| `migration.target.mode` | one of: `adapter`, `native` | `'adapter'` | `MIGRATION_TARGET_MODE` | `adapter` wraps the container so it speaks the AgentCore contract; `native` means the image already does. |
+| `migration.target.runtime` | one of: `agentcore`, `ec2` | `'agentcore'` | `MIGRATION_TARGET_RUNTIME` | Only `agentcore` is currently deployable (arm64, the 8080 `/invocations` contract). `ec2` is reserved for a future ECS-on-EC2 implementation and fails validation. |
+| `migration.target.mode` | one of: `adapter`, `native` | `'adapter'` | `MIGRATION_TARGET_MODE` | Only `adapter` is currently deployable; it wraps the container so it speaks the AgentCore contract. `native` is reserved for a future implementation and fails validation. |
 | `migration.network.private_dependencies` | list of str | `[]` | `MIGRATION_PRIVATE_DEPENDENCIES` | Customer-side hostnames the agent must still reach (self-hosted Git, Jira, …). Needs `security.networking` and a `connectivity` other than `none`; the plan prints one reachability check each. |
-| `migration.network.connectivity` | one of: `vpn`, `transit-gateway`, `none` | `'none'` | `MIGRATION_CONNECTIVITY` | Path from the platform VPC to the customer network. Usually the longest-lead item in a real migration. |
-| `migration.network.dns_forwarders` | list of str | `[]` | `MIGRATION_DNS_FORWARDERS` | IPv4 resolvers for the private hostnames. Unused without `private_dependencies`. |
-| `migration.network.ca_bundle_secret_name` | str | `""` | `MIGRATION_CA_BUNDLE_SECRET_NAME` | Secrets Manager NAME of a private CA bundle the agent should trust. Unused without `private_dependencies`. |
+| `migration.network.connectivity` | one of: `vpn`, `transit-gateway`, `none` | `'none'` | `MIGRATION_CONNECTIVITY` | Records the existing external path from the platform VPC to the customer network. The accelerator does not provision VPN or Transit Gateway resources. |
+| `migration.network.dns_forwarders` | list of str | `[]` | `MIGRATION_DNS_FORWARDERS` | Records externally managed IPv4 resolvers for private hostnames. The accelerator does not create resolver endpoints or rules. |
+| `migration.network.ca_bundle_secret_name` | str | `""` | `MIGRATION_CA_BUNDLE_SECRET_NAME` | Records the Secrets Manager NAME of a private CA bundle for migration planning and ownership. The accelerator does not currently inject it into the image. |
 
 ## Presets
 
@@ -266,7 +266,7 @@ agents:
 gateway:
   web_search: auto
   tools: [sample-tool]
-security: {}                  # target ec2 or private_dependencies need networking: true
+security: {}                  # private_dependencies need networking: true
 observability:
   transaction_search: true
 migration:
@@ -278,12 +278,12 @@ migration:
     port: 8000                # what the container listens on
     invoke_path: /run         # the adapter forwards POST /invocations here
     health_path: /healthz     # ...and GET /ping here
-    trigger: webhook          # how work arrives today (webhook|schedule|http|queue)
+    trigger: webhook          # discovery metadata; trigger/cutover stays external and is not deployed
     env: {}                   # plain config only; secret-looking keys are refused
     secrets: [JIRA_TOKEN, GIT_TOKEN]   # ENV NAMES; values in Secrets Manager under <project>/<env>/migration/<NAME>
   target:
-    runtime: agentcore        # ec2 (ECS on EC2 in the VPC) for amd64-only images
-    mode: adapter             # native when the image already speaks /invocations + /ping on 8080
+    runtime: agentcore        # only deployable runtime today; ec2 fails closed
+    mode: adapter             # only deployable mode today; native fails closed
   network:
     private_dependencies: []  # customer-side hostnames the agent must reach (needs networking + connectivity)
     connectivity: none        # vpn|transit-gateway once private_dependencies is filled

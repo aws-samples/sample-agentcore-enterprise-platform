@@ -9,6 +9,8 @@ config is where it is cheap to catch.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 import yaml
 from pydantic import ValidationError
@@ -104,7 +106,7 @@ def test_neither_image_nor_build_is_refused():
     assert "exactly one of image" in err(deep(("source.build", None)))
 
 
-# ── adapter vs native ────────────────────────────────────────────────────────
+# ── deployed target contract ─────────────────────────────────────────────────
 
 
 def test_adapter_requires_port_and_path():
@@ -112,19 +114,14 @@ def test_adapter_requires_port_and_path():
     assert "requires migration.source.port" in err(deep(("source.invoke_path", "")))
 
 
-def test_native_refuses_port_and_path():
-    native = deep(("target.mode", "native"))
-    msg = err(native)
-    assert "already speaks the AgentCore contract" in msg
-
-
-def test_native_without_port_is_fine():
-    m = cfg(
+def test_native_target_fails_closed_even_with_native_source_shape():
+    msg = err(
         deep(
             ("target.mode", "native"), ("source.port", None), ("source.invoke_path", "")
         )
-    ).migration
-    assert m.target.mode == "native"
+    )
+    assert "migration.target.mode 'native' is not deployed" in msg
+    assert "only 'adapter' is currently supported" in msg
 
 
 # ── paths, env and secret names ──────────────────────────────────────────────
@@ -167,19 +164,15 @@ def test_prebuilt_image_on_agentcore_warns_but_deploys():
     assert len(m.warnings) == 1
     w = m.warnings[0]
     assert "arm64" in w and "reg/x:1" in w
-    assert "runtime: ec2" in w  # the escape hatch is named
+    assert "migration.source.build" in w
+    assert "image@sha256:<digest>" in w
+    assert "same-tag repushes are not detected" in w
 
 
-def test_prebuilt_image_on_ec2_does_not_warn():
-    m = cfg(
-        deep(
-            ("source.image", "reg/x:1"),
-            ("source.build", None),
-            ("target.runtime", "ec2"),
-        ),
-        security={"networking": True},
-    ).migration
-    assert m.warnings == []
+def test_ec2_target_fails_closed_even_with_networking():
+    msg = err(deep(("target.runtime", "ec2")), security={"networking": True})
+    assert "migration.target.runtime 'ec2' is not deployed" in msg
+    assert "only 'agentcore' is currently supported" in msg
 
 
 def test_unused_network_extras_warn():
@@ -188,15 +181,6 @@ def test_unused_network_extras_warn():
 
 
 # ── cross-field rules against security.networking ────────────────────────────
-
-
-def test_ec2_target_requires_the_vpc():
-    assert "security.networking: true" in err(deep(("target.runtime", "ec2")))
-
-
-def test_ec2_target_with_networking_is_accepted_and_pulls_in_the_stack():
-    c = cfg(deep(("target.runtime", "ec2")), security={"networking": True})
-    assert "proj-dev-networking" in c.expected_stacks("")
 
 
 def test_private_dependencies_require_the_vpc():
@@ -262,9 +246,18 @@ def test_to_env_carries_the_block():
     assert "AGENT_PATTERN" in env
 
 
-def test_to_env_joins_env_pairs():
-    env = to_env(cfg(deep(("source.env", {"LOG_LEVEL": "info", "REGION_HINT": "eu"}))))
-    assert env["MIGRATION_ENV"] == "LOG_LEVEL=info,REGION_HINT=eu"
+def test_to_env_serializes_env_as_lossless_json():
+    values = {
+        "LOG_LEVEL": "info,verbose",
+        "QUERY_HINT": "status=ready,owner=platform",
+    }
+    env = to_env(cfg(deep(("source.env", values))))
+    assert json.loads(env["MIGRATION_ENV_JSON"]) == values
+    assert env["MIGRATION_ENV_JSON"] == (
+        '{"LOG_LEVEL":"info,verbose","QUERY_HINT":"status=ready,owner=platform"}'
+    )
+    # Kept only while the existing app/runtime consumers are migrated.
+    assert "MIGRATION_ENV" in env
 
 
 # ── migration_plan(): the operator-facing artefact ───────────────────────────
@@ -284,6 +277,13 @@ def test_plan_covers_target_mapping_secrets_and_stacks():
     assert "agents.pattern" in text  # says the pattern is ignored
 
 
+@pytest.mark.parametrize("trigger", ["http", "webhook", "schedule", "queue"])
+def test_plan_says_trigger_cutover_is_external(trigger):
+    text = "\n".join(migration_plan(cfg(deep(("source.trigger", trigger))), ""))
+    assert f"source trigger '{trigger}' is discovery metadata only" in text
+    assert "trigger/cutover infrastructure is external and is not deployed" in text
+
+
 def test_plan_prints_a_reachability_check_per_private_dependency():
     c = cfg(
         deep(
@@ -298,6 +298,7 @@ def test_plan_prints_a_reachability_check_per_private_dependency():
     text = "\n".join(migration_plan(c, ""))
     for host in ("git.adcubum.internal", "jira.adcubum.internal"):
         assert f"curl -sS -o /dev/null -w '%{{http_code}}' https://{host}/" in text
+    assert "does not provision or inject them" in text
     assert "NAT gateway EIP" in text  # the allow-list reminder
 
 

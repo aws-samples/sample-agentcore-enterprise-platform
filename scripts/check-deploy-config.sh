@@ -542,6 +542,12 @@ grep -q "mig-check/dev/migration/JIRA_TOKEN" <<<"$out" || fail "secret name not 
 grep -q "found:.*JIRA_TOKEN" <<<"$out"   || fail "existing secret not reported found: $out"
 grep -q "missing:.*GIT_TOKEN" <<<"$out"  || fail "absent secret not reported missing: $out"
 grep -q "arm64" <<<"$out"                || fail "arm64 warning missing for a pre-built image: $out"
+grep -q "trigger/cutover infrastructure is external and is not deployed" <<<"$out" \
+    || fail "external trigger cutover not disclosed: $out"
+grep -q -- "--secret-string file:///dev/stdin" <<<"$out" \
+    || fail "missing secret guidance is not stdin-based: $out"
+! grep -q -- "--secret-string '<value>'" <<<"$out" \
+    || fail "migration plan exposes unsafe inline secret guidance: $out"
 ! grep -vE "get-caller-identity|configure get|describe-secret" "$AWS_ARGS" | grep -q . \
     || fail "migrate plan made a non-read AWS call: $(cat "$AWS_ARGS")"
 
@@ -574,6 +580,28 @@ rm -f "$DESIGN_DIR/platform.yaml"
 out=$(run_design design --profile migration 2>&1) && fail "design accepted the migration preset's placeholders"
 grep -q "identity.tenant_id is a placeholder" <<<"$out" || fail "placeholder not named: $out"
 ! grep -q "Stacks (" <<<"$out" || fail "design printed a plan for an undeployable manifest"
+printf 'customer manifest — do not overwrite\n' > "$DESIGN_DIR/platform.yaml"
+: > "$AWS_ARGS"
+out=$(run_design migrate plan --profile migration 2>&1) \
+    || fail "migrate plan rejected the migration preset placeholders: $out"
+grep -q "WARNING:.*identity.tenant_id is a placeholder" <<<"$out" \
+    || fail "migrate plan did not render placeholder warnings: $out"
+grep -q "trigger/cutover infrastructure is external and is not deployed" <<<"$out" \
+    || fail "migrate profile plan hid the external cutover boundary: $out"
+grep -q "customer manifest — do not overwrite" "$DESIGN_DIR/platform.yaml" \
+    || fail "read-only migrate profile plan overwrote platform.yaml"
+! grep -vE "get-caller-identity|configure get|describe-secret" "$AWS_ARGS" | grep -q . \
+    || fail "migrate profile plan made a non-read AWS call: $(cat "$AWS_ARGS")"
+rm -f "$DESIGN_DIR/platform.yaml"
+out=$(run_design build --profile migration 2>&1) \
+    && fail "build accepted the migration preset's placeholders"
+grep -q "identity.tenant_id is a placeholder" <<<"$out" \
+    || fail "build did not reject migration placeholders: $out"
+rm -f "$DESIGN_DIR/platform.yaml"
+out=$(run_design deploy --profile migration 2>&1) \
+    && fail "deploy accepted the migration preset's placeholders"
+grep -q "identity.tenant_id is a placeholder" <<<"$out" \
+    || fail "deploy did not reject migration placeholders: $out"
 out=$(run_design design --stack x 2>&1) && fail "design accepted a deploy option"
 out=$(run_design usecase list 2>&1) || fail "usecase list failed: $out"
 grep -q "hello-platform" <<<"$out" || fail "usecase list did not reach scripts/usecase.py: $out"

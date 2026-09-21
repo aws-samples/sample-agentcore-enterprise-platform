@@ -70,7 +70,7 @@ DESCRIPTIONS: dict[str, str] = {
     "gateway.web_search": "Built-in web-search connector on the gateway. `auto` turns it on only in regions where the connector exists.",
     "gateway.tools": "Lambda tool names the gateway exposes. Schema-validated today; the deployed list still comes from `tool_configs` in `app.py` (docs/modules/gateway.md).",
     # security
-    "security.networking": "VPC mode: runtimes in private subnets behind a NAT gateway and VPC endpoints. Adds the `networking` stack; required by `migration.target.runtime: ec2` and by private dependencies.",
+    "security.networking": "VPC mode: runtimes in private subnets behind a NAT gateway and VPC endpoints. Adds the `networking` stack; required by migration private dependencies.",
     "security.cloudtrail_alerting": "The `security` stack: a CloudTrail trail plus alerting. Needed for `traceability` to fire at all.",
     "security.resource_policies": "In-account-only resource policy on the Memory store, with an org deny guard. Needs `org_id`.",
     "security.egress_filter": "Bedrock Guardrail plus an interceptor Lambda on the gateway; masks PII in tool traffic rather than blocking it (docs/SECURITY_CONTROLS.md).",
@@ -92,18 +92,18 @@ DESCRIPTIONS: dict[str, str] = {
     "migration.source.build.context": "Docker build context, relative to the repo root.",
     "migration.source.build.dockerfile": "Dockerfile path, relative to `context`.",
     "migration.source.registry_secret_name": "Secrets Manager NAME holding docker-login credentials for a private registry.",
-    "migration.source.port": "What the container listens on. Required in `adapter` mode; must be absent in `native` mode.",
-    "migration.source.invoke_path": "Where the container takes a request; the adapter forwards `POST /invocations` there. Required in `adapter` mode; absent in `native`.",
+    "migration.source.port": "What the container listens on. Required by the supported `adapter` mode.",
+    "migration.source.invoke_path": "Where the container takes a request. Required by the supported adapter mode, which forwards `POST /invocations` there.",
     "migration.source.health_path": "What the adapter polls to answer `GET /ping`.",
-    "migration.source.trigger": "How work arrives today. Documented for the plan; the event-driven triggers are not wired yet.",
+    "migration.source.trigger": "How work arrives today. Discovery metadata only: trigger and cutover infrastructure are external and are not deployed.",
     "migration.source.env": "Plain configuration for the container. Secret-shaped keys (`*_SECRET`, `*_TOKEN`, `*_KEY`, …) are refused because env values render in clear.",
     "migration.source.secrets": "Environment variable NAMES only. Each value lives in Secrets Manager under `<project>/<environment>/migration/<NAME>`; the plan lists what to create.",
-    "migration.target.runtime": "`agentcore` runs on AgentCore Runtime (arm64, the 8080 `/invocations` contract). `ec2` runs on ECS-on-EC2 inside the platform VPC for amd64-only images; needs `security.networking`.",
-    "migration.target.mode": "`adapter` wraps the container so it speaks the AgentCore contract; `native` means the image already does.",
+    "migration.target.runtime": "Only `agentcore` is currently deployable (arm64, the 8080 `/invocations` contract). `ec2` is reserved for a future ECS-on-EC2 implementation and fails validation.",
+    "migration.target.mode": "Only `adapter` is currently deployable; it wraps the container so it speaks the AgentCore contract. `native` is reserved for a future implementation and fails validation.",
     "migration.network.private_dependencies": "Customer-side hostnames the agent must still reach (self-hosted Git, Jira, …). Needs `security.networking` and a `connectivity` other than `none`; the plan prints one reachability check each.",
-    "migration.network.connectivity": "Path from the platform VPC to the customer network. Usually the longest-lead item in a real migration.",
-    "migration.network.dns_forwarders": "IPv4 resolvers for the private hostnames. Unused without `private_dependencies`.",
-    "migration.network.ca_bundle_secret_name": "Secrets Manager NAME of a private CA bundle the agent should trust. Unused without `private_dependencies`.",
+    "migration.network.connectivity": "Records the existing external path from the platform VPC to the customer network. The accelerator does not provision VPN or Transit Gateway resources.",
+    "migration.network.dns_forwarders": "Records externally managed IPv4 resolvers for private hostnames. The accelerator does not create resolver endpoints or rules.",
+    "migration.network.ca_bundle_secret_name": "Records the Secrets Manager NAME of a private CA bundle for migration planning and ownership. The accelerator does not currently inject it into the image.",
 }
 
 # Dotted key → the name to_env() emits for it. Checked against a fully
@@ -154,7 +154,7 @@ ENV: dict[str, str] = {
     "migration.source.invoke_path": "MIGRATION_INVOKE_PATH",
     "migration.source.health_path": "MIGRATION_HEALTH_PATH",
     "migration.source.trigger": "MIGRATION_TRIGGER",
-    "migration.source.env": "MIGRATION_ENV",
+    "migration.source.env": "MIGRATION_ENV_JSON",
     "migration.source.secrets": "MIGRATION_SECRETS",
     "migration.target.runtime": "MIGRATION_TARGET_RUNTIME",
     "migration.target.mode": "MIGRATION_TARGET_MODE",
@@ -163,6 +163,10 @@ ENV: dict[str, str] = {
     "migration.network.dns_forwarders": "MIGRATION_DNS_FORWARDERS",
     "migration.network.ca_bundle_secret_name": "MIGRATION_CA_BUNDLE_SECRET_NAME",
 }
+
+# Temporarily emitted for app.py/runtime_stack.py compatibility, but omitted
+# from the reference so new integrations adopt the lossless JSON transport.
+LEGACY_ENV = {"MIGRATION_ENV"}
 
 # Keys whose value changes WHICH stacks expected_stacks() returns (not just
 # how a stack is configured). Read from expected_stacks() by hand.
@@ -348,7 +352,7 @@ def check_env_table(model: type[BaseModel]) -> None:
     emitted = set(pc.to_env(model.model_validate(_FULL))) | set(
         pc.to_env(model.model_validate(with_image))
     )
-    listed = set(ENV.values())
+    listed = set(ENV.values()) | LEGACY_ENV
     if emitted != listed:
         raise SystemExit(
             f"ENV table drifted from to_env(): missing={sorted(emitted - listed)} "
