@@ -25,6 +25,7 @@ import uuid
 from utils import get_m2m_token, get_ssm_param, resolve_region
 
 REGION = resolve_region()
+MAX_RUNTIME_RESPONSE_BYTES = 1024 * 1024
 
 
 class ToolVerificationError(RuntimeError):
@@ -35,21 +36,44 @@ class RuntimeVerificationError(RuntimeError):
     """The runtime replied, but its structured application result was a failure."""
 
 
+def _read_bounded(response, limit: int = MAX_RUNTIME_RESPONSE_BYTES) -> str:
+    """Read a response without allowing an unbounded runtime payload."""
+    body = response.read(limit + 1)
+    if len(body) > limit:
+        raise RuntimeVerificationError(
+            f"runtime response exceeded the {limit}-byte safety limit"
+        )
+    return body.decode()
+
+
 def new_session_id() -> str:
     """40-char unique session id (runtime requires >= 33 chars)."""
     return f"session-{uuid.uuid4().hex}"  # 8 + 32 = 40 chars
 
 
-def _runtime_url(component: str = "orchestrator") -> str:
-    runtime_arn = get_ssm_param(f"runtimes/{component}/arn")
+def _runtime_url(
+    component: str = "orchestrator",
+    *,
+    runtime_arn: str | None = None,
+    region: str | None = None,
+) -> str:
+    runtime_arn = runtime_arn or get_ssm_param(f"runtimes/{component}/arn")
+    region = region or REGION
     return (
-        f"https://bedrock-agentcore.{REGION}.amazonaws.com/runtimes/"
+        f"https://bedrock-agentcore.{region}.amazonaws.com/runtimes/"
         f"{urllib.parse.quote(runtime_arn, safe='')}/invocations?qualifier=DEFAULT"
     )
 
 
-def _post(url: str, payload: dict, headers: dict) -> str:
-    token = get_m2m_token()
+def _post(
+    url: str,
+    payload: dict,
+    headers: dict,
+    *,
+    region: str | None = None,
+    max_response_bytes: int = MAX_RUNTIME_RESPONSE_BYTES,
+) -> str:
+    token = get_m2m_token(region=region)
     req = urllib.request.Request(
         url,
         data=json.dumps(payload).encode(),
@@ -59,7 +83,11 @@ def _post(url: str, payload: dict, headers: dict) -> str:
             **headers,
         },
     )
-    return urllib.request.urlopen(req).read().decode()  # nosec B310 — https URL built above
+    response = urllib.request.urlopen(  # nosec B310 — https URL built above
+        req,
+        timeout=180,
+    )
+    return _read_bounded(response, max_response_bytes)
 
 
 def invoke_agent(
@@ -68,9 +96,19 @@ def invoke_agent(
     required_tool: str | None = None,
     required_result: str | None = None,
     require_success: bool = False,
+    *,
+    runtime_arn: str | None = None,
+    region: str | None = None,
+    max_response_bytes: int = MAX_RUNTIME_RESPONSE_BYTES,
 ) -> str:
     """POST the prompt to the runtime data plane with a Bearer M2M token."""
-    body = _post(_runtime_url(), {"prompt": prompt, "runtimeSessionId": session_id}, {})
+    body = _post(
+        _runtime_url(runtime_arn=runtime_arn, region=region),
+        {"prompt": prompt, "runtimeSessionId": session_id},
+        {},
+        region=region,
+        max_response_bytes=max_response_bytes,
+    )
     if required_tool:
         validate_tool_result(body, required_tool, required_result)
     if require_success:
@@ -83,6 +121,10 @@ def invoke_agui(
     session_id: str,
     required_tool: str | None = None,
     required_result: str | None = None,
+    *,
+    runtime_arn: str | None = None,
+    region: str | None = None,
+    max_response_bytes: int = MAX_RUNTIME_RESPONSE_BYTES,
 ) -> str:
     """Invoke an AG-UI runtime (agui-* patterns) and print its text deltas.
 
@@ -100,12 +142,14 @@ def invoke_agui(
         "forwardedProps": {},
     }
     body = _post(
-        _runtime_url(),
+        _runtime_url(runtime_arn=runtime_arn, region=region),
         payload,
         {
             "Accept": "text/event-stream",
             "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id": session_id,
         },
+        region=region,
+        max_response_bytes=max_response_bytes,
     )
     if required_tool:
         validate_tool_result(body, required_tool, required_result)
@@ -256,7 +300,15 @@ def validate_tool_result(
         )
 
 
-def invoke_a2a(prompt: str, session_id: str, component: str) -> str:
+def invoke_a2a(
+    prompt: str,
+    session_id: str,
+    component: str,
+    *,
+    runtime_arn: str | None = None,
+    region: str | None = None,
+    max_response_bytes: int = MAX_RUNTIME_RESPONSE_BYTES,
+) -> str:
     """Invoke an A2A sub-agent runtime (code-agent / research-agent).
 
     Two things differ from invoking the orchestrator, and getting either wrong
@@ -285,14 +337,16 @@ def invoke_a2a(prompt: str, session_id: str, component: str) -> str:
             }
         },
     }
-    client = boto3.client("bedrock-agentcore", region_name=REGION)
+    region = region or REGION
+    runtime_arn = runtime_arn or get_ssm_param(f"runtimes/{component}/arn")
+    client = boto3.client("bedrock-agentcore", region_name=region)
     response = client.invoke_agent_runtime(
-        agentRuntimeArn=get_ssm_param(f"runtimes/{component}/arn"),
+        agentRuntimeArn=runtime_arn,
         runtimeSessionId=session_id,
         qualifier="DEFAULT",
         payload=json.dumps(envelope).encode(),
     )
-    body = response["response"].read().decode()
+    body = _read_bounded(response["response"], max_response_bytes)
     try:
         result = json.loads(body).get("result", {})
     except json.JSONDecodeError:
@@ -320,7 +374,11 @@ def list_tools() -> str:
             "Accept": "application/json, text/event-stream",
         },
     )
-    return urllib.request.urlopen(req).read().decode()  # nosec B310 — https URL from SSM
+    response = urllib.request.urlopen(  # nosec B310 — https URL from SSM
+        req,
+        timeout=180,
+    )
+    return _read_bounded(response)
 
 
 def main():
@@ -374,10 +432,18 @@ def main():
             print(f"Session: {session_id}")
             if args.a2a:
                 print(invoke_a2a(args.prompt, session_id, args.a2a))
-            else:
-                invoke = invoke_agui if args.agui else invoke_agent
+            elif args.agui:
                 print(
-                    invoke(
+                    invoke_agui(
+                        args.prompt,
+                        session_id,
+                        args.require_tool,
+                        args.require_tool_result,
+                    )
+                )
+            else:
+                print(
+                    invoke_agent(
                         args.prompt,
                         session_id,
                         args.require_tool,

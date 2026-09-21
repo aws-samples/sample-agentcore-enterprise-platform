@@ -465,6 +465,9 @@ def _error_status(context: PollContext, error: PollError) -> dict:
         "environment": context.environment,
         "region": context.region,
         "account": "",
+        "deployment_mode": context.config.deployment.mode,
+        "agent_pattern": context.config.agents.pattern,
+        "migration_runtime": context.config.migration is not None,
         "deployment": {
             "strategy": context.config.deployment.strategy,
             "role": None,
@@ -544,6 +547,9 @@ def poll(client_factory=boto3.client) -> dict:
             "environment": context.environment,
             "region": context.region,
             "account": account,
+            "deployment_mode": context.config.deployment.mode,
+            "agent_pattern": context.config.agents.pattern,
+            "migration_runtime": context.config.migration is not None,
             "deployment": deployment_view(context.config, account),
             "expected_stacks": [f"{context.prefix}-{s}" for s in in_scope],
             "summary": {

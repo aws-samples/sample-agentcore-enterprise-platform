@@ -183,10 +183,26 @@ offers to continue; if you say yes, note which module it was — the later
 modules build on it, and the failure usually explains a stranger symptom two
 modules later.
 
-There is also a local dashboard (status only, runs on your machine):
+There is also a local EBA Console. Its Agent Studio-style X-Ray shows the
+services and live relationships behind the customer-facing agent, and its
+Playground can invoke the orchestrator.
+IAM-only A2A specialists remain visible but are not direct browser targets. It
+cannot create, edit, or delete agents. The console is facilitator-operated,
+has no multi-user authentication, and binds only to localhost. Use synthetic
+or customer-approved test data because Playground calls reach AWS and can
+incur usage charges.
 
 ```bash
-python dashboard/monitor.py &
+AWS_PROFILE=<your-profile> python dashboard/monitor.py
+```
+
+In a second terminal:
+
+```bash
+AWS_PROFILE=<your-profile> python dashboard/server.py
+# Open http://127.0.0.1:8888.
+
+# Status-only fallback; Playground is disabled:
 python3 -m http.server 8888 --bind 127.0.0.1 -d dashboard/public
 ```
 
