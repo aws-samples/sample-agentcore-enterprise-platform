@@ -103,6 +103,9 @@ Open evidence and ownership work:
   keyboard-accessible inspection, a 44-pixel mobile reset control, zero
   console warnings/errors, and a documentation screenshot verified to contain
   only synthetic project, account, and resource identifiers.
+- On X-Ray implementation head `8a0aa68`, all GitHub checks pass, including
+  CodeQL, ASH, secret-boundary scanning, contract parity, documentation and
+  language quality, and both control-library jobs.
 - Running unscoped `pytest -q` also collects the standalone
   `scripts/test_memory.py` utility, whose command-style functions require five
   nonexistent pytest fixtures. The supported `pytest tests -q` workflow is
