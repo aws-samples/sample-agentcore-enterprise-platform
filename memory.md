@@ -83,6 +83,10 @@ Open evidence and ownership work:
   changed-file Ruff check/format, ShellCheck, shell syntax, and diff
   whitespace. The first sandboxed full-suite attempt was blocked by jsii cache
   permissions; the identical suite passed with normal cache access.
+- GitHub checks pass on implementation head `4f1b491`: CodeQL for all
+  languages and its aggregate gate, ASH, secret-boundary scanning, contract
+  parity, documentation integrity, Python and shell quality, labeler, and both
+  control-library jobs.
 
 ### 2026-09-21 — migration stack landing and documentation audit
 
