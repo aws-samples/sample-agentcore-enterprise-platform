@@ -31,6 +31,7 @@ fi
 #   ./deploy.sh diff
 #   ./deploy.sh export
 #   ./deploy.sh config [--reset]
+#   ./deploy.sh doctor                         # Read-only customer preflight
 #   ./deploy.sh migrate plan [--profile PROFILE]
 #   ./deploy.sh migrate readiness
 #   ./deploy.sh migrate data plan|readiness
@@ -223,6 +224,24 @@ if [ "${1:-}" = "usecase" ]; then
     shift
     py="$PROJECT_DIR/.venv/bin/python"; [ -x "$py" ] || py="python3"
     cd "$PROJECT_DIR" && exec "$py" scripts/usecase.py --manifest "$PLATFORM_CONFIG" "$@"
+fi
+
+# ── 'doctor' action: read-only local + AWS preflight ──
+# This runs before apply_platform_config and the normal deployment flow so a
+# missing dependency or invalid manifest becomes a diagnostic, never a
+# fallback to defaults. preflight.py uses only bounded read APIs.
+if [ "${1:-}" = "doctor" ]; then
+    shift
+    py="$PROJECT_DIR/.venv/bin/python"
+    if [ ! -x "$py" ]; then
+        py="$(command -v python3.13 || command -v python3 || true)"
+    fi
+    if [ -z "$py" ]; then
+        log_error "Python is not installed. Install Python 3.13 and retry."
+        exit 1
+    fi
+    cd "$PROJECT_DIR" && exec "$py" scripts/preflight.py \
+        --manifest "$PLATFORM_CONFIG" "$@"
 fi
 
 apply_platform_config
@@ -2268,9 +2287,10 @@ case "$ACTION" in
         ;;
 
     *)
-        echo "Usage: $0 [design|build|verify|usecase|deploy|workshop|destroy|synth|diff|export|ls|config|migrate] [OPTIONS]"
+        echo "Usage: $0 [doctor|design|build|verify|usecase|deploy|workshop|destroy|synth|diff|export|ls|config|migrate] [OPTIONS]"
         echo ""
         echo "Actions (Design → Build → Verify):"
+        echo "  doctor             Read-only checks for tools, account, Region, secrets, model, and migration image"
         echo "  design [--profile P]  Write platform.yaml from a preset, validate it, print the plan; deploys nothing"
         echo "  build              Deploy what platform.yaml describes (same as deploy)"
         echo "  usecase new NAME   Scaffold use-cases/NAME/ and enable it in platform.yaml; usecase list"

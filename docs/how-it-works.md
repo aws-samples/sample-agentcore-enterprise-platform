@@ -14,6 +14,7 @@ three commands.
 ```bash
 ./scripts/deploy.sh design --profile greenfield   # 1. Design  — nothing deployed
 ./scripts/deploy.sh usecase new release-notes      #    add your use case to the design
+./scripts/deploy.sh doctor                         #    preflight — read-only
 ./scripts/deploy.sh build                          # 2. Build   — platform + use cases
 ./scripts/deploy.sh verify                         # 3. Verify  — tests every claim
 ```
@@ -109,15 +110,34 @@ URL, the issuer, the memory id, ...), so it deploys with `build` and is torn
 down with `destroy`, with no changes to the platform itself.
 `deploy.sh usecase list` shows what is discovered and what the design enables.
 
+## Customer preflight
+
+Run this after completing `platform.yaml` and before the EBA build:
+
+```bash
+./scripts/deploy.sh doctor
+```
+
+The doctor is read-only. It validates Python, Node, npm, Bash, the AWS CLI and
+CDK; prints the effective AWS identity, pinned account, and Region; proves
+required Secrets Manager values are readable and non-empty without displaying
+them; checks Bedrock model or inference-profile metadata; and checks migration
+build files or warns when a pre-built image's arm64 architecture still needs
+independent confirmation. It reports all findings together and exits non-zero
+when a hard blocker exists.
+
+The model check does not invoke the model and therefore creates no inference
+charge. Actual model invocation, runtime networking, and application behavior
+are tested by `deploy.sh verify` after the build.
+
 ## 2. Build — platform and use case, one command
 
 ```bash
 ./scripts/deploy.sh build
 ```
 
-Build runs ~20 preflight checks (credentials, region coherence, container
-tooling, secret hygiene), prints the stack plan from the contract, and asks
-before creating anything. Under an hour later:
+Build repeats its deployment safety checks, prints the stack plan from the
+contract, and asks before creating anything. Under an hour later:
 
 | Stack | Role |
 |---|---|
