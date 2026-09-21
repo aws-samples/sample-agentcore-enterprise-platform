@@ -351,7 +351,11 @@ details.container > summary .hint { font-weight: 400; color: var(--ink-3); font-
 .empty .spinner { width: 28px; height: 28px; margin: 0 auto 16px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--accent); animation: spin .9s linear infinite; }
 
 /* ------------------------------------------------------------ architecture */
-#archFlow { height: min(64vh, 640px); }
+#archFlow {
+  height: min(72vh, 760px);
+  min-height: 580px;
+  border-top: 1px solid var(--line);
+}
 .arch-summary { text-align: right; font-size: 13px; color: var(--ink-3); white-space: nowrap; }
 .arch-summary b { color: var(--ink); font-size: 15px; }
 
@@ -421,6 +425,7 @@ details.container > summary .hint { font-weight: 400; color: var(--ink-3); font-
   .workspace { overflow: visible; }
   .topbar { position: sticky; top: 43px; z-index: 20; padding: 0 12px; }
   .page { overflow: visible; padding: 16px 12px 48px; }
+  #archFlow { height: 680px; min-height: 680px; }
 }
 @media (max-width: 520px) {
   .crumbs > span:first-child, .crumbs svg { display: none; }

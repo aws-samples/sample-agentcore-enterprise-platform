@@ -183,8 +183,9 @@ offers to continue; if you say yes, note which module it was — the later
 modules build on it, and the failure usually explains a stranger symptom two
 modules later.
 
-There is also a local EBA Console. It shows the deployed architecture and
-agents, and its Playground can invoke the customer-facing orchestrator.
+There is also a local EBA Console. Its Agent Studio-style X-Ray shows the
+services and live relationships behind the customer-facing agent, and its
+Playground can invoke the orchestrator.
 IAM-only A2A specialists remain visible but are not direct browser targets. It
 cannot create, edit, or delete agents. The console is facilitator-operated,
 has no multi-user authentication, and binds only to localhost. Use synthetic

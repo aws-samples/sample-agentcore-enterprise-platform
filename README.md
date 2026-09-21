@@ -198,12 +198,14 @@ For the wider test plan, read [`docs/TESTING.md`](docs/TESTING.md). For live res
 ## Dashboard
 
 Want to see the platform come together? The local EBA Console reads the same
-deployment contract as `deploy.sh`. **Overview**, **Architecture**, and
-**Parameters** explain the live platform; **Agents** inventories deployed
-runtimes; and **Playground** lets a facilitator run controlled tests against
-the customer-facing orchestrator. IAM-only A2A specialists stay visible as
-architecture inventory but cannot be called directly from the browser. The
-console does not create, edit, or delete agents.
+deployment contract as `deploy.sh`. **Overview** explains deployment state;
+**Architecture** uses the Agent Studio X-Ray service map with draggable nodes
+and inspected live relationships; **Parameters** shows the reviewed public
+interface; **Agents** inventories deployed runtimes; and **Playground** lets a
+facilitator run controlled tests against the customer-facing orchestrator.
+IAM-only A2A specialists stay visible as architecture inventory but cannot be
+called directly from the browser. The console does not create, edit, or delete
+agents.
 
 Run both commands from the repository root. The console is deliberately bound
 to localhost and has no multi-user authentication: use it as a
@@ -224,7 +226,7 @@ AWS_PROFILE=<your-profile> .venv/bin/python dashboard/server.py
 python3 -m http.server 8888 --bind 127.0.0.1 -d dashboard/public
 ```
 
-![AgentCore deployment dashboard monitor tab](docs/dashboard-monitor.png)
+![AgentCore EBA Console X-Ray service map](docs/dashboard-monitor.png)
 
 ## Clean Up
 

@@ -75,7 +75,7 @@ Open evidence and ownership work:
   an EBA demonstration surface, not a universal production certification or a
   replacement for customer authentication, authorization, and application
   controls.
-- Evidence passes: 528 tests in the repository's `tests/` suite, including 67
+- Evidence passes: 529 tests in the repository's `tests/` suite, including 68
   focused dashboard/invocation tests; Ruff, Python compilation, JavaScript
   syntax and dashboard status checks; documentation integrity across 35
   Markdown files and 144 local links; and whitespace validation.
@@ -92,6 +92,17 @@ Open evidence and ownership work:
   aggregate CodeQL gate and all three language analyses, ASH, secret-boundary
   scanning, contract parity, documentation integrity, Python and shell
   quality, labeler, and both control-library jobs.
+- Customer review rejected the older CloudFormation deployment graph for the
+  Architecture experience. PR #92 now uses the Agent Studio X-Ray interaction
+  model instead: service bands, live/not-enabled states, labeled OAuth/MCP/A2A
+  relationships, draggable node headers, reset, and an accessible right-side
+  inspection sheet. It remains fed only by the browser-sanitized status
+  contract and adds no mutation API or additional AWS read path.
+- Browser evidence for the replacement covers a 1440-pixel desktop and
+  390-pixel mobile viewport, no document overflow, node dragging and reset,
+  keyboard-accessible inspection, a 44-pixel mobile reset control, zero
+  console warnings/errors, and a documentation screenshot verified to contain
+  only synthetic project, account, and resource identifiers.
 - Running unscoped `pytest -q` also collects the standalone
   `scripts/test_memory.py` utility, whose command-style functions require five
   nonexistent pytest fixtures. The supported `pytest tests -q` workflow is

@@ -143,25 +143,19 @@
   </section>
 
   <!-- ============================================================ ARCHITECTURE -->
-  <!-- Same status.json, drawn as a live flow map (graph.js). Multi-account aware:
-       a federated deployment shows both account boxes and the side this dashboard
-       cannot poll is drawn "not observed" rather than guessed at. -->
+  <!-- Agent Studio X-Ray interaction model, fed only by the reviewed,
+       browser-sanitized status.json contract. -->
   <section id="tab-architecture" class="tab-content" role="tabpanel" aria-labelledby="tabbtn-architecture">
     <div class="container arch-online">
       <div class="container-head">
         <div>
-          <h2>Deployment map</h2>
-          <p>Cards are CloudFormation stacks, positioned by layer and grouped by account. Drag a card to move it, drag the background to pan, scroll to zoom, select a card for reviewed public outputs.</p>
+          <h2>AgentCore X-Ray</h2>
+          <p>Services behind the customer-facing agent, their live relationships, and optional platform controls. Click a node to inspect its reviewed details; drag node headers to rearrange the map.</p>
         </div>
         <div class="arch-summary" id="archSummary"></div>
       </div>
-      <!-- graph.js owns everything inside #archFlow (DOM cards + SVG edges, no
-           canvas). The height lives in app.css: graph.css only styles .rf-*. -->
+      <!-- graph.js owns the X-Ray canvas, service bands, edges and detail sheet. -->
       <div id="archFlow"></div>
-    </div>
-    <div class="container arch-online">
-      <div class="container-head"><h2>Legend</h2></div>
-      <div class="container-body" id="archLegend"></div>
     </div>
     <div class="empty" id="archOffline" hidden>
       <h2 id="archOfflineTitle">The poller is not running</h2>
@@ -341,7 +335,7 @@ const SAFE_PARAMETER_KEYS = new Set([
 ]);
 const PAGE_META = {
   overview: ['Overview', 'Deployment status', 'The deployment contract and current CloudFormation state.'],
-  architecture: ['Architecture', 'Live architecture', 'Inspect the deployed platform layers and reviewed public outputs.'],
+  architecture: ['Architecture', 'AgentCore X-Ray', 'Inspect the services and relationships behind the customer-facing agent.'],
   parameters: ['Parameters', 'Published parameters', 'The non-secret SSM interface consumed by agents and use cases.'],
   agents: ['Agents', 'Deployed agents', 'Customer-testable runtimes already present in this footprint.'],
   playground: ['Playground', 'Agent playground', 'Run controlled tests against an existing deployed runtime.']
@@ -448,11 +442,10 @@ function switchTab(tab, viaUser) {
   closeDrawer();
   if (window.EbaConsole) window.EbaConsole.activate(tab);
 
-  // The graph must mount AFTER its tab is visible: a display:none container has
-  // clientWidth 0, so auto-fit would size itself to the minimum floor.
+  // Mount only while visible so the interactive X-Ray does not retain document
+  // listeners or a hidden inspection sheet.
   if (tab === 'architecture' && window.ArchGraph) {
-    window.ArchGraph.mount(document.getElementById('archFlow'),
-                           document.getElementById('archLegend'));
+    window.ArchGraph.mount(document.getElementById('archFlow'));
     if (lastStatus) window.ArchGraph.update(lastStatus);
   } else if (window.ArchGraph) {
     window.ArchGraph.destroy();   // drop listeners + DOM while the tab is off-screen
