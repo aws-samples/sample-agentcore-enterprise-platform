@@ -9,6 +9,7 @@ Source hash tracking ensures:
   - ECR images tagged with both `latest` and source hash
 """
 
+import json
 import os
 
 import aws_cdk as cdk
@@ -426,8 +427,8 @@ class RuntimeStack(cdk.Stack):
             if migration_health_path:
                 env_vars["MIGRATION_HEALTH_PATH"] = migration_health_path
             if migration_env:
-                env_vars["MIGRATION_ENV"] = ",".join(
-                    f"{k}={v}" for k, v in migration_env.items()
+                env_vars["MIGRATION_ENV_JSON"] = json.dumps(
+                    migration_env, separators=(",", ":"), sort_keys=True
                 )
             if migration_secret_names:
                 env_vars["MIGRATION_SECRETS"] = ",".join(migration_secret_names)
@@ -553,7 +554,7 @@ class RuntimeStack(cdk.Stack):
 
         if build_context:
             build = [
-                "echo Building customer image from source (linux/arm64)...",
+                'echo "Building customer image from source (linux/arm64)..."',
                 (
                     f"docker build --platform linux/arm64 -f context/{build_dockerfile} "
                     "-t migration-source:local context/"
@@ -566,9 +567,9 @@ class RuntimeStack(cdk.Stack):
                 (
                     'docker pull --platform linux/arm64 "$SOURCE_IMAGE" || '
                     '{ echo "ERROR: no linux/arm64 image available for $SOURCE_IMAGE - '
-                    "AgentCore Runtime is arm64-only. Rebuild from source "
-                    "(migration.source.build in platform.yaml) or use target "
-                    'runtime: ec2."; exit 1; }'
+                    "AgentCore Runtime is arm64-only. Supply the Docker build "
+                    "context with migration.source.build so CodeBuild can "
+                    'produce an arm64 image."; exit 1; }'
                 ),
             ]
         build += [
@@ -579,10 +580,18 @@ class RuntimeStack(cdk.Stack):
                 'c=json.load(sys.stdin)[0]["Config"]; '
                 'print(json.dumps((c.get("Entrypoint") or [])+(c.get("Cmd") or [])))\')'
             ),
-            'echo "Captured child command: $CHILD_CMD"',
+            # Preserve the source image's USER after the adapter dependencies
+            # have been installed as root. Empty Config.User means Docker's
+            # default root user.
+            (
+                'SOURCE_USER=$(docker inspect "$SOURCE_IMAGE" | python3 -c \'import json,sys; '
+                'print(json.load(sys.stdin)[0]["Config"].get("User") or "root")\')'
+            ),
+            'echo "Preserving source runtime user: $SOURCE_USER"',
             (
                 'docker build --platform linux/arm64 --build-arg SOURCE_IMAGE="$SOURCE_IMAGE" '
                 '--build-arg CHILD_CMD="$CHILD_CMD" '
+                '--build-arg CHILD_USER="$SOURCE_USER" '
                 "-f adapter/Dockerfile -t $REPO_URI:$IMAGE_TAG adapter/"
             ),
             "docker tag $REPO_URI:$IMAGE_TAG $REPO_URI:latest",

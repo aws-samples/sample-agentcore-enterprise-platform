@@ -413,6 +413,10 @@ aws() {
     printf '%s\n' "$*" >> "$TMP/aws.args"
     case "$1 $2" in
         "cloudformation list-stacks")   echo "check-prefix-networking" ;;
+        "logs describe-log-groups")
+            [[ "$*" == *codebuild* ]] && echo "/aws/codebuild/check-prefix-build-orchestrator"
+            [[ "$*" == *lambda* ]] && echo "/aws/lambda/check-prefix-build-trigger-orchestrator"
+            ;;
         "secretsmanager describe-secret")
             [[ "$*" == *check-prefix-idp-client-secret* ]] ;;
         *) return 0 ;;
@@ -427,11 +431,22 @@ grep -q "delete-stack --stack-name check-prefix-networking" "$TMP/aws.args" \
     || fail "leftover stack not deleted with --yes: $(cat "$TMP/aws.args")"
 grep -q "delete-secret --secret-id check-prefix-idp-client-secret" "$TMP/aws.args" \
     || fail "orphaned secret not deleted with --yes: $(cat "$TMP/aws.args")"
+grep -q "delete-log-group --log-group-name /aws/codebuild/check-prefix-build-orchestrator" "$TMP/aws.args" \
+    || fail "CodeBuild log group not deleted with --yes: $(cat "$TMP/aws.args")"
+grep -q "delete-log-group --log-group-name /aws/lambda/check-prefix-build-trigger-orchestrator" "$TMP/aws.args" \
+    || fail "Lambda log group not deleted with --yes: $(cat "$TMP/aws.args")"
 
 : > "$TMP/aws.args"
 YES=0 NON_INTERACTIVE=1 sweep_leftovers >/dev/null 2>&1 || fail "sweep failed non-interactive"
-grep -q "delete-stack\|delete-secret" "$TMP/aws.args" \
+grep -q "delete-stack\|delete-secret\|delete-log-group" "$TMP/aws.args" \
     && fail "NON_INTERACTIVE without --yes deleted things: $(cat "$TMP/aws.args")"
+
+: > "$TMP/aws.args"
+YES=1 NON_INTERACTIVE=0 DEPLOYMENT_MODE=production sweep_leftovers >/dev/null 2>&1 \
+    || fail "production sweep failed"
+grep -q "delete-log-group" "$TMP/aws.args" \
+    && fail "production sweep deleted retained logs: $(cat "$TMP/aws.args")"
+unset DEPLOYMENT_MODE
 unset -f aws
 echo "PASS: post-destroy sweep reports always, deletes only with --yes"
 
@@ -551,10 +566,48 @@ grep -q -- "--secret-string file:///dev/stdin" <<<"$out" \
 ! grep -vE "get-caller-identity|configure get|describe-secret" "$AWS_ARGS" | grep -q . \
     || fail "migrate plan made a non-read AWS call: $(cat "$AWS_ARGS")"
 
+: > "$AWS_ARGS"
+out=$(run_migrate readiness 2>&1) \
+    && fail "migrate readiness accepted a manifest with no traffic cutover gate"
+grep -q "safe target-only deployment" <<<"$out" \
+    || fail "readiness did not explain the safe non-cutover state: $out"
+[ ! -s "$AWS_ARGS" ] \
+    || fail "migrate readiness made an AWS call: $(cat "$AWS_ARGS")"
+
+: > "$AWS_ARGS"
+out=$(run_migrate data plan 2>&1) || fail "migrate data plan failed: $out"
+grep -q "NOT REQUIRED: strategy is none" <<<"$out" \
+    || fail "data plan did not report the default scope: $out"
+out=$(run_migrate data readiness 2>&1) \
+    || fail "out-of-scope data should satisfy its own readiness check: $out"
+[ ! -s "$AWS_ARGS" ] \
+    || fail "migrate data plan/readiness made an AWS call: $(cat "$AWS_ARGS")"
+out=$(run_migrate data execute 2>&1) \
+    && fail "migrate data accepted an executable action"
+grep -q "execute" <<<"$out" || fail "bad data sub-action not named: $out"
+
+: > "$AWS_ARGS"
+out=$(run_migrate cutover plan 2>&1) || fail "migrate cutover plan failed: $out"
+grep -q "NOT ENABLED: source trigger and traffic router remain unchanged" <<<"$out" \
+    || fail "cutover plan did not report the safe target-only scope: $out"
+out=$(run_migrate cutover readiness 2>&1) \
+    && fail "cutover readiness accepted a manifest with no traffic plan"
+grep -q "safe target-only deployment" <<<"$out" \
+    || fail "cutover readiness did not fail closed: $out"
+[ ! -s "$AWS_ARGS" ] \
+    || fail "migrate cutover plan/readiness made an AWS call: $(cat "$AWS_ARGS")"
+out=$(run_migrate cutover execute 2>&1) \
+    && fail "migrate cutover accepted an executable action"
+grep -q "execute" <<<"$out" || fail "bad cutover sub-action not named: $out"
+
 out=$(run_migrate bogus 2>&1) && fail "unknown migrate sub-action was accepted"
 grep -q "bogus" <<<"$out" || fail "bad sub-action not named: $out"
 out=$(run_migrate plan --stack x 2>&1) && fail "migrate accepted a deploy option"
-echo "PASS: migrate plan renders the contract, reads AWS only, fails closed otherwise"
+out=$(run_migrate readiness --profile migration 2>&1) \
+    && fail "migrate readiness accepted a preset instead of the completed manifest"
+grep -q "readiness requires your completed platform.yaml" <<<"$out" \
+    || fail "readiness did not explain why --profile is unsafe: $out"
+echo "PASS: migration plan/readiness are read-only and fail closed"
 
 # (u) Design → Build → Verify glue. `design --profile X` materializes the
 # preset and prints the plan without deploying; a preset with placeholders is

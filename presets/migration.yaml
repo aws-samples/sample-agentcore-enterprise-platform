@@ -40,3 +40,20 @@ migration:
   network:
     private_dependencies: []  # customer-side hostnames the agent must reach (needs networking + connectivity)
     connectivity: none        # vpn|transit-gateway once private_dependencies is filled
+    # receipt: {}              # after verify: VPC/subnet/SG IDs, probe evidence, tested CA version
+  stages:
+    # Runtime deployment is already in scope. These surrounding stages are
+    # explicit opt-ins and remain customer-operated; `migrate readiness`
+    # blocks cutover until each enabled stage has owner/approver/evidence/
+    # rollback/approved_at/expires_at recorded under its gate.
+    runtime: {}               # after verify: account, RuntimeArn, SourceHash, ECR digest, evidence, gate
+    data:
+      strategy: none          # retain-source or external-copy after a source-specific plan is approved
+    triggers:
+      strategy: none          # external-shadow; source-specific safe rehearsal, never deployed here
+      # external-shadow also requires source_reference, shadow_reference,
+      # safety_mode, validation_reference, and source-specific evidence.
+    traffic:
+      strategy: none          # external-canary (HTTP/webhook) or external-switch (schedule/queue)
+      # A traffic plan also records router/source/target/metrics references,
+      # canary steps where supported, abort thresholds, and an approval gate.

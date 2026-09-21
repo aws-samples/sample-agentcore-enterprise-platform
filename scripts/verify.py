@@ -17,8 +17,10 @@ if any claim fails:
     networking                  check_network.py      (runtimes really in VPC)
     (require_guardrails flag)   check_guardrail_enforcement.py (IAM simulation)
     (observability.alarms flag) check_alarms.py       (alarms exist, none firing)
-    runtime-orchestrator        invoke.py             (live invoke; --agui for
-                                                       agui-* agent patterns)
+    runtime-orchestrator        invoke.py             (live invoke; migration
+                                                       uses a basic contract
+                                                       check, normal agents use
+                                                       pattern-specific checks)
     runtime-code-agent          invoke.py --a2a code-agent
     runtime-research-agent      invoke.py --a2a research-agent
     uc-<name> (enabled use case) use-cases/<name>/verify.py, run LAST so a
@@ -73,6 +75,7 @@ def checks_for(
     require_guardrails: bool = False,
     alarms: bool = False,
     use_cases: Sequence[str] = (),
+    migration: bool = False,
 ) -> list[tuple[str, list[str]]]:
     """Map a footprint onto the tools that verify it. Pure — unit-tested.
 
@@ -97,19 +100,26 @@ def checks_for(
     if alarms:
         checks.append(("alarms", ["check_alarms.py"]))
     if "runtime-orchestrator" in suffixes:
-        agui = ["--agui"] if agent_pattern.startswith("agui-") else []
-        if agent_pattern == "orchestrator":
-            invoke_args = ["invoke.py", *agui, HEALTH_PROMPT]
+        if migration:
+            # A migrated image comes from migration.source, not agents.pattern.
+            # Prove its AgentCore HTTP contract with a real invoke, without
+            # assuming that the customer image exposes our Code Interpreter
+            # tool or speaks AG-UI.
+            invoke_args = ["invoke.py", "--require-success", HEALTH_PROMPT]
         else:
-            invoke_args = [
-                "invoke.py",
-                *agui,
-                "--require-tool",
-                "execute_python_securely",
-                "--require-tool-result",
-                CODE_INTERPRETER_MARKER,
-                CODE_INTERPRETER_PROMPT,
-            ]
+            agui = ["--agui"] if agent_pattern.startswith("agui-") else []
+            if agent_pattern == "orchestrator":
+                invoke_args = ["invoke.py", *agui, HEALTH_PROMPT]
+            else:
+                invoke_args = [
+                    "invoke.py",
+                    *agui,
+                    "--require-tool",
+                    "execute_python_securely",
+                    "--require-tool-result",
+                    CODE_INTERPRETER_MARKER,
+                    CODE_INTERPRETER_PROMPT,
+                ]
         checks.append(("orchestrator invoke", invoke_args))
     if "runtime-code-agent" in suffixes:
         checks.append(
@@ -158,7 +168,14 @@ def main() -> int:
         for name in sorted(config.use_cases)
         if any(s in suffixes for s in manifests[name].stacks)
     ]
-    checks = checks_for(suffixes, pattern, require_guardrails, alarms, use_cases)
+    checks = checks_for(
+        suffixes,
+        pattern,
+        require_guardrails,
+        alarms,
+        use_cases,
+        migration=config.migration is not None,
+    )
     print(f"Verifying {config.project}/{config.environment} in account {account}")
     print(f"Footprint: {' '.join(sorted(suffixes))}\n")
 

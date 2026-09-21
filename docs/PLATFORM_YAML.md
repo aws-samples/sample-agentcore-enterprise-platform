@@ -127,10 +127,70 @@ Migrate an existing agent onto the platform.
 | `migration.source.secrets` | list of str | `[]` | `MIGRATION_SECRETS` | Environment variable NAMES only. Each value lives in Secrets Manager under `<project>/<environment>/migration/<NAME>`; the plan lists what to create. |
 | `migration.target.runtime` | one of: `agentcore`, `ec2` | `'agentcore'` | `MIGRATION_TARGET_RUNTIME` | Only `agentcore` is currently deployable (arm64, the 8080 `/invocations` contract). `ec2` is reserved for a future ECS-on-EC2 implementation and fails validation. |
 | `migration.target.mode` | one of: `adapter`, `native` | `'adapter'` | `MIGRATION_TARGET_MODE` | Only `adapter` is currently deployable; it wraps the container so it speaks the AgentCore contract. `native` is reserved for a future implementation and fails validation. |
-| `migration.network.private_dependencies` | list of str | `[]` | `MIGRATION_PRIVATE_DEPENDENCIES` | Customer-side hostnames the agent must still reach (self-hosted Git, Jira, …). Needs `security.networking` and a `connectivity` other than `none`; the plan prints one reachability check each. |
+| `migration.network.private_dependencies` | list of str | `[]` | `MIGRATION_PRIVATE_DEPENDENCIES` | Up to 25 unique customer-side hostnames (3,000 encoded bytes) the agent must still reach. Needs `security.networking` and a `connectivity` other than `none`; verification runs a fixed allow-list TLS probe from the runtime VPC. |
 | `migration.network.connectivity` | one of: `vpn`, `transit-gateway`, `none` | `'none'` | `MIGRATION_CONNECTIVITY` | Records the existing external path from the platform VPC to the customer network. The accelerator does not provision VPN or Transit Gateway resources. |
 | `migration.network.dns_forwarders` | list of str | `[]` | `MIGRATION_DNS_FORWARDERS` | Records externally managed IPv4 resolvers for private hostnames. The accelerator does not create resolver endpoints or rules. |
-| `migration.network.ca_bundle_secret_name` | str | `""` | `MIGRATION_CA_BUNDLE_SECRET_NAME` | Records the Secrets Manager NAME of a private CA bundle for migration planning and ownership. The accelerator does not currently inject it into the image. |
+| `migration.network.ca_bundle_secret_name` | str | `""` | `MIGRATION_CA_BUNDLE_SECRET_NAME` | Secrets Manager NAME of a private CA bundle used by the network probe. The bundle is read in memory and is not injected into the customer image or returned as evidence. |
+| `migration.network.receipt.vpc_id` | str (matches `^(?:|vpc-[0-9a-f]{8,17})$`) | `""` | — | Deployed target VPC ID containing the runtime and fixed dependency probe. Required before private-network approval. |
+| `migration.network.receipt.private_subnet_ids` | list of str | `[]` | — | Deployed private subnet IDs used by the dependency probe; the digest sorts them because order has no meaning. |
+| `migration.network.receipt.security_group_ids` | list of str | `[]` | — | Deployed security group IDs used by the dependency probe; the digest sorts them because order has no meaning. |
+| `migration.network.receipt.ca_bundle_version_id` | str | `""` | — | Exact Secrets Manager version ID of the tested private CA bundle. Required when `ca_bundle_secret_name` is set, so rotation invalidates approval. |
+| `migration.network.receipt.probe_verification_reference` | str | `""` | — | Customer evidence reference for the successful fixed allow-list DNS and hostname-verified TLS probe from the deployed VPC. |
+| `migration.network.gate.owner` | str | `""` | — | Team or alias accountable for executing and reversing this stage. |
+| `migration.network.gate.approver` | str | `""` | — | Separate team or alias that accepted the referenced evidence. |
+| `migration.network.gate.approved_at` | datetime, optional | absent | — | Non-future timestamp with UTC offset. Supplying it asserts final approval and requires every other gate field; traffic approval must not predate any required prerequisite. |
+| `migration.network.gate.expires_at` | datetime, optional | absent | — | Required UTC-offset timestamp after approval and no more than seven days later. An expired gate blocks readiness. |
+| `migration.network.gate.evidence` | list of str | `[]` | — | One or more references in the customer's approved evidence system; do not paste payloads or secrets. Runtime, network, data, trigger, and traffic gates also require their exact printed plan digest. |
+| `migration.network.gate.rollback` | str | `""` | — | Concise reversal procedure or reference. Required before the gate can pass. |
+| `migration.stages.runtime.account_id` | str (matches `^(?:|\d{12})$`) | `""` | — | 12-digit AWS account containing the verified AgentCore Runtime and its VPC. Required for cutover; must match the Runtime ARN and deployment account intent. |
+| `migration.stages.runtime.runtime_arn` | str | `""` | — | AgentCore Runtime ARN captured from the deployed runtime stack. Required for cutover and checked against the configured account and Region. |
+| `migration.stages.runtime.source_hash` | str (matches `^(?:|[a-f0-9]{16})$`) | `""` | — | The 16-character `SourceHash` output from the deployed runtime stack, binding approval to the reviewed source and migration adapter build. |
+| `migration.stages.runtime.image_digest` | str (matches `^(?:|sha256:[a-f0-9]{64})$`) | `""` | — | Immutable ECR image digest (`sha256:…`) resolved after deployment; a mutable image tag is not sufficient cutover evidence. |
+| `migration.stages.runtime.verification_reference` | str | `""` | — | Customer evidence reference for the successful live `deploy.sh verify` run against this exact deployed target. |
+| `migration.stages.runtime.gate.owner` | str | `""` | — | Team or alias accountable for executing and reversing this stage. |
+| `migration.stages.runtime.gate.approver` | str | `""` | — | Separate team or alias that accepted the referenced evidence. |
+| `migration.stages.runtime.gate.approved_at` | datetime, optional | absent | — | Non-future timestamp with UTC offset. Supplying it asserts final approval and requires every other gate field; traffic approval must not predate any required prerequisite. |
+| `migration.stages.runtime.gate.expires_at` | datetime, optional | absent | — | Required UTC-offset timestamp after approval and no more than seven days later. An expired gate blocks readiness. |
+| `migration.stages.runtime.gate.evidence` | list of str | `[]` | — | One or more references in the customer's approved evidence system; do not paste payloads or secrets. Runtime, network, data, trigger, and traffic gates also require their exact printed plan digest. |
+| `migration.stages.runtime.gate.rollback` | str | `""` | — | Concise reversal procedure or reference. Required before the gate can pass. |
+| `migration.stages.data.strategy` | one of: `none`, `retain-source`, `external-copy` | `'none'` | — | `none` keeps data movement out of scope. `retain-source` uses versioned retain-source dataset contracts. `external-copy` records and gates a separately designed customer procedure; neither strategy runs a copy during deployment. |
+| `migration.stages.data.datasets` | list of block | `[]` | — | Up to 25 versioned retain-source dataset contracts. Each names a declared private dependency plus customer-approved classification, retention, identity-mapping, and validation references. |
+| `migration.stages.data.gate.owner` | str | `""` | — | Team or alias accountable for executing and reversing this stage. |
+| `migration.stages.data.gate.approver` | str | `""` | — | Separate team or alias that accepted the referenced evidence. |
+| `migration.stages.data.gate.approved_at` | datetime, optional | absent | — | Non-future timestamp with UTC offset. Supplying it asserts final approval and requires every other gate field; traffic approval must not predate any required prerequisite. |
+| `migration.stages.data.gate.expires_at` | datetime, optional | absent | — | Required UTC-offset timestamp after approval and no more than seven days later. An expired gate blocks readiness. |
+| `migration.stages.data.gate.evidence` | list of str | `[]` | — | One or more references in the customer's approved evidence system; do not paste payloads or secrets. Runtime, network, data, trigger, and traffic gates also require their exact printed plan digest. |
+| `migration.stages.data.gate.rollback` | str | `""` | — | Concise reversal procedure or reference. Required before the gate can pass. |
+| `migration.stages.triggers.strategy` | one of: `none`, `external-shadow` | `'none'` | — | `none` leaves the source trigger unchanged. `external-shadow` records and gates a customer-operated shadow rehearsal; the accelerator does not create or change the event source. |
+| `migration.stages.triggers.source_reference` | str | `""` | — | Reference to the current event source or route. Must differ from `shadow_reference`; use an identifier, not a payload or credential. |
+| `migration.stages.triggers.shadow_reference` | str | `""` | — | Reference to the separate disabled, dry-run, idempotent, or dual-published shadow target used for rehearsal. |
+| `migration.stages.triggers.safety_mode` | one of: `read-only`, `dry-run`, `idempotent`, `dual-publish`, optional | absent | — | How shadow work avoids customer impact. HTTP/webhook: `read-only` or `idempotent`; schedule: `dry-run` or `idempotent`; queue: `dual-publish` to a separate destination. |
+| `migration.stages.triggers.idempotency_reference` | str | `""` | — | Customer evidence for duplicate detection/idempotency. Required for `idempotent` and `dual-publish` safety modes. |
+| `migration.stages.triggers.signature_validation_reference` | str | `""` | — | Customer evidence that webhook signatures are validated before processing. Required for webhook shadowing. |
+| `migration.stages.triggers.validation_reference` | str | `""` | — | Customer test or result reference proving the shadow path accepted representative events without unsafe effects. |
+| `migration.stages.triggers.gate.owner` | str | `""` | — | Team or alias accountable for executing and reversing this stage. |
+| `migration.stages.triggers.gate.approver` | str | `""` | — | Separate team or alias that accepted the referenced evidence. |
+| `migration.stages.triggers.gate.approved_at` | datetime, optional | absent | — | Non-future timestamp with UTC offset. Supplying it asserts final approval and requires every other gate field; traffic approval must not predate any required prerequisite. |
+| `migration.stages.triggers.gate.expires_at` | datetime, optional | absent | — | Required UTC-offset timestamp after approval and no more than seven days later. An expired gate blocks readiness. |
+| `migration.stages.triggers.gate.evidence` | list of str | `[]` | — | One or more references in the customer's approved evidence system; do not paste payloads or secrets. Runtime, network, data, trigger, and traffic gates also require their exact printed plan digest. |
+| `migration.stages.triggers.gate.rollback` | str | `""` | — | Concise reversal procedure or reference. Required before the gate can pass. |
+| `migration.stages.traffic.strategy` | one of: `none`, `external-canary`, `external-switch` | `'none'` | — | `none` means safe target-only deployment. `external-canary` records percentage steps for HTTP/webhook routing. `external-switch` records an atomic customer-operated switch and is required for schedule/queue cutover. |
+| `migration.stages.traffic.router_reference` | str | `""` | — | Reference to the customer-owned router, event-source configuration, or approved change that will perform the shift. |
+| `migration.stages.traffic.source_reference` | str | `""` | — | Reference to the recorded rollback destination. Must differ from `target_reference`. |
+| `migration.stages.traffic.target_reference` | str | `""` | — | Reference to the reviewed AgentCore target route or event-source destination. |
+| `migration.stages.traffic.metrics_reference` | str | `""` | — | Dashboard or query reference used to evaluate every step against the abort thresholds. |
+| `migration.stages.traffic.canary_steps_percent` | list of int | `[]` | — | For `external-canary`, one to ten unique increasing percentages from 1 through 100, ending at 100. Forbidden for an atomic switch. |
+| `migration.stages.traffic.abort` | block, optional | absent | — | Required customer-approved stop conditions evaluated during every canary step or atomic-switch observation window. |
+| `migration.stages.traffic.abort.max_error_rate_percent` | float (0–100) | **required** | — | Maximum acceptable error rate from 0 through 100 before rollback. |
+| `migration.stages.traffic.abort.max_p95_latency_ms` | int (1–3600000) | **required** | — | Maximum acceptable p95 latency in milliseconds before rollback. |
+| `migration.stages.traffic.abort.max_failed_events` | int (0–) | **required** | — | Maximum acceptable failed event count before rollback. |
+| `migration.stages.traffic.abort.observation_minutes` | int (1–1440) | **required** | — | How long to observe each step before proceeding, from 1 minute through 24 hours. |
+| `migration.stages.traffic.gate.owner` | str | `""` | — | Team or alias accountable for executing and reversing this stage. |
+| `migration.stages.traffic.gate.approver` | str | `""` | — | Separate team or alias that accepted the referenced evidence. |
+| `migration.stages.traffic.gate.approved_at` | datetime, optional | absent | — | Non-future timestamp with UTC offset. Supplying it asserts final approval and requires every other gate field; traffic approval must not predate any required prerequisite. |
+| `migration.stages.traffic.gate.expires_at` | datetime, optional | absent | — | Required UTC-offset timestamp after approval and no more than seven days later. An expired gate blocks readiness. |
+| `migration.stages.traffic.gate.evidence` | list of str | `[]` | — | One or more references in the customer's approved evidence system; do not paste payloads or secrets. Runtime, network, data, trigger, and traffic gates also require their exact printed plan digest. |
+| `migration.stages.traffic.gate.rollback` | str | `""` | — | Concise reversal procedure or reference. Required before the gate can pass. |
 
 ## Presets
 
@@ -287,6 +347,23 @@ migration:
   network:
     private_dependencies: []  # customer-side hostnames the agent must reach (needs networking + connectivity)
     connectivity: none        # vpn|transit-gateway once private_dependencies is filled
+    # receipt: {}              # after verify: VPC/subnet/SG IDs, probe evidence, tested CA version
+  stages:
+    # Runtime deployment is already in scope. These surrounding stages are
+    # explicit opt-ins and remain customer-operated; `migrate readiness`
+    # blocks cutover until each enabled stage has owner/approver/evidence/
+    # rollback/approved_at/expires_at recorded under its gate.
+    runtime: {}               # after verify: account, RuntimeArn, SourceHash, ECR digest, evidence, gate
+    data:
+      strategy: none          # retain-source or external-copy after a source-specific plan is approved
+    triggers:
+      strategy: none          # external-shadow; source-specific safe rehearsal, never deployed here
+      # external-shadow also requires source_reference, shadow_reference,
+      # safety_mode, validation_reference, and source-specific evidence.
+    traffic:
+      strategy: none          # external-canary (HTTP/webhook) or external-switch (schedule/queue)
+      # A traffic plan also records router/source/target/metrics references,
+      # canary steps where supported, abort thresholds, and an approval gate.
 ```
 
 </details>

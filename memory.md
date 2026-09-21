@@ -13,13 +13,15 @@ operational readiness review.
 
 ## Current milestone
 
-**G1 — production design baseline merged; migration EBA hardening in progress**
+**G1 — production design baseline merged; migration EBA path awaiting roll-up**
 
-Branch: `fix/migration-contract`
+Branch: `feat/migration-cutover-plan`
 
-G0 merged through PR #74 after prerequisite PR #75. G1 implementation merged
-through PR #76. The current branch closes a deployment-account boundary found
-during the remaining live evidence run.
+G0 merged through PR #79. G1 implementation merged through PR #76. PR #80
+reached `main`, but PRs #81–#86 merged into their stacked base branches rather
+than `main`. PR #87 rolls the intact final stack tip onto `main`; until it
+merges, GitHub Pages cannot publish the migration runbook or current generated
+configuration reference.
 
 - [x] Add explicit `workshop` and `production` deployment modes.
 - [x] Add a production preset that requires enterprise identity, networking,
@@ -47,6 +49,149 @@ Open evidence and ownership work:
 - [ ] Populate, review, and approve the five G1 governance artifacts for the
   specific customer; draft templates and green synthesis do not close G1.
 
+### 2026-09-21 — migration stack landing and documentation audit
+
+- GitHub's remote graph confirmed that PR #80 reached `main`, while PRs
+  #81–#86 merged sideways into their stacked base branches. Their review state
+  was complete, but their adapter, verification, networking, data, cutover,
+  and documentation commits were absent from `main`.
+- PR #87 targets `main` from the intact `feat/migration-cutover-plan` tip. It
+  is a landing correction only and performs no AWS or customer-system change.
+- The public GitHub Pages site consequently returned 404 for
+  `MIGRATION_RUNBOOK`, served an older `platform.yaml` reference, and offered
+  no migration navigation.
+- The local final-stack documentation renders the runbook successfully at
+  desktop and mobile widths. The generated `platform.yaml` tables overflow
+  their 390-pixel mobile viewport, however, and need a bounded horizontal
+  scroll treatment.
+- Follow-up documentation work must add migration navigation, distinguish
+  accelerator-managed runtime work from customer-operated data/network/
+  trigger/traffic changes, qualify live-verification claims, add a useful 404
+  page and favicon, and enforce internal-link/sidebar integrity in CI.
+
+### 2026-09-21 — staged migration readiness and next implementation boundary
+
+- The next migration scope is deliberately split into runtime, networking,
+  data, triggers, and traffic. Runtime deployment remains independently usable
+  for a target-only EBA rehearsal; every surrounding stage is opt-in.
+- `migration.stages` now records `external-copy`, `external-shadow`, and
+  `external-canary` only when those customer-operated procedures are in scope.
+  `none` is a safe, visible decision and remains the default.
+- `migration.network.gate` becomes mandatory for cutover readiness whenever
+  private dependencies are declared. A declared VPN or Transit Gateway path
+  no longer looks sufficient by itself.
+- Every in-scope external stage requires a named owner, separate approver,
+  evidence references, rollback procedure, and timezone-qualified approval
+  timestamp. `deploy.sh migrate readiness` is configuration-only and exits
+  non-zero until traffic is explicitly in scope and every required gate is
+  complete. It does not mutate AWS or customer systems.
+- Generic data movement was rejected as unsafe: schemas, identity mappings,
+  consistency, residency, retention, reconciliation, and reverse replication
+  are source-specific. Keep the existing datastore connected during the EBA,
+  then add one versioned adapter at a time, starting with a retain-source
+  contract and only implementing copy adapters when a customer source is
+  known.
+- Generic trigger shadowing was also rejected. HTTP/webhook routing can use a
+  dedicated authenticated proxy; schedules need idempotent/dry-run behavior;
+  and a second consumer on the same queue can steal source work. Future
+  trigger PRs must be trigger-specific, disabled by default, and preserve an
+  immediate rollback path.
+- Evidence passes: 461 repository tests, all 11 deployment-contract
+  syntheses, deployment configuration and workshop-flow checks, changed-file
+  Python lint/format, ShellCheck, generated-reference drift, shell syntax, and
+  diff whitespace validation.
+
+### 2026-09-21 — migration private-dependency probe
+
+- A migration with `network.private_dependencies` now synthesizes a bounded
+  Lambda probe in the runtime's private subnets and reuses the runtime security
+  group. A migration with no private dependencies creates no probe resource.
+- The invocation payload is ignored, so a caller cannot choose an arbitrary
+  destination and turn the function into a VPC-side SSRF tool. Up to 25 unique
+  manifest hostnames are baked into the function configuration, with a
+  3,000-byte aggregate limit below Lambda's environment ceiling.
+- Each check performs DNS resolution and a hostname-verified TLS handshake on
+  port 443. Results contain only the declared hostname and a fixed status code;
+  private addresses, certificate contents, exception text, customer payloads,
+  and credentials are not logged or returned.
+- An optional private CA bundle is read in memory from the exact declared
+  Secrets Manager name through scoped IAM. The function adds a Secrets Manager
+  VPC endpoint only when that bundle is configured and never injects the
+  bundle into the customer image.
+- `check_network.py`, and therefore configuration-aware `verify`, fails if the
+  probe is missing, its result host set differs from the manifest, its CA
+  cannot be loaded, or any dependency fails DNS/connect/TLS. A green probe is
+  runtime-network evidence; the separate owner/approver readiness gate still
+  controls cutover.
+- Evidence passes: 468 repository tests, all 12 deployment-contract syntheses
+  including a private-dependency migration footprint, changed-file Python
+  lint/format, generated-reference parity, ShellCheck, and diff whitespace
+  checks.
+
+### 2026-09-21 — source-specific migration data plan
+
+- Generic data copy remains intentionally unavailable. `migrate data execute`
+  is not a command, and CDK design/build/verify never starts data movement.
+- The first versioned data adapter is `retain-source-v1`: the AgentCore
+  runtime keeps using an existing customer datastore over a declared and
+  verified private dependency. It moves no records and creates no data
+  migration role.
+- Every retained dataset has a stable name and requires customer evidence
+  references for classification, retention, identity mapping, and data
+  validation. Its dependency must be one of
+  `migration.network.private_dependencies`, so the VPC probe and network gate
+  apply.
+- `migrate data plan` renders a canonical, sorted, secret-free plan and a
+  SHA-256 digest over the project, environment, Region, target, strategy,
+  adapter version, dependency, and governance references. Approval fields are
+  excluded to avoid a circular digest.
+- `migrate data readiness` requires both the data and network gates and
+  requires the exact plan digest in `data.gate.evidence`. A configuration edit
+  therefore invalidates the prior data approval.
+- `external-copy` remains an evidence-only strategy for a separately designed
+  customer procedure. Executable copy adapters require an immutable snapshot,
+  narrow migration role, encrypted checkpoints, identity mapping,
+  reconciliation, and reverse-replication design for the actual source.
+- Evidence passes: 472 repository tests, all 12 deployment-contract syntheses,
+  deployment configuration checks, changed-file Python lint/format,
+  generated-reference parity, ShellCheck, shell syntax, and diff whitespace.
+
+### 2026-09-21 — source-specific migration cutover plans
+
+- Generic event-source or router automation remains intentionally unavailable.
+  `migrate cutover plan` and `migrate cutover readiness` are configuration-only
+  commands; there is no `execute` action and no AWS or customer-system mutation.
+- Runtime readiness is no longer inferred from choosing a supported target. A
+  cutover requires the target AWS account, AgentCore Runtime ARN, stack
+  `SourceHash`, immutable ECR image digest, retained live-verification
+  reference, owner/approver gate, and the exact runtime plan digest. The digest
+  also binds the effective identity, agent/model/memory, security, and
+  networking-mode configuration.
+- Private-network approval is bound to a versioned digest over the runtime
+  account, connectivity type, dependency allow-list, DNS forwarders, and
+  private-CA secret name plus the deployed VPC, private subnets, security
+  groups, probe evidence, and tested CA secret version. VPC/probe/DNS/CA
+  changes invalidate the network and downstream traffic approvals.
+- HTTP/webhook traffic may use an externally operated percentage canary.
+  Webhooks require signature-validation evidence and a read-only or idempotent
+  shadow. Schedules require a dry-run/idempotent shadow and an atomic switch.
+  Queues require producer dual-publish to a separate destination with
+  idempotency evidence and an atomic switch; a competing consumer on the
+  source queue is explicitly rejected as unsafe.
+- Every traffic plan records its router, source rollback route, target,
+  metrics, ordered steps or atomic switch, observation window, and abort
+  thresholds. Its digest chains the exact runtime, network, data, and trigger
+  plans plus gateway and observability settings. Traffic approval must be
+  newer than every required prerequisite approval.
+- Operator-provided references reject terminal control characters, numeric
+  thresholds reject YAML boolean/string coercion, approval timestamps cannot
+  be materially in the future, approvals expire within at most seven days,
+  and source/shadow or source/target references must differ.
+- Evidence passes: 504 repository tests, all 12 deployment-contract syntheses,
+  deployment configuration checks, changed-file Python lint/format,
+  generated-reference parity, ShellCheck at warning severity, shell syntax,
+  and diff whitespace. No live deployment or external cutover was performed.
+
 ### 2026-09-21 — migration profile implementation audit
 
 - The supported migration slice is real: a local Docker build context or
@@ -70,10 +215,93 @@ Open evidence and ownership work:
   installation, replaces lossy comma-separated environment transport with
   JSON, checks child health before every invoke, makes verification migration
   aware, and adds an EBA runbook.
-- No live migration deployment has yet been accepted as evidence. The next
-  gate is an isolated rehearsal under a unique project/environment in the
-  authorized development account, followed by live invoke, observability,
-  rollback, and cleanup evidence.
+- The isolated live rehearsal is now accepted for the supported fixture path;
+  see the evidence below. A real customer source, its acceptance tests, and
+  external trigger/network cutover remain customer-specific gates.
+
+### 2026-09-21 — migration adapter/runtime hardening
+
+- The CodeBuild migration path now captures the source image's `Config.User`
+  and passes it into the adapter build. Adapter dependencies install as root,
+  then the final image restores that source user before startup. The included
+  rehearsal image declares numeric uid/gid `10001:10001`, so the live exercise
+  proves the non-root path rather than the root fallback.
+- Plain migration environment values now travel as a JSON object from the
+  manifest through CDK into the child process. Commas and equals signs
+  round-trip without corruption; malformed or non-string JSON fails before
+  the customer process starts. Declared Secrets Manager values retain final
+  precedence.
+- The adapter checks both the child process and its declared health endpoint
+  before every invocation, using a bounded timeout, and returns a structured
+  unavailable response without forwarding when either is unhealthy.
+  AgentCore's SDK-owned `/ping` still reports adapter liveness; the runbook
+  does not represent it as proof of customer-process health.
+- Focused adapter, configuration, and CDK synthesis tests pass. Offline
+  synthesis confirms an arm64 source build, source-user capture, the
+  `CHILD_USER` build argument, JSON runtime environment, and least-privilege
+  migration-secret access.
+
+### 2026-09-21 — migration-aware verification and EBA runbook
+
+- Configuration-aware verification now ignores `agents.pattern` for a
+  migration runtime and performs a basic AgentCore invocation against the
+  customer image instead of demanding an accelerator-specific Code
+  Interpreter tool or AG-UI protocol.
+- Transport success is insufficient: the invoke verifier decodes raw JSON or
+  JSON SSE events and fails when the adapter reports an application error or
+  4xx/5xx-style child status inside an HTTP-success Runtime response.
+- `docs/MIGRATION_RUNBOOK.md` defines the supported arm64
+  AgentCore-plus-adapter path, isolated rehearsal setup, stdin-only secret
+  ingestion, external connectivity/event prerequisites, plan/build/verify
+  flow, customer tests, cutover/rollback, cleanup, and an evidence checklist.
+- The first isolated rehearsal preflight exposed two design-time UX defects:
+  bare YAML `web_search: off` was parsed as boolean and rejected, and a
+  schema-valid 34-character project/environment prefix exceeded downstream
+  Memory strategy and Logs delivery name limits. Bare `on`/`off` now retain
+  their intended enum meaning, and prefixes over 30 characters fail during
+  Design with the affected service limits named.
+- The same rehearsal showed that the embedded Design view removed the
+  migration plan's final line when there were no migration warnings. The plan
+  now trims only the blank separator before an actual warnings section and
+  retains final environment/prerequisite details.
+- The aborted long-prefix run reached only an empty Auth change-set shell in
+  `REVIEW_IN_PROGRESS`; it was deleted immediately. No rehearsal resource was
+  created and the existing workshop environment was untouched.
+
+### 2026-09-21 — isolated migration live rehearsal
+
+- The rehearsal used a unique `ac-migration/eba` footprint in the authorized
+  development account, Cognito identity, no customer secrets, and the included
+  non-root EC2-agent fixture. The existing `agentcore-workshop-dev` environment
+  was never selected or modified.
+- The first runtime build failed before Runtime creation because an unquoted
+  buildspec status message contained shell-significant parentheses.
+  CloudFormation rolled the isolated Runtime stack back to
+  `ROLLBACK_COMPLETE`; the other completed rehearsal stacks remained healthy.
+- The status message is now quoted, and a synthesis regression parses every
+  generated migration build command with `bash -n`. The retry built the
+  arm64 source and adapter images and deployed all six stacks to
+  `CREATE_COMPLETE`.
+- Live control-plane evidence showed the Runtime `READY`, with
+  `MIGRATION_ENV_JSON` present and the legacy `MIGRATION_ENV` channel absent.
+  CodeBuild recorded that source uid/gid `10001:10001` was preserved.
+- `deploy.sh verify` passed all five checks: brokered identity, Gateway
+  discovery/tool invocation, Memory API behavior, active log/trace delivery,
+  and a successful migrated-runtime invocation. The strict invoke parser
+  accepted the source response rather than only the transport status.
+- No real traffic was cut over because the rehearsal used a local fixture and
+  no external event source. Failure rollback was exercised by the first build,
+  and the successful footprint was then destroyed in dependency order.
+  A residue audit confirmed no matching stacks, ECR repository, SSM
+  parameters, or Cognito pool. Five service-created test log groups were
+  explicitly deleted and a final prefix check returned none.
+- That residue exposed a cleanup gap: full destroy did not discover log groups
+  created implicitly by CodeBuild and Lambda. Non-production full-footprint
+  cleanup now lists exact-prefix service log groups and applies the existing
+  ask/`--yes` policy; production mode preserves retained logs.
+- Final local evidence: 451 repository tests pass, deployment-config checks
+  pass, focused Ruff/formatting and shell syntax pass, and Git diff whitespace
+  validation passes.
 
 ### 2026-09-20 — live evidence run exposed an unbound deployment account
 
@@ -277,8 +505,12 @@ content-addressed asset-key shape. Security findings fail the job.
   memory recall, or searchable trace correlation.
 - The live demo runbook records a broken memory demonstration caused by the
   wrong runtime image and silent degradation.
-- A real Entra authorization-code sign-in has not been tested because the
-  authorized tenant has no `AgentCore Accelerator` app registration.
+- The real Entra authorization-code callback still needs the account holder's
+  physical passkey interaction; redirect and assigned-user challenge evidence
+  do not prove a completed sign-in.
+- Migration of a real customer image still requires customer acceptance tests,
+  load/error-path evidence, and an externally owned network, trigger, cutover,
+  and traffic-rollback plan. The accelerator does not provision those systems.
 - Production mode, data classification, threat model, retained resources,
   recovery objectives, least-privilege negative tests, and operational
   ownership remain future gates in the production-readiness plan.
@@ -550,3 +782,20 @@ Never copy credential values into this file.
 - Pull request:
   [#78 — Automate runtime observability handoff](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/78)
 - PR #78 merged to `main` on 2026-09-20.
+- `3b32ec3` — `Record final live verification evidence`
+- Pull request:
+  [#79 — Close live runtime verification gaps](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/79)
+- PR #79 merged to `main` on 2026-09-20.
+- `e81f680` — `Make migration planning fail closed`
+- Pull request:
+  [#80 — Make migration planning fail closed](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/80)
+- `a682dc5` — `Harden the migration adapter runtime`
+- Stacked pull request:
+  [#81 — Harden the migration adapter runtime](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/81)
+- `e6dae9b` — `Add migration verification and EBA runbook`
+- `97ea143` — `Fail fast on generated resource name limits`
+- `1eaa1bd` — `Fix migration source image build syntax`
+- Stacked pull request:
+  [#82 — Add migration verification and EBA runbook](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/82)
+- Roll-up pull request:
+  [#87 — Land migration hardening stack onto main](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/87)

@@ -32,6 +32,9 @@ fi
 #   ./deploy.sh export
 #   ./deploy.sh config [--reset]
 #   ./deploy.sh migrate plan [--profile PROFILE]
+#   ./deploy.sh migrate readiness
+#   ./deploy.sh migrate data plan|readiness
+#   ./deploy.sh migrate cutover plan|readiness
 #   ./deploy.sh design [--profile PROFILE]    # Design: manifest + plan, nothing deployed
 #   ./deploy.sh build                          # Build:  = deploy
 #   ./deploy.sh usecase new NAME | list        # Build:  scaffold a use case
@@ -162,6 +165,11 @@ if [ -n "$PRESCAN_PROFILE" ] && [ "${1:-}" != "config" ] && [ "$PRESCAN_DRY" != 
             exit 1
         }
         log_info "Profile '$PRESCAN_PROFILE' selected for read-only migration planning"
+    elif [ "${1:-}" = "migrate" ]; then
+        # Readiness evaluates the operator's completed manifest. It must not
+        # materialize a template over that file; the parser below rejects
+        # --profile for every migrate sub-action except plan.
+        :
     else
         materialize_preset "$PRESCAN_PROFILE"
     fi
@@ -830,7 +838,7 @@ confirm_footprint() {
 # NON_INTERACTIVE without --yes → report and leave (CI must not remove things
 # the config does not declare without being told explicitly).
 sweep_leftovers() {
-    local confirm="ask" ans s
+    local confirm="ask" ans s log_prefix log_group service_logs
     [ "${YES:-0}" = "1" ] && confirm="yes"
     [ "$confirm" = "ask" ] && [ "${NON_INTERACTIVE:-0}" = "1" ] && confirm="no"
 
@@ -882,6 +890,43 @@ sweep_leftovers() {
                     && log_info "Deleted secret: $s" \
                     || log_error "Could not delete secret $s"
             done
+        fi
+    fi
+
+    # CodeBuild and Lambda create their own log groups on first use. Those
+    # groups are not CloudFormation resources, so deleting every stack still
+    # leaves them behind. Production logs are retained evidence by design;
+    # disposable workshop/migration environments use the same explicit
+    # confirmation policy as the other sweep categories.
+    if [ "${DEPLOYMENT_MODE:-workshop}" != "production" ]; then
+        service_logs=$(
+            for log_prefix in \
+                "/aws/codebuild/${PREFIX}-" \
+                "/aws/lambda/${PREFIX}-"; do
+                aws logs describe-log-groups \
+                    --log-group-name-prefix "$log_prefix" \
+                    --query "logGroups[].logGroupName" \
+                    --output text --region "$AWS_REGION" 2>/dev/null \
+                    | tr '\t' '\n' | grep -v '^None$' | grep . || true
+            done | sort -u
+        )
+        if [ -n "$service_logs" ]; then
+            log_warn "Service-created log groups left after destroy:"
+            echo "$service_logs" | sed 's/^/    /'
+            ans="n"
+            case "$confirm" in
+                yes) ans="y" ;;
+                ask) read -rp "Delete these log groups? [y/N]: " ans ;;
+                no)  log_warn "Leaving them (NON_INTERACTIVE without --yes)." ;;
+            esac
+            if [[ "$ans" =~ ^[Yy] ]]; then
+                while IFS= read -r log_group; do
+                    aws logs delete-log-group --log-group-name "$log_group" \
+                        --region "$AWS_REGION" \
+                        && log_info "Deleted log group: $log_group" \
+                        || log_error "Could not delete log group $log_group"
+                done <<< "$service_logs"
+            fi
         fi
     fi
 
@@ -1615,6 +1660,47 @@ migrate_plan() {
     done
 }
 
+migrate_readiness() {
+    # Configuration-only cutover gate. A target may be safely deployed while
+    # this returns non-zero; customer traffic must not move until it returns 0.
+    local py
+    if [ ! -f "$PLATFORM_CONFIG" ]; then
+        log_error "No $PLATFORM_CONFIG — migrate readiness reads the migration: block."
+        exit 1
+    fi
+    py="$PROJECT_DIR/.venv/bin/python"; [ -x "$py" ] || py="python3"
+    (cd "$PROJECT_DIR" && "$py" -m infra_utils.platform_config \
+        --readiness --effective-env "$PLATFORM_CONFIG")
+}
+
+migrate_data_check() {
+    # Source-specific data movement never rides inside CDK deployment. These
+    # commands only render and validate the versioned plan.
+    local mode="$1" py flag="--data-plan"
+    if [ ! -f "$PLATFORM_CONFIG" ]; then
+        log_error "No $PLATFORM_CONFIG — migrate data reads the migration: block."
+        exit 1
+    fi
+    [ "$mode" = "readiness" ] && flag="--data-readiness"
+    py="$PROJECT_DIR/.venv/bin/python"; [ -x "$py" ] || py="python3"
+    (cd "$PROJECT_DIR" && "$py" -m infra_utils.platform_config \
+        "$flag" --effective-env "$PLATFORM_CONFIG")
+}
+
+migrate_cutover_check() {
+    # Renders and validates an external event/traffic procedure. It never
+    # changes a trigger, queue, schedule, webhook, or router.
+    local mode="$1" py flag="--cutover-plan"
+    if [ ! -f "$PLATFORM_CONFIG" ]; then
+        log_error "No $PLATFORM_CONFIG — migrate cutover reads the migration: block."
+        exit 1
+    fi
+    [ "$mode" = "readiness" ] && flag="--cutover-readiness"
+    py="$PROJECT_DIR/.venv/bin/python"; [ -x "$py" ] || py="python3"
+    (cd "$PROJECT_DIR" && "$py" -m infra_utils.platform_config \
+        "$flag" --effective-env "$PLATFORM_CONFIG")
+}
+
 # ═══════════════════════════════════════════════════════════════
 # Deploy Summary (Requirement 2.5)
 # ═══════════════════════════════════════════════════════════════
@@ -1876,23 +1962,59 @@ fi
 # ── 'build' is 'deploy' by its Design → Build → Verify name ──
 [ "$ACTION" = "build" ] && ACTION="deploy"
 
-# ── 'migrate' action: plan only, before any prerequisite/credential gate ──
-# Read-only by construction (see migrate_plan), so it takes no --yes. Fails
-# closed on anything but `plan`; --profile is accepted because the pre-scan
-# has already materialized it as the manifest.
+# ── 'migrate' actions: read-only, before any prerequisite/credential gate ──
+# They take no --yes. `readiness` intentionally exits non-zero until every
+# in-scope gate is approved and an external traffic cutover is requested.
 if [ "$ACTION" = "migrate" ]; then
     MIGRATE_SUB="${1:-}"; shift || true
+    MIGRATE_DATA_SUB=""
+    MIGRATE_CUTOVER_SUB=""
+    if [ "$MIGRATE_SUB" = "data" ]; then
+        MIGRATE_DATA_SUB="${1:-}"
+        shift || true
+    elif [ "$MIGRATE_SUB" = "cutover" ]; then
+        MIGRATE_CUTOVER_SUB="${1:-}"
+        shift || true
+    fi
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --profile) require_flag_value "--profile" "$#"; shift 2 ;;
-            *) log_error "Unknown option for migrate: '$1' (valid: --profile PROFILE)"; exit 1 ;;
+            --profile)
+                require_flag_value "--profile" "$#"
+                if [ "$MIGRATE_SUB" != "plan" ]; then
+                    log_error "--profile is only valid for 'migrate plan'; readiness requires your completed platform.yaml"
+                    exit 1
+                fi
+                shift 2
+                ;;
+            *) log_error "Unknown option for migrate: '$1' (valid for plan: --profile PROFILE)"; exit 1 ;;
         esac
     done
-    if [ "$MIGRATE_SUB" != "plan" ]; then
-        log_error "Unknown migrate sub-action: '${MIGRATE_SUB:-(none)}'. Usage: $0 migrate plan [--profile PROFILE]"
-        exit 1
-    fi
-    migrate_plan
+    case "$MIGRATE_SUB" in
+        plan) migrate_plan ;;
+        readiness) migrate_readiness ;;
+        data)
+            case "$MIGRATE_DATA_SUB" in
+                plan|readiness) migrate_data_check "$MIGRATE_DATA_SUB" ;;
+                *)
+                    log_error "Unknown migrate data sub-action: '${MIGRATE_DATA_SUB:-(none)}'. Usage: $0 migrate data plan | readiness"
+                    exit 1
+                    ;;
+            esac
+            ;;
+        cutover)
+            case "$MIGRATE_CUTOVER_SUB" in
+                plan|readiness) migrate_cutover_check "$MIGRATE_CUTOVER_SUB" ;;
+                *)
+                    log_error "Unknown migrate cutover sub-action: '${MIGRATE_CUTOVER_SUB:-(none)}'. Usage: $0 migrate cutover plan | readiness"
+                    exit 1
+                    ;;
+            esac
+            ;;
+        *)
+            log_error "Unknown migrate sub-action: '${MIGRATE_SUB:-(none)}'. Usage: $0 migrate plan [--profile PROFILE] | readiness | data plan | data readiness | cutover plan | cutover readiness"
+            exit 1
+            ;;
+    esac
     exit 0
 fi
 
@@ -2154,7 +2276,12 @@ case "$ACTION" in
         echo "  usecase new NAME   Scaffold use-cases/NAME/ and enable it in platform.yaml; usecase list"
         echo "  workshop           Guided module-by-module deploy: explain → deploy → verify → pause"
         echo "  verify             Run every check this configuration promises; non-zero on failure"
-        echo "  migrate plan       Print the migration: plan (source → target, adapter mapping, secrets); read-only"
+        echo "  migrate plan       Print the migration plan; read-only"
+        echo "  migrate readiness  Fail-closed evidence gate before customer traffic moves; read-only"
+        echo "  migrate data plan  Print the canonical data plan and digest; read-only"
+        echo "  migrate data readiness  Check data/network evidence against that digest; read-only"
+        echo "  migrate cutover plan  Print trigger/traffic plans and digests; read-only"
+        echo "  migrate cutover readiness  Fail closed until every cutover gate matches its digest"
         echo "  config             Show saved answers (workshop.env)"
         echo "  config --reset     Delete saved answers and start fresh"
         echo ""
