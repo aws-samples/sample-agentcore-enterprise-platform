@@ -15,7 +15,7 @@ The following are not automatically changed by this migration path:
 
 - ECS-on-EC2 or amd64-only targets
 - native mode without the adapter
-- creation of VPN, Transit Gateway, private DNS, or private CA integration
+- creation of VPN, Transit Gateway, private DNS, or private CA infrastructure
 - customer data, webhook, scheduler, queue, or traffic-router changes
 
 The manifest can explicitly put data copy, trigger shadowing, and canary
@@ -180,6 +180,14 @@ cutover gate:
 The command exits non-zero while traffic strategy is `none` or any enabled
 stage lacks its evidence. A non-zero result does not prevent a safe
 target-only rehearsal; it prevents treating that rehearsal as cutover-ready.
+
+When `migration.network.private_dependencies` is non-empty, the networking
+stack adds a fixed allow-list probe in the runtime's private subnets and
+security group. `verify` requires DNS resolution and a hostname-verified TLS
+connection on port 443 for every declared host. If
+`ca_bundle_secret_name` is set, the probe reads that exact Secrets Manager
+secret in memory as an additional trust bundle. It does not log addresses,
+certificates, exception text, bundle contents, or customer payloads.
 
 For a migration, verification performs a real basic invocation against the
 migrated AgentCore runtime. It deliberately does not require accelerator

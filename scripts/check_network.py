@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify the deployment's network claim: are the agents actually in the VPC?
 
-Two checks, both against live resources:
+Three checks, all against live resources:
 
   1. The networking stack's private subnets sit in Availability Zones where
      AgentCore can place network interfaces. AZ *names* map to different AZ
@@ -10,6 +10,9 @@ Two checks, both against live resources:
   2. Every deployed runtime reports networkMode VPC with those subnets. This is
      the check that would have caught the original defect, where the VPC was
      built and every agent still ran on public networking.
+  3. For a migration with private dependencies, a fixed allow-list Lambda in
+     the same subnets and security group resolves each hostname and completes
+     a hostname-verified TLS handshake on port 443.
 
 Exit code 0 = the deployment matches its claim. Run it after the networking
 module (module C) and after the runtimes are deployed.
@@ -20,19 +23,29 @@ Usage:
 """
 
 import argparse
+import json
+import os
 import sys
 from pathlib import Path
 
 import boto3
+from botocore.exceptions import ClientError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from utils import get_ssm_param, get_ssm_prefix
 
-from infra_utils.platform_config import resolve_region
+from infra_utils.platform_config import load_platform_config, resolve_region
 from infra_utils.runtime_network import SUPPORTED_ZONE_IDS, unsupported_zone_ids
 
 REGION = resolve_region()
+DEPENDENCY_STATUSES = {
+    "PASS",
+    "DNS_FAILED",
+    "CONNECT_TIMEOUT",
+    "CONNECT_FAILED",
+    "TLS_FAILED",
+}
 
 
 def fail(message: str) -> None:
@@ -118,6 +131,89 @@ def check_runtime_placement(subnet_ids: list[str], expect_public: bool) -> None:
         fail("no runtimes found in SSM — deploy a runtime stack first")
 
 
+def configured_private_dependencies() -> list[str]:
+    value = os.environ.get("MIGRATION_PRIVATE_DEPENDENCIES")
+    if value is not None:
+        return [host.strip() for host in value.split(",") if host.strip()]
+
+    manifest = Path(
+        os.environ.get(
+            "PLATFORM_CONFIG", Path(__file__).resolve().parents[1] / "platform.yaml"
+        )
+    )
+    if not manifest.exists():
+        return []
+    try:
+        config = load_platform_config(manifest)
+    except Exception:  # noqa: BLE001 — validation reports detail in deploy/design
+        fail("cannot validate private dependencies because platform.yaml is invalid")
+    if config.migration is None:
+        return []
+    return config.migration.network.private_dependencies
+
+
+def check_private_dependencies() -> None:
+    """Invoke the fixed allow-list probe from the runtime VPC."""
+    expected = configured_private_dependencies()
+    if not expected:
+        return
+
+    parameter_name = f"{get_ssm_prefix()}/networking/migration-dependency-probe-name"
+    ssm = boto3.client("ssm", region_name=REGION)
+    try:
+        function_name = ssm.get_parameter(Name=parameter_name)["Parameter"]["Value"]
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "ParameterNotFound":
+            fail(
+                "private dependencies are configured but the network probe is "
+                "missing — redeploy the networking stack"
+            )
+        fail("could not read the migration network-probe parameter")
+
+    try:
+        response = boto3.client("lambda", region_name=REGION).invoke(
+            FunctionName=function_name,
+            InvocationType="RequestResponse",
+            Payload=b"{}",
+        )
+    except ClientError:
+        fail("could not invoke the migration dependency probe")
+    if response.get("FunctionError"):
+        fail("migration dependency probe failed; inspect its protected Lambda logs")
+    try:
+        payload = json.loads(response["Payload"].read())
+    except (KeyError, TypeError, ValueError):
+        fail("migration dependency probe returned an invalid response")
+
+    if payload.get("configurationError"):
+        fail(
+            "migration dependency probe could not load the declared CA bundle; "
+            "check its secret and IAM policy"
+        )
+    results = payload.get("results")
+    if not isinstance(results, list):
+        fail("migration dependency probe returned no result list")
+    by_host = {
+        item.get("host"): item.get("status")
+        for item in results
+        if isinstance(item, dict)
+    }
+    if set(by_host) != set(expected):
+        fail("migration dependency probe result does not match the manifest allow-list")
+
+    failed = False
+    for host in expected:
+        status = by_host[host]
+        safe_status = status if status in DEPENDENCY_STATUSES else "UNKNOWN"
+        if safe_status == "PASS":
+            print(f"PASS: {host} resolves and accepts a trusted TLS connection")
+        else:
+            failed = True
+            print(f"FAIL: {host}: {safe_status}", file=sys.stderr)
+    if failed or payload.get("ok") is not True:
+        fail("one or more migration private dependencies are unreachable")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Verify runtime network placement")
     parser.add_argument(
@@ -132,6 +228,7 @@ def main() -> None:
         check_runtime_placement([], expect_public=True)
     else:
         check_runtime_placement(check_subnet_zones(), expect_public=False)
+        check_private_dependencies()
     print("OK: network placement matches the deployment's claim")
 
 

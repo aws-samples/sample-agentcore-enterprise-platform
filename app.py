@@ -193,6 +193,8 @@ orchestrator_runtime_generation = int(
 # to_env(); the stack args mirror them 1:1.
 migration_enabled = cfg("migration_enabled", "MIGRATION_ENABLED", "false") == "true"
 migration_kwargs: dict = {}
+migration_private_dependencies: list[str] = []
+migration_ca_bundle_secret_name = ""
 if migration_enabled:
     _migration_target_runtime = cfg(
         "migration_target_runtime", "MIGRATION_TARGET_RUNTIME", "agentcore"
@@ -258,6 +260,20 @@ if migration_enabled:
             "migration_health_path", "MIGRATION_HEALTH_PATH", ""
         ),
     }
+    migration_private_dependencies = [
+        host.strip()
+        for host in cfg(
+            "migration_private_dependencies",
+            "MIGRATION_PRIVATE_DEPENDENCIES",
+            "",
+        ).split(",")
+        if host.strip()
+    ]
+    migration_ca_bundle_secret_name = cfg(
+        "migration_ca_bundle_secret_name",
+        "MIGRATION_CA_BUNDLE_SECRET_NAME",
+        "",
+    )
     if not (migration_kwargs["source_image"] or migration_kwargs["build_context"]):
         raise ValueError(
             "migration is enabled but neither migration_source_image nor "
@@ -387,6 +403,10 @@ if enable_networking:
         environment=env_name,
         enable_vpc_endpoints=True,
         org_id=org_id,
+        migration_private_dependencies=migration_private_dependencies,
+        migration_ca_bundle_secret_name=migration_ca_bundle_secret_name,
+        log_retention_days=log_retention_days,
+        retain_data=production_mode,
         env=cdk_env,
     )
 

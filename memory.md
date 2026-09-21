@@ -15,11 +15,12 @@ operational readiness review.
 
 **G1 — production design baseline merged; migration EBA path live-validated**
 
-Branch: `feat/migration-readiness-gates`
+Branch: `feat/migration-network-probe`
 
 G0 merged through PR #79. G1 implementation merged through PR #76. Migration
 hardening is split across stacked PRs #80, #81, and #82. The migration
-readiness work continues on a branch stacked after #82.
+readiness gate is in PR #83; private-dependency validation continues on a
+branch stacked after #83.
 
 - [x] Add explicit `workshop` and `production` deployment modes.
 - [x] Add a production preset that requires enterprise identity, networking,
@@ -78,6 +79,33 @@ Open evidence and ownership work:
   syntheses, deployment configuration and workshop-flow checks, changed-file
   Python lint/format, ShellCheck, generated-reference drift, shell syntax, and
   diff whitespace validation.
+
+### 2026-09-21 — migration private-dependency probe
+
+- A migration with `network.private_dependencies` now synthesizes a bounded
+  Lambda probe in the runtime's private subnets and reuses the runtime security
+  group. A migration with no private dependencies creates no probe resource.
+- The invocation payload is ignored, so a caller cannot choose an arbitrary
+  destination and turn the function into a VPC-side SSRF tool. Up to 25 unique
+  manifest hostnames are baked into the function configuration, with a
+  3,000-byte aggregate limit below Lambda's environment ceiling.
+- Each check performs DNS resolution and a hostname-verified TLS handshake on
+  port 443. Results contain only the declared hostname and a fixed status code;
+  private addresses, certificate contents, exception text, customer payloads,
+  and credentials are not logged or returned.
+- An optional private CA bundle is read in memory from the exact declared
+  Secrets Manager name through scoped IAM. The function adds a Secrets Manager
+  VPC endpoint only when that bundle is configured and never injects the
+  bundle into the customer image.
+- `check_network.py`, and therefore configuration-aware `verify`, fails if the
+  probe is missing, its result host set differs from the manifest, its CA
+  cannot be loaded, or any dependency fails DNS/connect/TLS. A green probe is
+  runtime-network evidence; the separate owner/approver readiness gate still
+  controls cutover.
+- Evidence passes: 468 repository tests, all 12 deployment-contract syntheses
+  including a private-dependency migration footprint, changed-file Python
+  lint/format, generated-reference parity, ShellCheck, and diff whitespace
+  checks.
 
 ### 2026-09-21 — migration profile implementation audit
 
