@@ -52,6 +52,7 @@ Open evidence and ownership work:
 
 ### 2026-09-21 — capability-oriented repository structure
 
+- Review: [PR #93 — Organize the repository by capability](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/93).
 - The repository now follows an explicit capability-oriented monorepo
   protocol documented in `docs/REPOSITORY_STRUCTURE.md`: placement rules,
   dependency direction, extension contracts, and a required verification
