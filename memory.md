@@ -50,6 +50,41 @@ Open evidence and ownership work:
 - [ ] Populate, review, and approve the five G1 governance artifacts for the
   specific customer; draft templates and green synthesis do not close G1.
 
+### 2026-09-21 — capability-oriented repository structure
+
+- The repository now follows an explicit capability-oriented monorepo
+  protocol documented in `docs/REPOSITORY_STRUCTURE.md`: placement rules,
+  dependency direction, extension contracts, and a required verification
+  sequence for structural changes.
+- Migration adapter, private-dependency probe, and EBA simulation files are
+  consolidated under `migration/`. Organization guardrail Terraform is
+  colocated with its policy source under
+  `control-library/terraform/org-guardrails/`.
+- Deployment configuration keys, CloudFormation stack/resource names, runtime
+  behavior, and public interfaces are unchanged. Existing migration manifests
+  that reference `workshop-simulation` are normalized to the new path with a
+  visible upgrade warning.
+- A deprecated top-level `terraform` symlink preserves existing
+  `terraform/org-guardrails` module source references. New consumers use the
+  capability path; the alias may be removed only in a declared breaking
+  release.
+- `scripts/check_repository_structure.py` rejects unregistered capability
+  roots, restored legacy directories, missing agent image contracts, broken
+  compatibility links, and prohibited runtime-to-infrastructure imports. It
+  runs in the repository/documentation integrity workflow on every pull
+  request and is covered by focused tests.
+- GitLab now lints migration Dockerfiles and runs CDK synthesis for
+  migration-only changes. GitHub and GitLab Terraform jobs validate the
+  relocated module.
+- Evidence passes: 536 repository tests; every preset and contract fixture
+  matches CDK synthesis; Terraform formatting and validation through both the
+  new and compatibility paths; shell/deploy/workshop checks; repository and
+  documentation integrity; generated-reference drift; Ruff check/format; and
+  diff whitespace.
+- No AWS resource, secret, customer system, data path, trigger, network, or
+  traffic was changed. Terraform initialization downloaded a provider only;
+  no plan or apply ran.
+
 ### 2026-09-21 — guarded EBA Console MVP
 
 - The existing deployment monitor is now presented as an EBA Console using

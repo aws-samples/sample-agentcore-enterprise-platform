@@ -8,7 +8,6 @@ on:
       - 'infra_utils/policy_loader.py'
       - 'scripts/validate_control_library.py'
       - 'tests/**'
-      - 'terraform/**'
   pull_request:
     branches: [ main ]
     paths:
@@ -16,7 +15,6 @@ on:
       - 'infra_utils/policy_loader.py'
       - 'scripts/validate_control_library.py'
       - 'tests/**'
-      - 'terraform/**'
 
 permissions:
   contents: read
@@ -52,10 +50,10 @@ jobs:
         uses: hashicorp/setup-terraform@v4
 
       - name: Terraform fmt check
-        run: terraform fmt -check -recursive terraform/
+        run: terraform fmt -check -recursive control-library/terraform/
 
       - name: Terraform validate (org-guardrails)
-        working-directory: terraform/org-guardrails
+        working-directory: control-library/terraform/org-guardrails
         run: |
           terraform init -backend=false -input=false
           terraform validate

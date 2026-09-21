@@ -96,7 +96,7 @@ orchestrator and research-agent runtimes, whose
   `bedrock-agentcore-identity!default/oauth2/*`. Without it, gateway tool
   loading fails and takes the whole agent invocation down with it.
 - The unverified-userId token path (`GetWorkloadAccessTokenForUserId`) is
-  denied by an org-level SCP in `terraform/org-guardrails`, not by this stack
+  denied by an org-level SCP in `control-library/terraform/org-guardrails`, not by this stack
   — see [Security controls](../SECURITY_CONTROLS.md).
 
 ## Verification

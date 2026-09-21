@@ -1,6 +1,6 @@
 # Distributed: every team or workload account runs its own full copy of the
 # platform from this one file — auth, gateway, runtimes, all of it. Nothing is
-# shared between accounts; organisation-wide guardrails (terraform/org-guardrails)
+# shared between accounts; organisation-wide guardrails (control-library/terraform/org-guardrails)
 # are what keep the copies consistent. Pick this when teams must not depend on
 # each other's uptime or change windows. See docs/MULTI_ACCOUNT.md.
 # Modules: 3 4 5 6 9

@@ -67,7 +67,7 @@ other stacks, each behind its own flag:
 | Model allow-list (runtime role Bedrock IAM scoped to `agents.allowed_models`) | `allowed_models` | `runtime-*` stacks | [runtime.md](runtime.md) |
 | Traceability (SNS + EventBridge alerting on sensitive API calls) | `enable_traceability` | `observability` stack | [observability.md](observability.md) |
 | VPC endpoint policy (org-scoped, SigV4 callers only) | `enable_networking` + `org_id` | `networking` stack | [networking.md](networking.md) |
-| Org-level SCPs (Memory CMK, gateway hardening, identity token path) | Terraform variables | `terraform/org-guardrails/` | [Security controls](../SECURITY_CONTROLS.md) |
+| Org-level SCPs (Memory CMK, gateway hardening, identity token path) | Terraform variables | `control-library/terraform/org-guardrails/` | [Security controls](../SECURITY_CONTROLS.md) |
 
 All of them source their policy bodies from `control-library/` (indexed by
 `catalog.yaml`), authored once as valid JSON/Cedar and consumed by CDK

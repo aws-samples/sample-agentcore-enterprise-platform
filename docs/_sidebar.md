@@ -24,6 +24,7 @@ Build
 - [Security](modules/security.md)
 - [Networking](modules/networking.md)
 - [Choose an agent framework](https://github.com/aws-samples/sample-agentcore-enterprise-platform#choose-an-agent-framework)
+- [Repository structure](REPOSITORY_STRUCTURE.md)
 - [Add gateway tools](GATEWAY_TARGETS.md)
 - [Build a use case](PLATFORM_INTERFACE.md)
 

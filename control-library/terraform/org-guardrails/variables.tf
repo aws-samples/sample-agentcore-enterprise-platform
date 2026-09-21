@@ -10,7 +10,7 @@ variable "control_library_path" {
     and the CDK app read the same raw policy files from there (single source of truth).
   EOT
   type        = string
-  default     = "../../control-library"
+  default     = "../.."
 }
 
 variable "target_ids" {

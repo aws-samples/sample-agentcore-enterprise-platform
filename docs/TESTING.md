@@ -4,7 +4,7 @@ How to test the security controls in this repo:
 
 - `control-library/` — IaC-agnostic control definitions + `catalog.yaml`
 - `infra_utils/policy_loader.py` — loads/parameterizes controls
-- **Item 1 (SCP):** CMK-for-Memory SCP applied via `terraform/org-guardrails/`
+- **Item 1 (SCP):** CMK-for-Memory SCP applied via `control-library/terraform/org-guardrails/`
 - **Item 4 (resource policy):** Memory in-account-only resource policy (`enable_resource_policies`)
 - **Items 5+6 (Guardrails + interceptor):** egress Lambda interceptor + Bedrock Guardrail
   on the Gateway (`enable_egress_filter`)
@@ -84,14 +84,14 @@ make test-controls
 ### A4. CMK-for-Memory SCP via Terraform (item 1)
 
 ```bash
-cd terraform/org-guardrails
+cd control-library/terraform/org-guardrails
 terraform fmt -check -recursive .
 terraform init -backend=false
 terraform validate                    # → Success! The configuration is valid.
 
 # Confirm the SCP renders from the shared control-library file (no leftover <<sentinel>>):
 printf 'local.cmk_scp_rendered\n' | terraform console
-cd ../..
+cd ../../..
 ```
 
 Expect the printed policy to contain `"bedrock-agentcore:CreateMemory"` and the resolved
@@ -104,7 +104,7 @@ The 8 gateway controls are rendered individually from the control-library
 (`local.gateway_scp_consolidated`) to fit the 5-SCPs-per-target Organizations quota.
 
 ```bash
-cd terraform/org-guardrails
+cd control-library/terraform/org-guardrails
 terraform init -backend=false
 terraform validate
 
@@ -119,7 +119,7 @@ printf 'local.gateway_scp_rendered["require-cmk"]\n' | terraform console | grep 
 printf 'local.gateway_scp_statements[*].Sid\n' | terraform console                                         # → 10 unique Sids (require-cmk and require-policy-engine carry 2 each)
 printf 'local.gateway_scp_consolidated\n' | terraform console | grep -c '<<'                               # → 0 (no unresolved <<sentinel>> tokens)
 printf 'length(local.gateway_scp_consolidated)\n' | terraform console                                      # → < 5120
-cd ../..
+cd ../../..
 ```
 
 These SCPs use **control-plane** condition keys only: they constrain how a gateway may be
@@ -132,7 +132,7 @@ shipped default must exempt nobody. The exemption param defaults to a role ARN t
 exist, which makes the control a blanket deny until an operator supplies a real pattern.
 
 ```bash
-cd terraform/org-guardrails
+cd control-library/terraform/org-guardrails
 terraform init -backend=false
 terraform validate
 
@@ -154,7 +154,7 @@ printf 'contains(local.gateway_scp_statements[*].Sid, "DenyWorkloadTokenForUserI
 # (5-per-target limit minus FullAWSAccess). This mirrors the attachments_per_target output.
 printf '(var.enable_scp_memory_enforce_cmk ? 1 : 0) + (var.enable_gateway_scps ? 1 : 0) + (var.enable_scp_identity_deny_token_for_userid ? 1 : 0)\n' \
   | terraform console $VARS                                                                      # → 3
-cd ../..
+cd ../../..
 ```
 
 The matching `iam.identity-credential-provider-scoped` reference policy is covered by the
@@ -370,8 +370,8 @@ with `CEDAR_MODE=ENFORCE` to actively block.
 ### B4. Verify the CMK SCP (item 1) — management account
 
 ```bash
-cd terraform/org-guardrails
-terraform apply -var 'target_ids=["ou-abcd-1234wxyz"]'
+terraform -chdir=control-library/terraform/org-guardrails apply \
+  -var 'target_ids=["ou-abcd-1234wxyz"]'
 ```
 
 Then, from a member account under that OU, attempt `CreateMemory` **without** a KMS key —
@@ -404,7 +404,7 @@ aws events list-rules --name-prefix agentcore-workshop-dev-agentcore-sensitive
 
 ```bash
 ./scripts/deploy.sh destroy --profile security-focused
-cd terraform/org-guardrails && terraform destroy && cd ../..
+terraform -chdir=control-library/terraform/org-guardrails destroy
 ```
 
 ---

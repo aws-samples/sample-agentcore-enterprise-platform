@@ -23,7 +23,7 @@ ENV = cdk.Environment(account="111111111111", region="us-east-1")
 
 
 def load_probe():
-    path = REPO / "migration-network-probe" / "handler.py"
+    path = REPO / "migration/network-probe" / "handler.py"
     spec = importlib.util.spec_from_file_location(
         "migration_network_probe_handler", path
     )
@@ -128,7 +128,7 @@ def test_probe_only_uses_declared_hosts_and_returns_no_network_details(
         "results": [{"host": "allowed.internal", "status": "PASS"}],
     }
     assert "address" not in json.dumps(result).lower()
-    source = (REPO / "migration-network-probe" / "handler.py").read_text()
+    source = (REPO / "migration/network-probe" / "handler.py").read_text()
     assert "print(" not in source and "logging." not in source
 
 

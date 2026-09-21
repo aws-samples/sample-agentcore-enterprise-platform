@@ -15,7 +15,7 @@ accounts.
 | **Agent runtimes** | Local | Per-account | Workload accounts only |
 | **Memory** | Local | Per-account | **Per-workload** (see below) |
 | **Observability** | Local | Per-account | Per-account (each monitors what it runs) |
-| **Org guardrails (SCPs)** | n/a | `terraform/org-guardrails`, org-wide | `terraform/org-guardrails`, org-wide |
+| **Org guardrails (SCPs)** | n/a | `control-library/terraform/org-guardrails`, org-wide | `control-library/terraform/org-guardrails`, org-wide |
 | **Choose when** | Workshops, pilots, single team | Strong team autonomy, simple trust | Central tool governance, many agent teams |
 
 **Centralized** is the default and what every workshop module assumes.

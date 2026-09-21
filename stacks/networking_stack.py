@@ -183,7 +183,7 @@ class NetworkingStack(cdk.Stack):
                 runtime=lambda_.Runtime.PYTHON_3_13,
                 architecture=lambda_.Architecture.ARM_64,
                 handler="handler.handler",
-                code=lambda_.Code.from_asset("migration-network-probe"),
+                code=lambda_.Code.from_asset("migration/network-probe"),
                 timeout=cdk.Duration.seconds(60),
                 memory_size=256,
                 vpc=self.vpc,

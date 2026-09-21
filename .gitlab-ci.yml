@@ -91,7 +91,6 @@ control-library:
         - infra_utils/policy_loader.py
         - scripts/validate_control_library.py
         - tests/**/*
-        - terraform/**/*
         - .gitlab-ci.yml
     - if: $CI_COMMIT_BRANCH == "main"
 
@@ -115,10 +114,13 @@ dockerfile-parse:
     - hadolint --failure-threshold error
         --ignore DL3008 --ignore DL3013 --ignore DL3016
         agent-code/*/Dockerfile
+        migration/*/Dockerfile
+        migration/*/*/Dockerfile
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
         - agent-code/**/*
+        - migration/**/*
         - .gitlab-ci.yml
     - if: $CI_COMMIT_BRANCH == "main"
 
@@ -157,6 +159,7 @@ cdk-synth:
         - infra_utils/**/*
         - control-library/**/*
         - agent-code/**/*
+        - migration/**/*
         - tools/**/*
         - presets/**/*
         - scripts/check-contract.sh
@@ -169,13 +172,12 @@ terraform:
     name: public.ecr.aws/hashicorp/terraform:1.9
     entrypoint: [""]
   script:
-    - terraform fmt -check -recursive terraform/
-    - terraform -chdir=terraform/org-guardrails init -backend=false -input=false
-    - terraform -chdir=terraform/org-guardrails validate
+    - terraform fmt -check -recursive control-library/terraform/
+    - terraform -chdir=control-library/terraform/org-guardrails init -backend=false -input=false
+    - terraform -chdir=control-library/terraform/org-guardrails validate
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
-        - terraform/**/*
         - control-library/**/*
         - .gitlab-ci.yml
     - if: $CI_COMMIT_BRANCH == "main"

@@ -9,6 +9,9 @@ Please read through this document before submitting any issues or merge
 requests to ensure we have all the necessary information to effectively
 respond to your bug report or contribution.
 
+Before adding or moving a directory, follow the
+[repository structure and dependency rules](docs/REPOSITORY_STRUCTURE.md).
+
 ## Reporting Bugs/Feature Requests
 
 When filing an issue, please check existing open and recently closed issues to

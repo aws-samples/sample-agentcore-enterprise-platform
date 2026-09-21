@@ -76,7 +76,7 @@ into the orchestrator runtime's environment.
   exists, its KMS key ARN is passed as `encryption_key_arn`; otherwise the
   memory uses the service default. Enforcing CMK-only memory across an
   organization is an SCP (`control-library/scp/memory/enforce-cmk.json`,
-  applied via `terraform/org-guardrails/`), not something this stack does —
+  applied via `control-library/terraform/org-guardrails/`), not something this stack does —
   see [Security controls](../SECURITY_CONTROLS.md) and
   [TESTING.md](../TESTING.md) items B2/B4.
 - The optional resource policy
