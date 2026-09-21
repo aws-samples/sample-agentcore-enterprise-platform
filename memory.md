@@ -71,6 +71,8 @@ Open evidence and ownership work:
 
 ### 2026-09-21 — customer-facing migration documentation remediation
 
+- PR #88 carries the documentation remediation and is stacked on landing PR
+  #87. Merge #87 first, then retarget #88 to `main` before merging it.
 - The homepage and workflow guide now describe the implemented migration path
   precisely: compatible arm64 source/image, adapter, AgentCore Runtime, and
   configuration-aware verification. They no longer claim that migration
@@ -825,3 +827,6 @@ Never copy credential values into this file.
   [#82 — Add migration verification and EBA runbook](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/82)
 - Roll-up pull request:
   [#87 — Land migration hardening stack onto main](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/87)
+- `52b717a` — `Make migration documentation EBA-ready`
+- Stacked pull request:
+  [#88 — Make migration documentation EBA-ready](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/88)
