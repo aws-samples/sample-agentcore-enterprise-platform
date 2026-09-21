@@ -4,19 +4,22 @@
 #   docker build --platform linux/arm64 \
 #     --build-arg SOURCE_IMAGE=<customer image ref or local intermediate tag> \
 #     --build-arg CHILD_CMD='["python","server.py"]' \
+#     --build-arg CHILD_USER='<source image Config.User, or root when empty>' \
 #     -f adapter/Dockerfile adapter/
 #
 # CHILD_CMD is the source image's Entrypoint+Cmd as ONE JSON array, captured
-# with `docker inspect` at build time — the adapter takes over CMD/ENTRYPOINT
-# to serve the AgentCore contract, then runs the original command as a child.
+# with `docker inspect` at build time. CHILD_USER is Config.User from the same
+# inspection, normalized to "root" when empty. The adapter takes over
+# CMD/ENTRYPOINT to serve the AgentCore contract, then runs the original
+# command as a child under that original user.
 # AgentCore Runtime is arm64-only: the source image must have an arm64 variant
 # (or be rebuilt from source via migration.source.build).
 ARG SOURCE_IMAGE
 FROM ${SOURCE_IMAGE}
 
-# Installing python3 + the adapter deps needs root. The child consequently runs
-# as root too, even if the source image dropped privileges — a known deviation,
-# called out in README.md.
+# Installing python3 + the adapter deps needs root. CHILD_USER restores the
+# source image's configured user after installation. The runtime guard in
+# adapter.py refuses to start as root when CHILD_USER declared a non-root user.
 USER root
 
 # Ensure python3 + pip exist regardless of the source image's distro family.
@@ -44,18 +47,16 @@ COPY adapter.py /opt/adapter/adapter.py
 ARG CHILD_CMD
 ENV ADAPTER_CHILD_CMD=${CHILD_CMD}
 
-# Optional private-CA trust for the customer's internal endpoints (Git/Jira
-# behind a private CA). Best effort: the bundle lands where OpenSSL and
-# requests/httpx (via REQUESTS_CA_BUNDLE/SSL_CERT_FILE) both find it.
-ARG CA_BUNDLE_B64=""
-RUN if [ -n "$CA_BUNDLE_B64" ]; then \
-        mkdir -p /usr/local/share/ca-certificates && \
-        echo "$CA_BUNDLE_B64" | base64 -d > /usr/local/share/ca-certificates/migration-ca.crt && \
-        (update-ca-certificates || true); \
-    fi
+ARG CHILD_USER=root
+RUN case "${CHILD_USER}" in \
+        ""|*[!A-Za-z0-9_.:-]*) \
+            echo "ERROR: CHILD_USER must be a user or uid optionally followed by :group/:gid" && exit 1 ;; \
+    esac
+ENV ADAPTER_CHILD_USER=${CHILD_USER}
 
 # The adapter owns the process tree: clear any inherited ENTRYPOINT so CMD is
 # the whole command (otherwise the source image's entrypoint wraps it).
 ENTRYPOINT []
 EXPOSE 8080
+USER ${CHILD_USER}
 CMD ["python3", "/opt/adapter/adapter.py"]
