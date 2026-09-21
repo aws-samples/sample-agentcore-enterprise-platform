@@ -13,9 +13,9 @@ operational readiness review.
 
 ## Current milestone
 
-**v0.1.0 published — customer preflight and honest support boundary**
+**EBA Console MVP — guarded local customer demonstration surface**
 
-Branch: `docs/record-v0.1.0-release`
+Branch: `feat/eba-console`
 
 G0 merged through PR #79. G1 implementation merged through PR #76. PR #80
 reached `main`, but PRs #81–#86 merged into their stacked base branches rather
@@ -49,6 +49,45 @@ Open evidence and ownership work:
   the retired client allow-list/checkpoints and verify the final state.
 - [ ] Populate, review, and approve the five G1 governance artifacts for the
   specific customer; draft templates and green synthesis do not close G1.
+
+### 2026-09-21 — guarded EBA Console MVP
+
+- The existing deployment monitor is now presented as an EBA Console using
+  the visual language of the gateway demo: compact zinc cards, a 240-pixel
+  navigation rail, deployment context, agent inventory, architecture map, and
+  a split Playground/trace workspace. Existing overview, parameter, and
+  accessible architecture content remains available.
+- Every deployed runtime is visible in inventory, but only the customer-facing
+  orchestrator can be invoked from the Playground. Research and code runtimes
+  remain internal A2A components and expose no direct facilitator control.
+- The interactive server binds only to loopback and provides no create,
+  update, delete, hosted, or multi-user APIs. It requires an exact same-origin
+  request and a per-process CSRF token, enforces bounded prompts, sessions,
+  bodies, responses, concurrency, and request rate, and disables caching.
+- Invocation is pinned to a fresh, successful monitored status and the exact
+  reviewed runtime ARN. The configured project, environment, Region, ARN
+  account/Region, and active STS account must all agree before an AWS request
+  can be made.
+- Customer output is fail-closed: only recognized assistant-text envelopes are
+  rendered. Tool arguments, results, unknown JSON, and raw runtime payloads
+  are not recursively exposed; the trace contains metadata only.
+- The console warns facilitators to use synthetic or approved test data. It is
+  an EBA demonstration surface, not a universal production certification or a
+  replacement for customer authentication, authorization, and application
+  controls.
+- Evidence passes: 528 tests in the repository's `tests/` suite, including 67
+  focused dashboard/invocation tests; Ruff, Python compilation, JavaScript
+  syntax and dashboard status checks; documentation integrity across 35
+  Markdown files and 144 local links; and whitespace validation.
+- A real local browser validated desktop and 390-pixel mobile layouts,
+  keyboard tabs, architecture content, the orchestrator-only selector,
+  44-pixel mobile controls, CSRF-bearing invocation, bounded metadata trace,
+  and zero console warnings/errors. Runtime status and responses were mocked
+  with sanitized synthetic values, so this UI check made no AWS invocation.
+- Running unscoped `pytest -q` also collects the standalone
+  `scripts/test_memory.py` utility, whose command-style functions require five
+  nonexistent pytest fixtures. The supported `pytest tests -q` workflow is
+  green; this pre-existing collection issue is not caused by the console.
 
 ### 2026-09-21 — v0.1.0 published
 

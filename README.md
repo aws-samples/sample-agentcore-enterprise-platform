@@ -197,20 +197,30 @@ For the wider test plan, read [`docs/TESTING.md`](docs/TESTING.md). For live res
 
 ## Dashboard
 
-Want to see the platform come together? The local dashboard reads the same deployment
-contract as `deploy.sh` and shows three views: an **Overview** (stacks this profile promises,
-grouped by layer, with outputs and resources one click away), a live **Architecture** map, and
-the published **Parameters** that make up the platform interface. It runs on your machine,
-polls your AWS account, and is plain HTML served by Python: no build step, no dependencies.
+Want to see the platform come together? The local EBA Console reads the same
+deployment contract as `deploy.sh`. **Overview**, **Architecture**, and
+**Parameters** explain the live platform; **Agents** inventories deployed
+runtimes; and **Playground** lets a facilitator run controlled tests against
+the customer-facing orchestrator. IAM-only A2A specialists stay visible as
+architecture inventory but cannot be called directly from the browser. The
+console does not create, edit, or delete agents.
 
-Run both commands from the repository root. The dashboard is only available on localhost.
+Run both commands from the repository root. The console is deliberately bound
+to localhost and has no multi-user authentication: use it as a
+facilitator-operated EBA aid, not as a hosted customer application. Playground
+prompts reach the deployed runtime and may incur usage charges, so use synthetic
+or customer-approved test data only.
 
 ```bash
 # Terminal 1: poller. Writes dashboard/public/status.json every 15 seconds.
 # Polls the region you deployed with; set AWS_REGION only to override.
 AWS_PROFILE=<your-profile> .venv/bin/python dashboard/monitor.py
 
-# Terminal 2: loopback-only web server. Open http://127.0.0.1:8888.
+# Terminal 2: loopback-only interactive EBA Console.
+AWS_PROFILE=<your-profile> .venv/bin/python dashboard/server.py
+# Open http://127.0.0.1:8888.
+
+# Status-only fallback (Playground is disabled):
 python3 -m http.server 8888 --bind 127.0.0.1 -d dashboard/public
 ```
 

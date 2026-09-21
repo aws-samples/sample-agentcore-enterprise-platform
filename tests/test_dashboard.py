@@ -450,6 +450,9 @@ def test_poll_resolves_config_and_environment_at_poll_time(tmp_path, monkeypatch
     assert yaml_status["project"] == "yaml-project"
     assert yaml_status["environment"] == "qa"
     assert yaml_status["region"] == "eu-west-1"
+    assert yaml_status["deployment_mode"] == "workshop"
+    assert yaml_status["agent_pattern"] == "orchestrator"
+    assert yaml_status["migration_runtime"] is False
     assert all(name.startswith("yaml-project-qa-") for name in yaml_status["stacks"])
     assert ssm.paginator.calls == [
         {
