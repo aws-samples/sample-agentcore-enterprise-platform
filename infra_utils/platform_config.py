@@ -723,7 +723,9 @@ class MigrationStages(BaseModel):
 class MigrationNetwork(BaseModel):
     """What the migrated agent must still reach on the customer side."""
 
-    private_dependencies: list[str] = Field(default_factory=list)  # hostnames
+    private_dependencies: list[str] = Field(
+        default_factory=list, max_length=25
+    )  # hostnames
     connectivity: Literal["vpn", "transit-gateway", "none"] = "none"
     dns_forwarders: list[str] = Field(default_factory=list)  # IPv4 resolvers
     ca_bundle_secret_name: str = ""  # Secrets Manager NAME of a private CA bundle
@@ -740,6 +742,13 @@ class MigrationNetwork(BaseModel):
                 f"private_dependencies must be hostnames (no scheme, port or "
                 f"path): {bad}"
             )
+        if len(set(v)) != len(v):
+            raise ValueError("private_dependencies must not contain duplicates")
+        if len(json.dumps(v, separators=(",", ":")).encode()) > 3000:
+            raise ValueError(
+                "private_dependencies exceed the bounded probe allow-list size; "
+                "use fewer or shorter hostnames (maximum encoded size: 3000 bytes)"
+            )
         return v
 
     @field_validator("dns_forwarders")
@@ -752,6 +761,18 @@ class MigrationNetwork(BaseModel):
                 raise ValueError(
                     f"dns_forwarders must be IPv4 addresses: {ip!r}"
                 ) from exc
+        return v
+
+    @field_validator("ca_bundle_secret_name")
+    @classmethod
+    def _ca_secret_is_a_name(cls, v: str) -> str:
+        if v and (
+            not _SECRET_NAME_RE.fullmatch(v) or _JWT_RE.match(v) or _BLOB_RE.match(v)
+        ):
+            raise ValueError(
+                "ca_bundle_secret_name must be a Secrets Manager NAME, not a "
+                "secret value"
+            )
         return v
 
 
@@ -1597,6 +1618,10 @@ def migration_plan(config: PlatformConfig, account: str = "") -> list[str]:
             )
             for host in net.private_dependencies
         ]
+        lines.append(
+            "  Automated check: deploy.sh verify invokes the fixed allow-list "
+            "TLS probe from the runtime VPC"
+        )
         if net.dns_forwarders:
             lines.append(f"  DNS forwarders: {', '.join(net.dns_forwarders)}")
         if net.ca_bundle_secret_name:

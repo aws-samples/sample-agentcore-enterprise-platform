@@ -232,6 +232,36 @@ def test_dns_forwarders_must_be_ipv4():
     assert "IPv4" in err(bad, security={"networking": True})
 
 
+def test_private_dependency_probe_scope_is_bounded_and_unique():
+    duplicate = deep(
+        ("network.private_dependencies", ["git.internal", "git.internal"]),
+        ("network.connectivity", "vpn"),
+    )
+    assert "must not contain duplicates" in err(
+        duplicate, security={"networking": True}
+    )
+
+    too_many = deep(
+        ("network.private_dependencies", [f"host-{i}.internal" for i in range(26)]),
+        ("network.connectivity", "vpn"),
+    )
+    assert "at most 25 items" in err(too_many, security={"networking": True})
+
+    long_host = ".".join(["a" * 60] * 4)
+    too_large = deep(
+        ("network.private_dependencies", [f"{i}.{long_host}" for i in range(13)]),
+        ("network.connectivity", "vpn"),
+    )
+    assert "maximum encoded size: 3000 bytes" in err(
+        too_large, security={"networking": True}
+    )
+
+
+def test_private_ca_field_accepts_only_a_secret_name():
+    bad = deep(("network.ca_bundle_secret_name", "not a secret name"))
+    assert "Secrets Manager NAME" in err(bad)
+
+
 # ── staged cutover scope and evidence gates ──────────────────────────────────
 
 
