@@ -34,6 +34,7 @@ fi
 #   ./deploy.sh migrate plan [--profile PROFILE]
 #   ./deploy.sh migrate readiness
 #   ./deploy.sh migrate data plan|readiness
+#   ./deploy.sh migrate cutover plan|readiness
 #   ./deploy.sh design [--profile PROFILE]    # Design: manifest + plan, nothing deployed
 #   ./deploy.sh build                          # Build:  = deploy
 #   ./deploy.sh usecase new NAME | list        # Build:  scaffold a use case
@@ -1686,6 +1687,20 @@ migrate_data_check() {
         "$flag" --effective-env "$PLATFORM_CONFIG")
 }
 
+migrate_cutover_check() {
+    # Renders and validates an external event/traffic procedure. It never
+    # changes a trigger, queue, schedule, webhook, or router.
+    local mode="$1" py flag="--cutover-plan"
+    if [ ! -f "$PLATFORM_CONFIG" ]; then
+        log_error "No $PLATFORM_CONFIG — migrate cutover reads the migration: block."
+        exit 1
+    fi
+    [ "$mode" = "readiness" ] && flag="--cutover-readiness"
+    py="$PROJECT_DIR/.venv/bin/python"; [ -x "$py" ] || py="python3"
+    (cd "$PROJECT_DIR" && "$py" -m infra_utils.platform_config \
+        "$flag" --effective-env "$PLATFORM_CONFIG")
+}
+
 # ═══════════════════════════════════════════════════════════════
 # Deploy Summary (Requirement 2.5)
 # ═══════════════════════════════════════════════════════════════
@@ -1953,8 +1968,12 @@ fi
 if [ "$ACTION" = "migrate" ]; then
     MIGRATE_SUB="${1:-}"; shift || true
     MIGRATE_DATA_SUB=""
+    MIGRATE_CUTOVER_SUB=""
     if [ "$MIGRATE_SUB" = "data" ]; then
         MIGRATE_DATA_SUB="${1:-}"
+        shift || true
+    elif [ "$MIGRATE_SUB" = "cutover" ]; then
+        MIGRATE_CUTOVER_SUB="${1:-}"
         shift || true
     fi
     while [[ $# -gt 0 ]]; do
@@ -1982,8 +2001,17 @@ if [ "$ACTION" = "migrate" ]; then
                     ;;
             esac
             ;;
+        cutover)
+            case "$MIGRATE_CUTOVER_SUB" in
+                plan|readiness) migrate_cutover_check "$MIGRATE_CUTOVER_SUB" ;;
+                *)
+                    log_error "Unknown migrate cutover sub-action: '${MIGRATE_CUTOVER_SUB:-(none)}'. Usage: $0 migrate cutover plan | readiness"
+                    exit 1
+                    ;;
+            esac
+            ;;
         *)
-            log_error "Unknown migrate sub-action: '${MIGRATE_SUB:-(none)}'. Usage: $0 migrate plan [--profile PROFILE] | readiness | data plan | data readiness"
+            log_error "Unknown migrate sub-action: '${MIGRATE_SUB:-(none)}'. Usage: $0 migrate plan [--profile PROFILE] | readiness | data plan | data readiness | cutover plan | cutover readiness"
             exit 1
             ;;
     esac
@@ -2252,6 +2280,8 @@ case "$ACTION" in
         echo "  migrate readiness  Fail-closed evidence gate before customer traffic moves; read-only"
         echo "  migrate data plan  Print the canonical data plan and digest; read-only"
         echo "  migrate data readiness  Check data/network evidence against that digest; read-only"
+        echo "  migrate cutover plan  Print trigger/traffic plans and digests; read-only"
+        echo "  migrate cutover readiness  Fail closed until every cutover gate matches its digest"
         echo "  config             Show saved answers (workshop.env)"
         echo "  config --reset     Delete saved answers and start fresh"
         echo ""
