@@ -84,6 +84,10 @@ Open evidence and ownership work:
   44-pixel mobile controls, CSRF-bearing invocation, bounded metadata trace,
   and zero console warnings/errors. Runtime status and responses were mocked
   with sanitized synthetic values, so this UI check made no AWS invocation.
+- PR #92's first CodeQL pass correctly rejected a `Math.random()` compatibility
+  fallback used for local session IDs. The fallback now uses
+  `crypto.getRandomValues`, and a source regression test prevents insecure
+  randomness from returning.
 - Running unscoped `pytest -q` also collects the standalone
   `scripts/test_memory.py` utility, whose command-style functions require five
   nonexistent pytest fixtures. The supported `pytest tests -q` workflow is

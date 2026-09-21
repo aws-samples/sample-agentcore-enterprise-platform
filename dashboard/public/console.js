@@ -41,11 +41,19 @@
   };
 
   function sessionId() {
-    if (window.crypto && typeof window.crypto.randomUUID === "function") {
-      return `session-${window.crypto.randomUUID().replaceAll("-", "")}`;
+    const cryptoApi = window.crypto;
+    if (!cryptoApi || typeof cryptoApi.getRandomValues !== "function") {
+      throw new Error("Browser cryptography is required for interactive sessions.");
     }
-    const random = Math.random().toString(36).slice(2).padEnd(32, "0");
-    return `session-${Date.now()}-${random}`;
+    if (typeof cryptoApi.randomUUID === "function") {
+      return `session-${cryptoApi.randomUUID().replaceAll("-", "")}`;
+    }
+    const random = new Uint8Array(16);
+    cryptoApi.getRandomValues(random);
+    const encoded = Array.from(random, (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+    return `session-${encoded}`;
   }
 
   function protocolFor(component, data) {

@@ -487,5 +487,7 @@ def test_ui_preserves_the_demo_style_without_unsafe_response_rendering():
     assert "navigator.clipboard" not in CONSOLE_JS
     assert "create agent" not in CONSOLE_JS.lower()
     assert "delete agent" not in CONSOLE_JS.lower()
+    assert "Math.random" not in CONSOLE_JS
+    assert "getRandomValues" in CONSOLE_JS
     assert '"X-EBA-CSRF"' in CONSOLE_JS
     assert "agent.customerFacing" in CONSOLE_JS
