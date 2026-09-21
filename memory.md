@@ -13,15 +13,15 @@ operational readiness review.
 
 ## Current milestone
 
-**G1 — production design baseline merged; migration and docs awaiting roll-up**
+**G1 — production design and migration merged; documentation ready for review**
 
-Branch: `docs-migration-eba-site` (stacked on PR #87)
+Branch: `docs-migration-eba-site` (PR #88 targets `main`)
 
 G0 merged through PR #79. G1 implementation merged through PR #76. PR #80
 reached `main`, but PRs #81–#86 merged into their stacked base branches rather
-than `main`. PR #87 rolls the intact final stack tip onto `main`; until it
-merges, GitHub Pages cannot publish the migration runbook or current generated
-configuration reference.
+than `main`. PR #87 landed the intact final migration stack on `main` on
+2026-09-21. PR #88 now contains only the customer-facing documentation and
+documentation-integrity changes.
 
 - [x] Add explicit `workshop` and `production` deployment modes.
 - [x] Add a production preset that requires enterprise identity, networking,
@@ -71,8 +71,8 @@ Open evidence and ownership work:
 
 ### 2026-09-21 — customer-facing migration documentation remediation
 
-- PR #88 carries the documentation remediation and is stacked on landing PR
-  #87. Merge #87 first, then retarget #88 to `main` before merging it.
+- PR #87 merged and PR #88 was explicitly retargeted to `main`; its diff
+  contains only the intended documentation and documentation-integrity files.
 - The homepage and workflow guide now describe the implemented migration path
   precisely: compatible arm64 source/image, adapter, AgentCore Runtime, and
   configuration-aware verification. They no longer claim that migration
