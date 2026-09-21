@@ -9,7 +9,12 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
 
-from invoke import ToolVerificationError, validate_tool_result
+from invoke import (
+    RuntimeVerificationError,
+    ToolVerificationError,
+    validate_runtime_success,
+    validate_tool_result,
+)
 
 
 def _sse(*events: dict) -> str:
@@ -93,3 +98,34 @@ def test_accepts_agui_tool_events():
         "execute_python_securely",
         "CODE_INTERPRETER_OK",
     )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '{"answer":"healthy"}',
+        _sse({"answer": "healthy"}),
+        _sse({"event": {"status": "success", "response": "healthy"}}),
+    ],
+)
+def test_runtime_success_accepts_structured_non_error_payloads(body):
+    validate_runtime_success(body)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '{"status":"error","code":503,"error":"child unhealthy"}',
+        _sse({"result": {"status": "failure", "error": "dependency unavailable"}}),
+        _sse({"code": "502", "error": "child unreachable"}),
+    ],
+)
+def test_runtime_success_rejects_application_failure_inside_http_success(body):
+    with pytest.raises(RuntimeVerificationError, match="application failure"):
+        validate_runtime_success(body)
+
+
+@pytest.mark.parametrize("body", ["", "plain text", "data: not-json"])
+def test_runtime_success_requires_a_decodable_payload(body):
+    with pytest.raises(RuntimeVerificationError, match="no decodable JSON"):
+        validate_runtime_success(body)

@@ -36,6 +36,9 @@ Before you build, check your account, tools, AWS Region, and expected costs in [
 > walks the modules in order with expected timings and what proves each one worked.
 > When something breaks, [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) is
 > organised by symptom.
+> Migrating an existing container during an EBA? Use the
+> [`EBA Migration Runbook`](docs/MIGRATION_RUNBOOK.md) for the supported path,
+> secret handling, cutover, rollback, and evidence checklist.
 
 
 ## Choose Your Starting Point
@@ -235,6 +238,7 @@ Use these sections when you need to change how the platform is deployed, secured
 | Deploy across multiple accounts (federated) | [`docs/MULTI_ACCOUNT.md`](docs/MULTI_ACCOUNT.md) |
 | Add your own tools to the gateway | [`docs/GATEWAY_TARGETS.md`](docs/GATEWAY_TARGETS.md) |
 | Build a use case on top of the platform | `./scripts/deploy.sh usecase new <name>`, then [`CONTRIBUTING_USE_CASES.md`](CONTRIBUTING_USE_CASES.md) with [`docs/PLATFORM_INTERFACE.md`](docs/PLATFORM_INTERFACE.md) |
+| Rehearse an existing-agent migration in an EBA | [`docs/MIGRATION_RUNBOOK.md`](docs/MIGRATION_RUNBOOK.md) |
 
 ### Choose an Agent Framework
 Each runtime stack builds one agent from the `agent-code/` directory. Pick the framework you want here; the CDK infrastructure does not change.

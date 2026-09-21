@@ -413,6 +413,10 @@ aws() {
     printf '%s\n' "$*" >> "$TMP/aws.args"
     case "$1 $2" in
         "cloudformation list-stacks")   echo "check-prefix-networking" ;;
+        "logs describe-log-groups")
+            [[ "$*" == *codebuild* ]] && echo "/aws/codebuild/check-prefix-build-orchestrator"
+            [[ "$*" == *lambda* ]] && echo "/aws/lambda/check-prefix-build-trigger-orchestrator"
+            ;;
         "secretsmanager describe-secret")
             [[ "$*" == *check-prefix-idp-client-secret* ]] ;;
         *) return 0 ;;
@@ -427,11 +431,22 @@ grep -q "delete-stack --stack-name check-prefix-networking" "$TMP/aws.args" \
     || fail "leftover stack not deleted with --yes: $(cat "$TMP/aws.args")"
 grep -q "delete-secret --secret-id check-prefix-idp-client-secret" "$TMP/aws.args" \
     || fail "orphaned secret not deleted with --yes: $(cat "$TMP/aws.args")"
+grep -q "delete-log-group --log-group-name /aws/codebuild/check-prefix-build-orchestrator" "$TMP/aws.args" \
+    || fail "CodeBuild log group not deleted with --yes: $(cat "$TMP/aws.args")"
+grep -q "delete-log-group --log-group-name /aws/lambda/check-prefix-build-trigger-orchestrator" "$TMP/aws.args" \
+    || fail "Lambda log group not deleted with --yes: $(cat "$TMP/aws.args")"
 
 : > "$TMP/aws.args"
 YES=0 NON_INTERACTIVE=1 sweep_leftovers >/dev/null 2>&1 || fail "sweep failed non-interactive"
-grep -q "delete-stack\|delete-secret" "$TMP/aws.args" \
+grep -q "delete-stack\|delete-secret\|delete-log-group" "$TMP/aws.args" \
     && fail "NON_INTERACTIVE without --yes deleted things: $(cat "$TMP/aws.args")"
+
+: > "$TMP/aws.args"
+YES=1 NON_INTERACTIVE=0 DEPLOYMENT_MODE=production sweep_leftovers >/dev/null 2>&1 \
+    || fail "production sweep failed"
+grep -q "delete-log-group" "$TMP/aws.args" \
+    && fail "production sweep deleted retained logs: $(cat "$TMP/aws.args")"
+unset DEPLOYMENT_MODE
 unset -f aws
 echo "PASS: post-destroy sweep reports always, deletes only with --yes"
 

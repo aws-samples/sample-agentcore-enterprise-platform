@@ -15,7 +15,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
 
-from verify import checks_for
+from verify import HEALTH_PROMPT, checks_for
 
 from infra_utils.platform_config import PlatformConfig, discover_use_cases
 
@@ -70,6 +70,42 @@ def test_tool_consuming_patterns_require_a_successful_code_interpreter_result():
 
     minimal = dict(checks_for(suffixes(), "orchestrator"))["orchestrator invoke"]
     assert "--require-tool" not in minimal
+
+
+@pytest.mark.parametrize(
+    "pattern", ["strands-agent", "agui-strands-agent", "langgraph-agent"]
+)
+def test_migration_uses_a_basic_live_invoke_not_pattern_specific_tools(pattern):
+    invoke = dict(checks_for(suffixes(), pattern, migration=True))[
+        "orchestrator invoke"
+    ]
+
+    assert invoke == ["invoke.py", "--require-success", HEALTH_PROMPT]
+    assert "--require-tool" not in invoke
+    assert "--agui" not in invoke
+
+
+def test_migration_preserves_non_runtime_checks():
+    got = names(
+        checks_for(
+            suffixes(security={"networking": True}),
+            "strands-agent",
+            require_guardrails=True,
+            alarms=True,
+            migration=True,
+        )
+    )
+
+    assert got == [
+        "identity",
+        "gateway",
+        "memory",
+        "observability",
+        "networking",
+        "guardrail enforcement",
+        "alarms",
+        "orchestrator invoke",
+    ]
 
 
 def test_require_guardrails_selects_the_enforcement_check():

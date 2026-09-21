@@ -554,7 +554,7 @@ class RuntimeStack(cdk.Stack):
 
         if build_context:
             build = [
-                "echo Building customer image from source (linux/arm64)...",
+                'echo "Building customer image from source (linux/arm64)..."',
                 (
                     f"docker build --platform linux/arm64 -f context/{build_dockerfile} "
                     "-t migration-source:local context/"

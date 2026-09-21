@@ -830,7 +830,7 @@ confirm_footprint() {
 # NON_INTERACTIVE without --yes → report and leave (CI must not remove things
 # the config does not declare without being told explicitly).
 sweep_leftovers() {
-    local confirm="ask" ans s
+    local confirm="ask" ans s log_prefix log_group service_logs
     [ "${YES:-0}" = "1" ] && confirm="yes"
     [ "$confirm" = "ask" ] && [ "${NON_INTERACTIVE:-0}" = "1" ] && confirm="no"
 
@@ -882,6 +882,43 @@ sweep_leftovers() {
                     && log_info "Deleted secret: $s" \
                     || log_error "Could not delete secret $s"
             done
+        fi
+    fi
+
+    # CodeBuild and Lambda create their own log groups on first use. Those
+    # groups are not CloudFormation resources, so deleting every stack still
+    # leaves them behind. Production logs are retained evidence by design;
+    # disposable workshop/migration environments use the same explicit
+    # confirmation policy as the other sweep categories.
+    if [ "${DEPLOYMENT_MODE:-workshop}" != "production" ]; then
+        service_logs=$(
+            for log_prefix in \
+                "/aws/codebuild/${PREFIX}-" \
+                "/aws/lambda/${PREFIX}-"; do
+                aws logs describe-log-groups \
+                    --log-group-name-prefix "$log_prefix" \
+                    --query "logGroups[].logGroupName" \
+                    --output text --region "$AWS_REGION" 2>/dev/null \
+                    | tr '\t' '\n' | grep -v '^None$' | grep . || true
+            done | sort -u
+        )
+        if [ -n "$service_logs" ]; then
+            log_warn "Service-created log groups left after destroy:"
+            echo "$service_logs" | sed 's/^/    /'
+            ans="n"
+            case "$confirm" in
+                yes) ans="y" ;;
+                ask) read -rp "Delete these log groups? [y/N]: " ans ;;
+                no)  log_warn "Leaving them (NON_INTERACTIVE without --yes)." ;;
+            esac
+            if [[ "$ans" =~ ^[Yy] ]]; then
+                while IFS= read -r log_group; do
+                    aws logs delete-log-group --log-group-name "$log_group" \
+                        --region "$AWS_REGION" \
+                        && log_info "Deleted log group: $log_group" \
+                        || log_error "Could not delete log group $log_group"
+                done <<< "$service_logs"
+            fi
         fi
     fi
 

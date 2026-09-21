@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +63,25 @@ def test_migration_build_preserves_source_user_and_builds_arm64_adapter() -> Non
     assert '--build-arg CHILD_USER="$SOURCE_USER"' in commands
     assert '--build-arg CHILD_CMD="$CHILD_CMD"' in commands
     assert "runtime: ec2" not in commands
+
+
+def test_migration_buildspec_commands_are_valid_bash() -> None:
+    template = migration_template()
+    buildspec = resources(template, "AWS::CodeBuild::Project")[0]["Properties"][
+        "Source"
+    ]["BuildSpec"]
+
+    for phase_name, phase in json.loads(buildspec)["phases"].items():
+        for command in phase["commands"]:
+            result = subprocess.run(
+                ["bash", "-n", "-c", command],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            assert result.returncode == 0, (
+                f"invalid bash in {phase_name}: {command}\n{result.stderr}"
+            )
 
 
 def test_rehearsal_source_declares_a_non_root_runtime_user() -> None:
