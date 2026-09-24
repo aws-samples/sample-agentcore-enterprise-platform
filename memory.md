@@ -1008,3 +1008,17 @@ Never copy credential values into this file.
 - `505be1a` — `Add customer preflight and v0.1.0 release docs`
 - Pull request:
   [#90 — Add customer preflight and prepare v0.1.0](https://github.com/aws-samples/sample-agentcore-enterprise-platform/pull/90)
+
+### Profile architecture deck — 2026-09-24
+
+- Added an editable 16:9 PowerPoint with one AWS architecture diagram for
+  each customer-facing profile: Greenfield, Migration, and Security-focused.
+- The diagrams follow the implemented preset defaults and trust boundaries.
+  Migration explicitly leaves data, triggers, traffic, and cutover under
+  customer ownership; Security-focused shows Cedar in `LOG_ONLY` and the
+  egress guardrail as masking/filtering rather than authorization.
+- The deck uses the current AWS Architecture Icons package and matches the
+  visual language of the existing EBA deck.
+- Verification: the PPTX archive passes integrity checks, LibreOffice renders
+  all three slides at 1920×1080, no shape falls outside the slide boundary,
+  and two visual-review passes found no remaining delivery blockers.
