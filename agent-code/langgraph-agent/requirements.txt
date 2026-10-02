@@ -9,4 +9,4 @@ mcp==1.29.0
 urllib3>=2.7.0
 python-multipart>=0.0.32
 bedrock-agentcore==1.21.0
-PyJWT[crypto]==2.13.0
+PyJWT[crypto]==2.15.0
