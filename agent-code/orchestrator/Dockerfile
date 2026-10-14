@@ -1,4 +1,4 @@
-FROM public.ecr.aws/docker/library/python:3.11-slim
+FROM public.ecr.aws/docker/library/python:3.15-slim
 WORKDIR /app
 COPY orchestrator/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && \
