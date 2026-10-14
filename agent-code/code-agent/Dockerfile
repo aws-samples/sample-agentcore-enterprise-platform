@@ -1,4 +1,4 @@
-FROM public.ecr.aws/docker/library/python:3.13-slim
+FROM public.ecr.aws/docker/library/python:3.15-slim
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1
 COPY code-agent/requirements.txt .
