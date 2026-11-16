@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO = Path(__file__).resolve().parents[1]
@@ -129,7 +130,7 @@ def test_top_scalar_edit():
 def test_check_fails_cleanly_without_the_block(tmp_path):
     m = tmp_path / "platform.yaml"
     m.write_text(GREENFIELD)
-    r = subprocess.run(  # nosec B603
+    r = subprocess.run(  # nosec B603 - runs this repo's script, fixed argv
         [sys.executable, str(UC / "setup.py"), "check", "--manifest", str(m)],
         capture_output=True,
         text=True,
@@ -209,3 +210,46 @@ def test_backups_go_outside_the_repository(tmp_path, monkeypatch):
     b = setup.backup_path(REPO / "platform.yaml")
     assert REPO not in b.parents
     assert b.name.startswith("platform.yaml.")
+
+
+class _NoSSM:
+    def client(self, name):
+        class C:
+            def get_parameter(self, Name):
+                raise RuntimeError("ParameterNotFound")
+
+        return C()
+
+
+def _agentcore_wizard(identity: dict, existing: dict | None = None):
+    w = setup.Wizard.__new__(setup.Wizard)
+    w.raw = {"project": "p", "environment": "e", "identity": identity}
+    w.existing = existing or {}
+    w.cfg = {"teams": [{"name": "engineering"}, {"name": "contractors"}]}
+    w.aws = _NoSSM()
+    w.ui = setup.UI(interactive=False, assume_yes=True)
+    return w
+
+
+def test_wizard_agentcore_defaults_to_the_platform_app():
+    app = "2c3d4e5f-1111-2222-3333-444455556666"
+    w = _agentcore_wizard({"idp": "entra_id", "mode": "direct", "client_id": app})
+    w.step_agentcore()
+    assert w.cfg["agentcore_tools"] == {"client_id": app}
+
+
+def test_wizard_agentcore_keeps_existing_teams():
+    app = "2c3d4e5f-1111-2222-3333-444455556666"
+    w = _agentcore_wizard(
+        {"idp": "entra_id", "mode": "direct", "client_id": app},
+        {"agentcore_tools": {"client_id": app, "teams": ["engineering"]}},
+    )
+    w.step_agentcore()
+    assert w.cfg["agentcore_tools"] == {"client_id": app, "teams": ["engineering"]}
+
+
+def test_wizard_agentcore_without_direct_mode_needs_a_client_id():
+    # Cognito platform: no app to default to, so non-interactive stops clearly.
+    w = _agentcore_wizard({"idp": "cognito"})
+    with pytest.raises(SystemExit, match="no answer"):
+        w.step_agentcore()

@@ -170,6 +170,11 @@ class _PolicyBody(_Strict):
     # Any other Claude Code managed setting, passed through verbatim into the
     # policy's settings block (the gateway validates it at boot).
     settings: dict[str, Any] = Field(default_factory=dict)
+    # Claude Desktop / Cowork managed settings for this audience, passed through
+    # verbatim into the policy's `desktop` block, e.g. managedMcpServers (an
+    # array). The gateway validates them at boot. On `default:` they reach
+    # everyone, because every team inherits the base layer.
+    desktop_settings: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("settings")
     @classmethod
@@ -272,6 +277,40 @@ class TelemetryConfig(_Strict):
         return v
 
 
+# The gateway fills this in at boot from the task environment, which ECS reads
+# from the platform's SSM parameter <ssm_prefix>/gateway/url at deploy time.
+AGENTCORE_URL_VAR = "AGENTCORE_GATEWAY_URL"
+# Loopback port Claude Code listens on during MCP sign-in. Entra must list
+# http://localhost:<port>/callback (Claude Desktop uses http://127.0.0.1:<port>/callback;
+# Entra accepts any port there, but registering this one keeps both explicit).
+AGENTCORE_CALLBACK_PORT = 53280
+
+
+class AgentCoreTools(_Strict):
+    """The platform's AgentCore Gateway as an MCP server in Claude Code and Cowork.
+
+    Each person signs in to it with Entra ID (the same tenant as `oidc`), so the
+    platform must run identity.mode: direct with this app as identity.client_id.
+    No OAuth proxy: Claude Desktop and Claude Code take the client ID, tenant
+    and scope directly, and Entra accepts Claude's `resource` value because the
+    AgentCore Gateway URL is registered as an Application ID URI on this app.
+    """
+
+    # Application (client) ID of the Entra app that represents the AgentCore
+    # Gateway API: the platform's identity.client_id in direct mode.
+    client_id: str = Field(pattern=_GUID)
+    # Scope exposed under "Expose an API" on that app.
+    scope: str = Field(default="gateway.invoke", pattern=r"^[A-Za-z0-9._-]{1,120}$")
+    # Name of the server in Claude Code and Cowork; tool names start with it.
+    name: str = Field(default="agentcore", pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
+    # Team names that get the tools. Empty: everyone (the base layer).
+    teams: list[str] = Field(default_factory=list)
+
+    @property
+    def scopes(self) -> str:
+        return f"api://{self.client_id}/{self.scope} offline_access"
+
+
 class Claude3pConfig(_Strict):
     # Pinned Claude Code release the gateway runs. Current stable:
     #   curl -fsSL https://downloads.claude.ai/claude-code-releases/stable
@@ -313,6 +352,9 @@ class Claude3pConfig(_Strict):
     policy_mode: Literal["first_match", "layered"] = "first_match"
     # Opt every policy in to Claude Desktop / Cowork (`desktop: {}` on the base).
     desktop: bool = True
+    # The platform's AgentCore Gateway (web search and other targets) as an MCP
+    # server in Claude Code and, with `desktop`, in Cowork.
+    agentcore_tools: AgentCoreTools | None = None
     # Entra App Roles with full spend-limit admin rights (gateway Admin API).
     # Caps themselves are set live through the API, not in this file.
     spend_admin_roles: list[str] = Field(default_factory=list)
@@ -345,6 +387,13 @@ class Claude3pConfig(_Strict):
     @model_validator(mode="after")
     def _cross_checks(self) -> Claude3pConfig:
         errors: list[str] = []
+        if not self.desktop:
+            errors += [
+                f"{where}.desktop_settings needs desktop: true"
+                for where, body in [("default", self.default)]
+                + [(f"teams.{t.name}", t) for t in self.teams]
+                if body.desktop_settings
+            ]
         v = _ver(self.claude_version)
         if v < _ver(MIN_CLAUDE_VERSION):
             errors.append(f"claude_version must be >= {MIN_CLAUDE_VERSION}")
@@ -382,6 +431,22 @@ class Claude3pConfig(_Strict):
         names = [t.name for t in self.teams]
         if len(names) != len(set(names)):
             errors.append("teams[].name must be unique")
+        if self.agentcore_tools:
+            at = self.agentcore_tools
+            unknown_teams = sorted(set(at.teams) - set(names))
+            if unknown_teams:
+                errors.append(f"agentcore_tools.teams {unknown_teams} not in teams[]")
+            for where, body in [("default", self.default)] + [
+                (f"teams.{t.name}", t) for t in self.teams
+            ]:
+                if at.name in (body.settings.get("managedMcpServers") or {}) or any(
+                    isinstance(e, dict) and e.get("name") == at.name
+                    for e in body.desktop_settings.get("managedMcpServers") or []
+                ):
+                    errors.append(
+                        f"{where}: a managedMcpServers entry is named {at.name!r}, "
+                        "like agentcore_tools.name; rename one of them"
+                    )
         if self.policy_mode == "first_match":
             # A team whose roles are all claimed by earlier teams can never match.
             seen: set[str] = set()
@@ -439,6 +504,10 @@ def placeholder_values(cfg: Claude3pConfig) -> list[str]:
     for field, value in (
         ("oidc.tenant_id", cfg.oidc.tenant_id),
         ("oidc.client_id", cfg.oidc.client_id),
+        (
+            "agentcore_tools.client_id",
+            cfg.agentcore_tools.client_id if cfg.agentcore_tools else "",
+        ),
     ):
         if value == _ZERO_GUID:
             found.append(f"{field} is the example value: put your Entra ID here")
@@ -487,10 +556,18 @@ def policies(cfg: Claude3pConfig) -> list[dict[str, Any]]:
     # Code tab then refuses to start on machines whose managed settings don't
     # name this gateway. Model access is enforced server-side either way.
     key = "cli"
-    out: list[dict[str, Any]] = [
-        {"match": {"groups": list(t.entra_roles)}, key: _settings_block(t, base=False)}
-        for t in cfg.teams
-    ]
+    at = cfg.agentcore_tools
+    out: list[dict[str, Any]] = []
+    for t in cfg.teams:
+        pol: dict[str, Any] = {
+            "match": {"groups": list(t.entra_roles)},
+            key: _settings_block(t, base=False),
+        }
+        if t.desktop_settings:
+            pol["desktop"] = dict(t.desktop_settings)
+        if at and t.name in at.teams:
+            _add_agentcore(pol, key, cfg)
+        out.append(pol)
     base: dict[str, Any] = {"match": {}, key: _settings_block(cfg.default, base=True)}
     if cfg.desktop:
         # cli + desktop: the gateway warns at boot unless each policy says not
@@ -499,9 +576,50 @@ def policies(cfg: Claude3pConfig) -> list[dict[str, Any]]:
         for p in [*out, base]:
             p["serve_to_desktop"] = False
     if cfg.desktop:
-        base["desktop"] = {}  # on the base layer: every team inherits the opt-in
+        # On the base layer: every team inherits the opt-in (an empty block
+        # is enough) and these Desktop settings.
+        base["desktop"] = dict(cfg.default.desktop_settings)
+    if at and not at.teams:
+        _add_agentcore(base, key, cfg)  # everyone: every team inherits the base layer
     out.append(base)
     return out
+
+
+def _add_agentcore(policy: dict[str, Any], key: str, cfg: Claude3pConfig) -> None:
+    """Add the AgentCore Gateway server to one policy, for Claude Code (`cli`,
+    an object keyed by name) and Claude Desktop/Cowork (`desktop`, an array).
+    The URL stays a ${VAR} reference that the gateway resolves at boot."""
+    at = cfg.agentcore_tools
+    assert at is not None
+    url = f"${{{AGENTCORE_URL_VAR}}}"
+    block = policy[key]
+    block["managedMcpServers"] = {
+        **(block.get("managedMcpServers") or {}),
+        at.name: {
+            "type": "http",
+            "url": url,
+            "oauth": {
+                "clientId": at.client_id,
+                "callbackPort": AGENTCORE_CALLBACK_PORT,
+                "scopes": at.scopes,
+            },
+        },
+    }
+    if cfg.desktop:
+        desk = policy.setdefault("desktop", {})
+        desk["managedMcpServers"] = [
+            *(desk.get("managedMcpServers") or []),
+            {
+                "name": at.name,
+                "transport": "http",
+                "url": url,
+                "oauth": {
+                    "clientId": at.client_id,
+                    "tenantId": cfg.oidc.tenant_id,
+                    "scope": at.scopes,
+                },
+            },
+        ]
 
 
 def foundation_model_id(bedrock_id: str) -> str | None:

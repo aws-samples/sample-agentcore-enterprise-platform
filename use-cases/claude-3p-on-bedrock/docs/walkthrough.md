@@ -10,6 +10,7 @@ who does it and how to check it's done.
 | [Choose the hostname](#choose-the-hostname) | DNS team | Before deploying |
 | [Get a certificate](#get-a-certificate) | PKI or cloud team | Before deploying |
 | [Register the Entra application](#register-the-entra-application) | Entra administrator | Before deploying |
+| [Register the AgentCore Gateway in Entra](#register-the-agentcore-gateway-in-entra) (only for AgentCore tools) | Entra administrator | Before and after deploying |
 | [Prepare the AWS account](#prepare-the-aws-account) | Cloud team | Before deploying |
 | [Add the DNS record](#add-the-dns-record) | DNS team | After deploying |
 | [Connect laptops](#connect-laptops) | Endpoint management (MDM) | After deploying |
@@ -26,6 +27,7 @@ The setup wizard asks for the values these tasks produce:
 | Entra client secret | (typed hidden) | Entra administrator |
 | Allowed email domains | `corp.example.com` | Entra administrator |
 | One App Role per team | `Claude.Engineering` | Entra administrator |
+| AgentCore Gateway application ID (only for AgentCore tools) | a GUID | Entra administrator |
 
 ## Connect the corporate network
 
@@ -115,6 +117,63 @@ Desktop/Cowork signs in through the gateway, so it needs nothing extra.
 A person assigned without a team role gets the default policy. A person not
 assigned at all can't sign in.
 
+## Register the AgentCore Gateway in Entra
+
+**Who: Entra administrator. Only if you give Claude Code and Cowork the
+AgentCore Gateway's tools** (`agentcore_tools`), such as web search. People
+sign in to the AgentCore Gateway with Entra directly: no Cognito and no OAuth
+proxy. Use a second application, so these settings can't affect the Claude
+apps gateway sign-in above.
+
+Before deploying:
+
+1. **Register it.** **App registrations → New registration**, name for
+   example `AgentCore Gateway`, single tenant, no redirect URI yet. Note the
+   **Application (client) ID**: it goes into `identity.client_id` and
+   `agentcore_tools.client_id` in `platform.yaml`.
+2. **Use v2 tokens.** **Manifest**: in the `api` section, set
+   `"requestedAccessTokenVersion": 2` and **Save**. Do this before step 7:
+   Entra refuses the gateway URL while the app issues v1 tokens.
+3. **Expose a scope.** **Expose an API**: set the Application ID URI to the
+   default `api://<application-id>`, then **Add a scope** named
+   `gateway.invoke` (admins and users).
+4. **Allow the desktop sign-in.** **Authentication → Add a platform → Mobile
+   and desktop applications**: add `http://127.0.0.1:53280/callback` (Claude
+   Desktop) and `http://localhost:53280/callback` (Claude Code).
+5. **Create a client secret.** **Certificates & secrets → New client secret.**
+   The platform's own agents use it for machine tokens. Pass the value on
+   securely, as for the first application.
+6. **Switch the platform to Entra.** In `platform.yaml`, the platform signs in
+   with this app (identity [direct mode](../../../docs/ENTERPRISE_IDP.md#direct-mode-entra-id-issues-the-tokens)):
+   ```yaml
+   identity:
+     idp: entra_id
+     mode: direct
+     tenant_id: "<directory (tenant) id>"
+     client_id: "<this app's application id>"
+     client_secret_name: agentcore/entra-platform
+   ```
+
+After the platform's gateway stack is deployed:
+
+7. **Register the gateway URL.** Claude Code sends the AgentCore Gateway URL
+   to Entra at sign-in, and Entra only accepts it if the app lists it. Get it:
+   ```bash
+   aws ssm get-parameter --name /agentcore-workshop/dev/gateway/url --query Parameter.Value --output text
+   ```
+   In **Manifest**, add it to `identifierUris` next to the existing entry, then
+   **Save**. The **Expose an API** page can edit only the first URI.
+   ```json
+   "identifierUris": [
+       "api://<application-id>",
+       "https://<gateway-id>.gateway.bedrock-agentcore.<region>.amazonaws.com/mcp"
+   ],
+   ```
+   Paste the URL exactly: starting with `https://`, ending in `/mcp`, no slash after.
+
+**Done when** `verify.py` prints `AgentCore Gateway sign-in points to Entra`,
+and a pilot user can connect **agentcore** in Claude Desktop (see the tests below).
+
 ## Prepare the AWS account
 
 **Who: cloud team.**
@@ -128,6 +187,9 @@ assigned at all can't sign in.
    Don't give the secret a name ending in a hyphen and six characters (like
    `-secret`): AWS reads that as part of its ID and the gateway can't read it.
    The wizard checks this.
+
+   With AgentCore tools, store the AgentCore Gateway app's secret the same way
+   under `agentcore/entra-platform`, in the deployment Region.
 2. **Enable Claude on Bedrock.** In the Bedrock console, open an Anthropic
    model and complete Anthropic's one-time use-case form, if nobody in the
    account has.
@@ -206,6 +268,8 @@ One pilot user per team, plus one with no team role:
 | A prompt | An answer |
 | A user not assigned to the app | Entra refuses the sign-in |
 | A laptop off the VPN | Gateway unreachable |
+| With AgentCore tools: Claude Desktop → **Connectors** → **agentcore** → **Connect** | Entra sign-in, then connected; asking for a web search uses `web-search___WebSearch` |
+| With AgentCore tools: Claude Code `/mcp` → **agentcore** → **Authenticate** | Entra sign-in, then the same tools |
 
 Some models appear twice in Claude Desktop (standard and 1M context). That's
 expected; see [Show each model once](changes.md#show-each-model-only-once-in-claude-desktop).
@@ -222,3 +286,8 @@ expected; see [Show each model once](changes.md#show-each-model-only-once-in-cla
 | Signed in, but the team's models are missing | The App Role value doesn't match exactly (it's case-sensitive) |
 | "The provider rejected a test request" / `403 AccessDenied` | Complete the Bedrock use-case form, or allow Bedrock in every Region your SCP blocks |
 | Sign-in suddenly fails for everyone | The Entra client secret expired: [rotate it](changes.md#rotate-the-entra-client-secret) |
+| **agentcore** isn't under Connectors | Restart Claude Desktop after the deploy. Desktop takes the server only from the gateway; a server added to the local configuration file is ignored while `bootstrapUrl` is set |
+| AgentCore sign-in: `AADSTS9010010` | Add the gateway URL to `identifierUris` (step 7 above), exactly, with `/mcp` |
+| Adding the URL: "must contain a tenant verified domain" | Set `requestedAccessTokenVersion` to `2` first, and paste the `https://` URL without an `api://` prefix |
+| AgentCore sign-in: `AADSTS50011` | Add both loopback redirect URIs (step 4 above) under **Mobile and desktop applications** |
+| `verify.py`: AgentCore Gateway signs in with Cognito | Set the platform's `identity` to Entra direct mode and deploy the `auth` and `gateway` stacks |

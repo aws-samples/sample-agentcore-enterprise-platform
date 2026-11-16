@@ -18,12 +18,21 @@ deployment:
   strategy: centralized
   platform_account: "000000000000"    # CHANGE: your 12-digit AWS account ID
 
+# The platform's sign-in, used by the AgentCore Gateway: Entra ID issues the
+# tokens directly, no Cognito (docs/walkthrough.md, Register the AgentCore Gateway in Entra).
 identity:
-  idp: cognito                        # the platform's own sign-in for agents; the gateway uses Entra below
+  idp: entra_id
+  mode: direct
+  tenant_id: "00000000-0000-0000-0000-000000000000"  # CHANGE: same tenant as oidc below
+  client_id: "00000000-0000-0000-0000-000000000000"  # CHANGE: the "AgentCore Gateway" app
+  client_secret_name: agentcore/entra-platform       # Secrets Manager name holding that app's secret
 
 agents:
   pattern: orchestrator
   model_id: eu.anthropic.claude-sonnet-5-5   # the platform's sample agent; must exist in your Region
+
+gateway:
+  web_search: on                      # AgentCore web search (us-east-1, eu-west-1, ap-northeast-1)
 
 security:
   networking: true                    # required: the gateway runs in the platform's private network
@@ -73,6 +82,12 @@ use_cases:
     default:
       models: [claude-haiku-4-5]
       deny_tools: ["Read(./.env)"]
+
+    # The AgentCore Gateway's tools (web search) in Claude Code and Cowork.
+    # Remove this block, and set identity back to your choice, to leave them out.
+    agentcore_tools:
+      client_id: "00000000-0000-0000-0000-000000000000"  # CHANGE: = identity.client_id above
+      # teams: [engineering]                             # default: everyone
 
     # Before production (README.md, "Before production"):
     # retain: true

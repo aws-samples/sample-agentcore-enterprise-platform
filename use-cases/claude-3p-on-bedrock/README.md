@@ -26,18 +26,14 @@ This use case is also the first layer of the EBA Agentic AI platform. Claude
 Code and Cowork become the apps employees use, and the platform underneath
 adds the AgentCore components:
 
-| AgentCore component | Role with Claude Code and Cowork |
-|---|---|
-| Networking (platform VPC) | The gateway already runs in it, next to the AgentCore runtimes |
-| AgentCore Gateway | One place for MCP tools, including the managed web search |
-| AgentCore Identity | Sign-in to tools on behalf of the user |
-| AgentCore Runtime and Memory | Your own agents, behind the same private network |
-| Observability | Traces and metrics for agents and tools |
+| AgentCore component | Role with Claude Code and Cowork | With this use case |
+|---|---|---|
+| Networking (platform VPC) | The Claude apps gateway runs in it, next to the AgentCore runtimes | Always |
+| AgentCore Gateway | One place for MCP tools, including the managed web search | With `agentcore_tools`: Claude Code and Cowork get its tools, signed in with Entra |
+| AgentCore Identity | Sign-in to tools on behalf of the user | Platform component |
 
-Today the use case deploys the Claude apps gateway into the platform network.
-Deploy the rest with `./scripts/deploy.sh build`. Connecting Claude Code and
-Cowork to AgentCore Gateway tools is the next step and isn't configured by
-this use case yet.
+With `agentcore_tools`, the gateway hands each team's Claude Code and Cowork
+the AgentCore Gateway as an MCP server named **agentcore**. 
 
 ## How it works
 
@@ -54,12 +50,14 @@ flowchart LR
     end
     ENTRA["Microsoft Entra ID"]
     BR["Amazon Bedrock"]
+    ACG["AgentCore Gateway<br/>web search, your tools<br/>(optional)"]
 
     DEV -- "hostname" --> DNS
     DEV == "HTTPS over VPN" ==> ALB --> GW --> DB
     DEV -- "sign-in" --> ENTRA
     GW -- "checks sign-in" --> ENTRA
     GW -- "allowed models only" --> BR
+    DEV -. "MCP tools, Entra token" .-> ACG
 ```
 
 A laptop reaches the gateway over your private network and signs in with
@@ -202,8 +200,15 @@ see **[Change models, teams and settings](docs/changes.md)**. Most changes are a
   access until their session expires: `session_ttl_hours`, 1 hour by default.
 - **Duplicate models in Claude Desktop.** Models with a 1M-token context show
   twice. See [Show each model only once](docs/changes.md#show-each-model-only-once-in-claude-desktop).
-- **No AgentCore tools yet.** Claude Code and Cowork don't use AgentCore
-  Gateway tools, such as web search, through this use case yet.
+- **AgentCore Gateway over the internet.** With `agentcore_tools`, laptops
+  reach the AgentCore Gateway at its public AWS address over HTTPS, and only
+  a valid Entra token gets through. A private-only path would need a resource
+  policy that limits the gateway to the platform's VPC endpoint, plus corporate
+  DNS that forwards the gateway's name into the VPC. This use case doesn't set
+  that up.
+- **Claude Code AgentCore sign-in through the gateway untested.** Cowork was
+  tested end to end. Claude Code gets the same server from the gateway (it
+  needs Claude Code 2.1.259 or later); test it with a pilot user.
 
 ## Before production
 
@@ -275,6 +280,10 @@ use_cases:
 | `teams[].start_model` | first in `models` | Model new sessions start on |
 | `teams[].deny_tools` | none | Claude Code tools the team can't use |
 | `teams[].settings` | none | Any other [Claude Code managed setting](https://code.claude.com/docs/en/settings-reference) |
+| `teams[].desktop_settings`, `default.desktop_settings` | none | Any [Claude Desktop managed setting](https://claude.com/docs/third-party/claude-desktop/configuration) for that audience; on `default` it reaches everyone |
+| `agentcore_tools.client_id` | none | The AgentCore Gateway's Entra app; the same as the platform's `identity.client_id`. Setting it turns the tools on ([how](docs/changes.md#give-claude-code-and-cowork-the-agentcore-tools)) |
+| `agentcore_tools.teams` | everyone | Only these teams get the tools |
+| `agentcore_tools.scope`, `name` | `gateway.invoke`, `agentcore` | The scope exposed on that app, and the server's name in Claude |
 | `models[].foundation_model` | none | Required when `bedrock` is an inference-profile ARN |
 | `policy_mode` | `first_match` | `layered`: a person in several teams gets all their rules |
 | `spend_admin_roles` | none | App Roles that may manage spend limits |

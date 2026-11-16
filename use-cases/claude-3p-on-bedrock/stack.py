@@ -413,6 +413,17 @@ class Claude3pOnBedrockStack(cdk.Stack):
         if cfg.telemetry.mode == "sidecar":
             # Needed for the localhost collector (documented SSRF-guard tradeoff).
             environment["CLAUDE_GATEWAY_ALLOW_LOOPBACK"] = "1"
+        if cfg.agentcore_tools:
+            # Resolved by CloudFormation at deploy time, not at synth: the
+            # platform's gateway stack deploys before use-case stacks, so a
+            # first `deploy.sh build` works and a recreated gateway's new URL
+            # reaches laptops on the next deploy. gateway.yaml holds
+            # ${AGENTCORE_GATEWAY_URL}, which the gateway expands at boot.
+            environment[gc.AGENTCORE_URL_VAR] = (
+                ssm.StringParameter.value_for_string_parameter(
+                    self, f"{ctx['ssm_prefix']}/gateway/url"
+                )
+            )
         gateway = task_def.add_container(
             "web",
             image=ecs.ContainerImage.from_ecr_repository(repo, image_tag),
@@ -593,6 +604,12 @@ class Claude3pOnBedrockStack(cdk.Stack):
             ("probe-function", probe.function_name),
             # CNAME target for the customer's DNS record (dns.mode: customer).
             ("alb-dns-name", alb.load_balancer_dns_name),
+            *(
+                # verify.py checks the AgentCore Gateway points sign-in here.
+                [("agentcore-tools-issuer", cfg.oidc.issuer)]
+                if cfg.agentcore_tools
+                else []
+            ),
         ):
             ssm.StringParameter(
                 self,

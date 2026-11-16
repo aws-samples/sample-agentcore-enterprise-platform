@@ -782,7 +782,7 @@ class Wizard:
         try:
             run = lambda *a: subprocess.run(
                 list(a), cwd=ca_dir, check=True, capture_output=True
-            )  # nosec B603
+            )  # nosec B603 - fixed openssl argv, no shell, no user-controlled command
             if not (ca_dir / "ca.key").exists():
                 run(
                     "openssl",
@@ -1107,8 +1107,77 @@ class Wizard:
         self.answers["teams"], self.answers["default"] = teams, default
 
     # 7 ─────────────────────────────────────────────────────────────────────
+    def step_agentcore(self) -> None:
+        header("7. AgentCore Gateway tools in Claude Code and Cowork (optional)")
+        print(
+            "  Adds the platform's AgentCore Gateway (web search and other targets) as an\n"
+            "  MCP server. People sign in to it with Entra ID; no proxy, no Cognito.\n"
+            "  Needs: the platform on identity.mode: direct with the 'AgentCore Gateway'\n"
+            "  Entra app (docs/walkthrough.md: Register the AgentCore Gateway in Entra)."
+        )
+        prev = self.existing.get("agentcore_tools") or {}
+        if not self.ui.confirm(
+            "Give Claude Code and Cowork the AgentCore tools?", bool(prev)
+        ):
+            self.cfg.pop("agentcore_tools", None)
+            return
+        ident = self.raw.get("identity") or {}
+        direct = ident.get("idp") == "entra_id" and ident.get("mode") == "direct"
+        if not direct:
+            print(
+                "  ! platform.yaml identity is not Entra direct mode, so the AgentCore\n"
+                "    Gateway won't accept Entra sign-ins. Set identity: idp entra_id,\n"
+                "    mode direct, tenant_id, client_id, client_secret_name (walkthrough)."
+            )
+            if not self.ui.confirm("Add the tools anyway and fix identity later?"):
+                self.cfg.pop("agentcore_tools", None)
+                return
+        block: dict[str, Any] = {
+            "client_id": self.ui.ask(
+                "Application (client) ID of the 'AgentCore Gateway' Entra app",
+                prev.get("client_id") or (ident.get("client_id") if direct else None),
+                lambda v: None if re.match(gc._GUID, v) else "a GUID",
+            )
+        }
+        if direct and block["client_id"] != ident.get("client_id"):
+            print(
+                "  ! differs from identity.client_id; the gateway accepts only that app's tokens"
+            )
+        names = [t["name"] for t in self.cfg.get("teams", [])]
+
+        def teams_ok(v: str) -> str | None:
+            bad = sorted({x.strip() for x in v.split(",") if x.strip()} - set(names))
+            return f"not a team: {bad}" if bad else None
+
+        # ask, not ask_list: an empty answer ("everyone") is a valid default.
+        teams = [
+            x.strip()
+            for x in self.ui.ask(
+                f"Teams that get the tools (empty for everyone; teams: {', '.join(names) or 'none'})",
+                ", ".join(prev.get("teams") or []),
+                teams_ok,
+            ).split(",")
+            if x.strip()
+        ]
+        if teams:
+            block["teams"] = teams
+        url = f"/{self.raw.get('project', 'agentcore-workshop')}/{self.raw.get('environment', 'dev')}/gateway/url"
+        try:
+            found = self.aws.client("ssm").get_parameter(Name=url)["Parameter"]["Value"]
+            print(f"  AgentCore Gateway found: {found}")
+            print(
+                "  In Entra, this URL must be an Application ID URI of that app (manifest)."
+            )
+        except Exception:  # noqa: BLE001 - not deployed yet is a normal first run
+            print(
+                f"  AgentCore Gateway not deployed yet ({url} missing). Deploy the platform's\n"
+                "  gateway stack too; then add its URL in Entra as described in the walkthrough."
+            )
+        self.cfg["agentcore_tools"] = block
+
+    # 8 ─────────────────────────────────────────────────────────────────────
     def step_write(self) -> None:
-        header("7. Write platform.yaml")
+        header("8. Write platform.yaml")
         cfg = {"claude_version": self._claude_version(), **self.cfg}
         for k in (
             "spend_admin_roles",
@@ -1198,6 +1267,7 @@ class Wizard:
         self.step_secret()
         self.step_models()
         self.step_teams()
+        self.step_agentcore()
         self.step_write()
         return check(self.manifest)
 
@@ -1206,7 +1276,7 @@ class Wizard:
 
 
 def check(manifest: Path) -> int:
-    header("8. Check (read-only)")
+    header("9. Check (read-only)")
     results: list[tuple[str, str]] = []
 
     def record_result(level, msg):
@@ -1230,12 +1300,12 @@ def check(manifest: Path) -> int:
         os.environ.setdefault("PLATFORM_ALLOW_PLACEHOLDERS", "0")
         load_platform_config(manifest)
         record_result("PASS", "platform.yaml valid (deploy.sh design rules)")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001 - any validation error is a FAIL line, not a crash
         record_result("FAIL", f"platform.yaml: {e}")
     region = raw.get("region") or "us-east-1"
     try:
         aws = Aws(region)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001 - no or expired credentials: report and stop
         record_result("FAIL", f"AWS credentials: {e}")
         return 1
     pinned = str((raw.get("deployment") or {}).get("platform_account", ""))
@@ -1277,7 +1347,7 @@ def check(manifest: Path) -> int:
                     else " (imported: no auto-renewal)"
                 ),
             )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001 - not found or no access: a FAIL line for this check
         record_result("FAIL", f"certificate {cfg.certificate_arn}: {e}")
     try:
         secret_meta = aws.client("secretsmanager").describe_secret(
@@ -1291,7 +1361,7 @@ def check(manifest: Path) -> int:
             "PASS" if current and not secret_meta.get("DeletedDate") else "FAIL",
             f"secret {cfg.oidc.client_secret_name} present (value not read)",
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001 - not found or no access: a FAIL line for this check
         record_result(
             "FAIL", f"secret {cfg.oidc.client_secret_name}: {e.__class__.__name__}"
         )
@@ -1316,7 +1386,7 @@ def check(manifest: Path) -> int:
             f"platform agent model {pm}"
             + ("" if pm in profiles else " not in this Region (doctor FAIL)"),
         )
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001 - listing is advisory: WARN, keep checking
         record_result("WARN", f"Bedrock profiles not listed: {e.__class__.__name__}")
     try:
         aws.client("ec2").describe_vpc_endpoint_services(
@@ -1325,10 +1395,31 @@ def check(manifest: Path) -> int:
         record_result(
             "PASS", "AgentCore Gateway VPC endpoint service offered (networking stack)"
         )
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - not offered or no access: a FAIL line for this check
         record_result(
             "FAIL", f"AgentCore Gateway VPC endpoint service not offered in {region}"
         )
+    if cfg.agentcore_tools:
+        ident = raw.get("identity") or {}
+        direct = ident.get("idp") == "entra_id" and ident.get("mode") == "direct"
+        record_result(
+            "PASS" if direct else "FAIL",
+            "platform identity is Entra direct mode (AgentCore Gateway accepts Entra tokens)",
+        )
+        record_result(
+            "PASS"
+            if ident.get("client_id") == cfg.agentcore_tools.client_id
+            else "FAIL",
+            "agentcore_tools.client_id equals identity.client_id",
+        )
+        name = f"/{raw.get('project', 'agentcore-workshop')}/{raw.get('environment', 'dev')}/gateway/url"
+        try:
+            aws.client("ssm").get_parameter(Name=name)
+            record_result("PASS", f"AgentCore Gateway deployed ({name})")
+        except Exception:  # noqa: BLE001 - missing parameter is the normal first run: WARN
+            record_result(
+                "WARN", f"AgentCore Gateway not deployed yet ({name}); deploy it first"
+            )
     fails = sum(1 for lvl, _ in results if lvl == "FAIL")
     print(f"\n  {len(results) - fails} ok/warn, {fails} failed.")
     if not fails:
@@ -1342,7 +1433,10 @@ def check(manifest: Path) -> int:
             if manifest.resolve() == default_manifest
             else f"PLATFORM_CONFIG={manifest} "
         )
-        stacks = f"{project}-{env}-networking {project}-{env}-uc-{USE_CASE}"
+        core = ["networking"] + (["auth", "gateway"] if cfg.agentcore_tools else [])
+        stacks = " ".join(
+            [f"{project}-{env}-{s}" for s in core] + [f"{project}-{env}-uc-{USE_CASE}"]
+        )
         print("  Next (from the repository root):")
         print(f"    {env_prefix}./scripts/deploy.sh design")
         print(f"    {env_prefix}./scripts/deploy.sh doctor")

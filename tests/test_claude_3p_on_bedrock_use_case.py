@@ -9,6 +9,7 @@ tests/fixtures/contract/claude-3p-on-bedrock.yaml.
 import copy
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -19,6 +20,7 @@ import yaml
 REPO = Path(__file__).resolve().parents[1]
 UC = REPO / "use-cases" / "claude-3p-on-bedrock"
 FIXTURE = REPO / "tests" / "fixtures" / "contract" / "claude-3p-on-bedrock.yaml"
+EXAMPLE = UC / "docs" / "platform.example.yaml"
 
 
 def _load(name: str, path: Path):
@@ -255,6 +257,131 @@ def test_cli_key_silences_desktop_warning_on_every_policy(raw):
     assert all(p["serve_to_desktop"] is False for p in pols)
 
 
+_MCP = {
+    "name": "agentcore",
+    "transport": "http",
+    "url": "https://gw.example.com/mcp",
+    "oauth": {"clientId": "c", "tenantId": "t", "scope": "api://c/gateway.invoke"},
+}
+
+
+def test_desktop_settings_render_into_desktop_blocks(raw):
+    raw["default"]["desktop_settings"] = {"managedMcpServers": [_MCP]}
+    raw["teams"][0]["desktop_settings"] = {"disabledBuiltinTools": ["WebSearch"]}
+    contractors, engineering, base = rendered(raw)["managed"]["policies"]
+    assert base["desktop"] == {"managedMcpServers": [_MCP]}
+    assert contractors["desktop"] == {"disabledBuiltinTools": ["WebSearch"]}
+    assert "desktop" not in engineering  # inherits the base layer
+    assert "managedMcpServers" not in base["cli"]
+
+
+def test_desktop_settings_need_desktop(raw):
+    raw["desktop"] = False
+    raw["default"]["desktop_settings"] = {"managedMcpServers": [_MCP]}
+    with pytest.raises(Exception, match="default.desktop_settings needs desktop: true"):
+        gc.load(raw)
+
+
+_AC = {"client_id": "22222222-2222-2222-2222-222222222222"}
+
+
+def test_agentcore_tools_reach_everyone_through_the_base_layer(raw):
+    raw["agentcore_tools"] = dict(_AC)
+    contractors, engineering, base = rendered(raw)["managed"]["policies"]
+    code = base["cli"]["managedMcpServers"]["agentcore"]
+    assert code == {
+        "type": "http",
+        "url": "${AGENTCORE_GATEWAY_URL}",
+        "oauth": {
+            "clientId": _AC["client_id"],
+            "callbackPort": 53280,
+            "scopes": f"api://{_AC['client_id']}/gateway.invoke offline_access",
+        },
+    }
+    (desk,) = base["desktop"]["managedMcpServers"]
+    assert desk == {
+        "name": "agentcore",
+        "transport": "http",
+        "url": "${AGENTCORE_GATEWAY_URL}",
+        "oauth": {
+            "clientId": _AC["client_id"],
+            "tenantId": raw["oidc"]["tenant_id"],
+            "scope": f"api://{_AC['client_id']}/gateway.invoke offline_access",
+        },
+    }
+    for team in (contractors, engineering):
+        assert "managedMcpServers" not in team["cli"]  # inherited
+        assert "desktop" not in team
+
+
+def test_agentcore_tools_for_listed_teams_only(raw):
+    raw["agentcore_tools"] = {**_AC, "teams": ["engineering"]}
+    contractors, engineering, base = rendered(raw)["managed"]["policies"]
+    assert "agentcore" in engineering["cli"]["managedMcpServers"]
+    assert engineering["desktop"]["managedMcpServers"][0]["name"] == "agentcore"
+    assert "managedMcpServers" not in contractors["cli"]
+    assert "managedMcpServers" not in base["cli"]
+    assert base["desktop"] == {}
+
+
+def test_agentcore_tools_keep_other_servers(raw):
+    other = {"name": "wiki", "transport": "http", "url": "https://wiki.example.com/mcp"}
+    raw["default"]["desktop_settings"] = {"managedMcpServers": [other]}
+    raw["default"]["settings"] = {
+        "managedMcpServers": {"wiki": {"type": "http", "url": other["url"]}}
+    }
+    raw["agentcore_tools"] = dict(_AC)
+    base = rendered(raw)["managed"]["policies"][-1]
+    assert set(base["cli"]["managedMcpServers"]) == {"wiki", "agentcore"}
+    assert [e["name"] for e in base["desktop"]["managedMcpServers"]] == [
+        "wiki",
+        "agentcore",
+    ]
+
+
+def test_agentcore_tools_without_desktop_serve_claude_code_only(raw):
+    raw["desktop"] = False
+    raw["agentcore_tools"] = dict(_AC)
+    base = rendered(raw)["managed"]["policies"][-1]
+    assert "agentcore" in base["cli"]["managedMcpServers"]
+    assert "desktop" not in base
+
+
+@pytest.mark.parametrize(
+    "change, message",
+    [
+        ({"teams": ["nobody"]}, "agentcore_tools.teams ['nobody'] not in teams"),
+        ({"client_id": "not-a-guid"}, "client_id"),
+        ({"scope": "api://x/y"}, "scope"),
+    ],
+)
+def test_agentcore_tools_validation(raw, change, message):
+    raw["agentcore_tools"] = {**_AC, **change}
+    with pytest.raises(Exception, match=re.escape(message)):
+        gc.load(raw)
+
+
+def test_agentcore_tools_name_must_not_clash(raw):
+    raw["default"]["desktop_settings"] = {
+        "managedMcpServers": [
+            {"name": "agentcore", "transport": "http", "url": "https://x/mcp"}
+        ]
+    }
+    raw["agentcore_tools"] = dict(_AC)
+    with pytest.raises(Exception, match="like agentcore_tools.name"):
+        gc.load(raw)
+
+
+def test_agentcore_tools_example_client_id_is_refused(raw, monkeypatch):
+    monkeypatch.delenv("PLATFORM_ALLOW_PLACEHOLDERS", raising=False)
+    raw = yaml.safe_load(EXAMPLE.read_text())["use_cases"]["claude-3p-on-bedrock"]
+    assert raw.get("agentcore_tools"), "example should show agentcore_tools"
+    with pytest.raises(
+        Exception, match="agentcore_tools.client_id is the example value"
+    ):
+        gc.load(raw)
+
+
 def test_deny_tools_merge_with_settings_permissions(raw):
     raw["default"]["settings"] = {
         "permissions": {"deny": ["Bash(rm:*)"], "ask": ["Bash"]}
@@ -409,7 +536,7 @@ def test_verify_fails_fast_without_a_deployment():
         "AWS_EC2_METADATA_DISABLED": "true",
         "AWS_REGION": "us-east-1",
     }
-    r = subprocess.run(  # nosec B603
+    r = subprocess.run(  # nosec B603 - runs this repo's script, fixed argv
         [sys.executable, str(UC / "verify.py")],
         env=env,
         capture_output=True,
@@ -532,8 +659,6 @@ def test_entra_role_with_spaces_is_rejected(raw):
 
 # ── example platform.yaml ────────────────────────────────────────────────────
 
-EXAMPLE = UC / "docs" / "platform.example.yaml"
-
 
 def test_example_platform_yaml_is_valid_once_values_are_filled(monkeypatch):
     from infra_utils.platform_config import load_platform_config
@@ -554,6 +679,7 @@ def test_example_platform_yaml_is_refused_until_edited(monkeypatch):
         "hostname",
         "certificate_arn",
         "allowed_email_domains",
+        "agentcore_tools.client_id",
     ):
         assert field in msg, field
     # Real-looking values pass.
@@ -571,4 +697,72 @@ def test_example_platform_yaml_is_refused_until_edited(monkeypatch):
         client_id="1f2e3d4c-1111-2222-3333-444455556666",
         allowed_email_domains=["contoso.net"],
     )
+    block["agentcore_tools"]["client_id"] = "2c3d4e5f-1111-2222-3333-444455556666"
     gc.load(block)
+
+
+# ── verify.py: AgentCore Gateway sign-in discovery ──────────────────────────
+_GW = "https://gw.example.com/mcp"
+_ISSUER = "https://login.microsoftonline.com/t/v2.0"
+
+
+def _verify(monkeypatch, *, status=401, header=None, meta=None):
+    import email.message
+    import io
+    import json
+    import urllib.error
+
+    v = _load("c3p_verify", UC / "verify.py")
+    msg = email.message.Message()
+    if header is not False:
+        msg["WWW-Authenticate"] = header or (
+            'Bearer error="invalid_token", '
+            'resource_metadata="https://gw.example.com/.well-known/oauth-protected-resource"'
+        )
+    body = meta or {"authorization_servers": [_ISSUER], "resource": _GW}
+
+    class _Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake(req, timeout):
+        if getattr(req, "method", None) == "POST":
+            if status == 200:
+                return _Resp(b"{}")
+            raise urllib.error.HTTPError(_GW, status, "x", msg, None)
+        return _Resp(json.dumps(body).encode())
+
+    monkeypatch.setattr(v.urllib.request, "urlopen", fake)
+    return v.check_agentcore(_GW, _ISSUER)
+
+
+def test_verify_agentcore_ok(monkeypatch):
+    assert _verify(monkeypatch) == ""
+
+
+@pytest.mark.parametrize(
+    "kwargs, reason",
+    [
+        ({"status": 200}, "accepted a request without a token"),
+        ({"status": 403}, "answered 403"),
+        ({"header": False}, "no https resource_metadata"),
+        (
+            {"meta": {"authorization_servers": ["https://cognito/x"], "resource": _GW}},
+            "identity.mode: direct",
+        ),
+        (
+            {
+                "meta": {
+                    "authorization_servers": [_ISSUER],
+                    "resource": "https://other/mcp",
+                }
+            },
+            "is not https://gw.example.com/mcp",
+        ),
+    ],
+)
+def test_verify_agentcore_failures(monkeypatch, kwargs, reason):
+    assert reason in _verify(monkeypatch, **kwargs)

@@ -103,6 +103,40 @@ requests. To offer only the standard option, add this to `default:` and deploy:
           CLAUDE_CODE_DISABLE_1M_CONTEXT: "1"
 ```
 
+## Give Claude Code and Cowork the AgentCore tools
+
+The platform's AgentCore Gateway (web search, and any targets you add) shows
+up as a server named **agentcore** in Claude Code and in Cowork's
+**Connectors**. Each person connects it once with their Entra sign-in.
+
+1. Do [Register the AgentCore Gateway in Entra](walkthrough.md#register-the-agentcore-gateway-in-entra)
+   and deploy the platform's `auth` and `gateway` stacks with web search on:
+   ```yaml
+   gateway:
+     web_search: on
+   ```
+2. Add the block, then deploy as above:
+   ```yaml
+   use_cases:
+     claude-3p-on-bedrock:
+       agentcore_tools:
+         client_id: "<AgentCore Gateway app id>"   # = identity.client_id
+         teams: [engineering]                       # optional; default: everyone
+   ```
+3. Run `verify.py`. It ends with `AgentCore Gateway sign-in points to Entra`.
+
+To take the tools away from everyone, delete the block and deploy. To limit
+them to some teams, list the teams. The gateway URL comes from the platform at
+deploy time, so a recreated AgentCore Gateway only needs its new URL added in
+Entra ([step 7](walkthrough.md#register-the-agentcore-gateway-in-entra)) and one deploy.
+
+## Add tools to the AgentCore Gateway
+
+Tools are targets on the platform's AgentCore Gateway, not part of this use
+case. Add one as described in [Gateway targets](../../../docs/GATEWAY_TARGETS.md)
+and deploy the `gateway` stack. People see the new tools the next time Claude
+Code or Cowork lists them, with no change here.
+
 ## Upgrade Claude Code on the gateway
 
 Change `claude_version` and deploy. This is the only change that rebuilds the
