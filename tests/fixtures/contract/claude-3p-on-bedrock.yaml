@@ -1,0 +1,50 @@
+# Contract fixture: the claude-3p-on-bedrock use case on a networked platform
+# with Entra ID in direct mode. Synthesized by scripts/check-contract.sh so the
+# use case's stack stays buildable and lands in the deployment contract.
+# Placeholder-shaped values only; nothing here is a real tenant or account.
+project: agentcore-workshop
+environment: dev
+region: us-east-1
+
+deployment:
+  platform_account: "111111111111"
+
+identity:
+  idp: entra_id
+  mode: direct
+  tenant_id: "00000000-0000-0000-0000-000000000000"
+  client_id: "REPLACE_WITH_ENTRA_APP_CLIENT_ID"
+  client_secret_name: "agentcore/idp-client-secret"
+
+security:
+  networking: true
+
+use_cases:
+  claude-3p-on-bedrock:
+    claude_version: 2.1.311
+    hostname: claude.internal.example.com
+    certificate_arn: arn:aws:acm:us-east-1:111111111111:certificate/00000000-0000-0000-0000-000000000000
+    # dns.mode defaults to customer: corporate DNS CNAMEs the hostname to the ALB.
+    client_cidrs: [172.16.0.0/22]
+    trusted_proxies: [10.0.2.0/24, 10.0.3.0/24]
+    oidc:
+      tenant_id: "00000000-0000-0000-0000-000000000000"
+      client_id: "11111111-1111-1111-1111-111111111111"
+      client_secret_name: claude-3p/entra-oidc
+      allowed_email_domains: [example.com]
+    models:
+      - { id: claude-opus-5, label: Claude Opus 5, bedrock: global.anthropic.claude-opus-5 }
+      - { id: claude-sonnet-5, label: Claude Sonnet 5, bedrock: global.anthropic.claude-sonnet-5 }
+      - { id: claude-haiku-4-5, label: Claude Haiku 4.5, bedrock: global.anthropic.claude-haiku-4-5-20251001-v1:0 }
+    teams:
+      - name: contractors
+        entra_roles: [Claude.Contractors]
+        models: [claude-haiku-4-5]
+        deny_tools: [WebFetch, WebSearch]
+      - name: engineering
+        entra_roles: [Claude.Engineering]
+        models: [claude-opus-5, claude-sonnet-5, claude-haiku-4-5]
+    default:
+      models: [claude-haiku-4-5]
+      deny_tools: ["Read(./.env)", "Read(./secrets/**)"]
+    spend_admin_roles: [Claude.SpendAdmins]
