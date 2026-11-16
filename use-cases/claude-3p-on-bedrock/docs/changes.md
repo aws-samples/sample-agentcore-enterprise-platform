@@ -113,7 +113,7 @@ up as a server named **agentcore** in Claude Code and in Cowork's
    and deploy the platform's `auth` and `gateway` stacks with web search on:
    ```yaml
    gateway:
-     web_search: on
+     web_search: "on"
    ```
 2. Add the block, then deploy as above:
    ```yaml

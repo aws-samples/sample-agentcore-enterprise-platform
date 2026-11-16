@@ -32,7 +32,7 @@ agents:
   model_id: eu.anthropic.claude-sonnet-5-5   # the platform's sample agent; must exist in your Region
 
 gateway:
-  web_search: on                      # AgentCore web search (us-east-1, eu-west-1, ap-northeast-1)
+  web_search: "on"                      # AgentCore web search (us-east-1, eu-west-1, ap-northeast-1)
 
 security:
   networking: true                    # required: the gateway runs in the platform's private network
