@@ -565,7 +565,14 @@ class SoftwareFactoryStack(cdk.Stack):
             )
         )
         dispatcher.add_event_source(
-            sources.SqsEventSource(queue, batch_size=1, report_batch_item_failures=True)
+            sources.SqsEventSource(
+                queue,
+                batch_size=1,
+                report_batch_item_failures=True,
+                # -c factory_dispatch=false pauses webhook-driven runs; events wait in the queue (4 days).
+                enabled=(self.node.try_get_context("factory_dispatch") or "true")
+                == "true",
+            )
         )
 
         api = apigw.HttpApi(

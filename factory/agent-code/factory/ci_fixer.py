@@ -636,9 +636,9 @@ class Run:
                 self.git("add", "-A")
                 self.git(
                     "-c",
-                    "user.name=factory-ci-fixer",
+                    "user.name=software-factory[bot]",
                     "-c",
-                    "user.email=factory@invalid",
+                    "user.email=software-factory@users.noreply.github.com",
                     "commit",
                     "-q",
                     "-m",
