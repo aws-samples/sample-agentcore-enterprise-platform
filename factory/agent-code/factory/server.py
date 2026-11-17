@@ -21,6 +21,7 @@ import boto3
 
 from factory import asana, github
 from factory.ci_fixer import Run
+from factory.consult import Consult
 from factory.developer import Developer, MergeHandler, next_task, open_agent_prs
 from factory.pm import ProductManager
 from factory.reviewer import Review
@@ -103,6 +104,15 @@ def validate(payload: dict) -> dict:
         if number <= 0:
             raise ValueError("pull_request.number must be positive")
         return {"id": number}
+    if payload.get("role") == "product_manager" and payload.get("mode") == "consult":
+        if not re.fullmatch(r"[\w-]{8,64}", str(payload.get("conversation_id", ""))):
+            raise ValueError("conversation_id must be [A-Za-z0-9_-]{8,64}")
+        if (
+            not isinstance(payload.get("message"), str)
+            or not 0 < len(payload["message"]) <= 8000
+        ):
+            raise ValueError("message must be a string of 1-8000 characters")
+        return {"id": f"consult-{payload['conversation_id']}"}
     if payload.get("role") == "product_manager":
         rulings = payload.get("rulings") or []
         if (
@@ -248,7 +258,24 @@ def _safe(fn) -> dict:
         return {"outcome": "failed", "reason": f"{type(e).__name__}: {e}"[:500]}
 
 
+def handle_consult(payload: dict) -> dict:
+    work = Path("/tmp/factory") / "pm"
+    agent = Consult(
+        clone(work),
+        work,
+        REGION,
+        REPO,
+        _github_token(),
+        payload["conversation_id"],
+        payload["message"],
+    )
+    rec = _safe(agent.execute)
+    return _finish(agent, rec, True, ("answer", "conversation_id", "turn", "queued"))
+
+
 def handle_pm(payload: dict) -> dict:
+    if payload.get("mode") == "consult":
+        return handle_consult(payload)
     work = Path("/tmp/factory") / "pm"
     agent = ProductManager(clone(work), work, REGION, REPO, _github_token())
     rec = _safe(

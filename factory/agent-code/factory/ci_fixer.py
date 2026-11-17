@@ -138,15 +138,25 @@ class Run:
 
     # --- model calls -------------------------------------------------------
     def ask(self, model: str, system: str, prompt: str, max_tokens: int) -> dict:
-        if self.used_input + len(system + prompt) // 3 > self.TOKEN_CAP:
+        messages = [{"role": "user", "content": [{"text": prompt}]}]
+        return parse_json(self.chat(model, [{"text": system}], messages, max_tokens))
+
+    def chat(
+        self, model: str, system: list[dict], messages: list[dict], max_tokens: int
+    ) -> str:
+        """One Converse call with usage accounting; returns the reply text."""
+        size = sum(len(b.get("text", "")) for b in system) + sum(
+            len(c.get("text", "")) for m in messages for c in m["content"]
+        )
+        if self.used_input + size // 3 > self.TOKEN_CAP:
             raise BudgetExceeded(
                 f"next call would exceed {self.TOKEN_CAP} input tokens"
             )
         try:
             resp = self.bedrock.converse(
                 modelId=model,
-                system=[{"text": system}],
-                messages=[{"role": "user", "content": [{"text": prompt}]}],
+                system=system,
+                messages=messages,
                 inferenceConfig={"maxTokens": max_tokens},
             )
         except self.bedrock.exceptions.ValidationException as e:
@@ -157,7 +167,7 @@ class Run:
             self.fallbacks.append(
                 f"{model} -> {FALLBACK[model]}: account has no data-retention opt-in"
             )
-            return self.ask(FALLBACK[model], system, prompt, max_tokens)
+            return self.chat(FALLBACK[model], system, messages, max_tokens)
         u = resp["usage"]
         m = self.models.setdefault(
             model,
@@ -174,14 +184,13 @@ class Run:
         m["cache_read"] += u.get("cacheReadInputTokens", 0)
         m["cache_write"] += u.get("cacheWriteInputTokens", 0)
         m["calls"] += 1
-        # Cached prompt tokens are input too (OpenAI models cache automatically); count them against the cap.
+        # Cached prompt tokens are input too; count them against the cap.
         self.used_input += (
             u["inputTokens"]
             + u.get("cacheReadInputTokens", 0)
             + u.get("cacheWriteInputTokens", 0)
         )
-        text = "".join(c.get("text", "") for c in resp["output"]["message"]["content"])
-        return parse_json(text)
+        return "".join(c.get("text", "") for c in resp["output"]["message"]["content"])
 
     def cost(self) -> float:
         total = 0.0
