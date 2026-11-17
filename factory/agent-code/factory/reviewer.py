@@ -203,6 +203,9 @@ def build_review(
 class Review(Run):
     AGENT = "pr_reviewer"
     TOKEN_CAP = 250_000
+    cost_cap: float | None = (
+        None  # per-review override of LARGE_REVIEW_USD (one-off large reviews)
+    )
     EXTRA_KEYS = (
         "review",
         "summary",
@@ -214,6 +217,7 @@ class Review(Run):
         "findings",
         "context_sections",
         "passes",
+        "source_run",
     )
 
     def __init__(
@@ -308,6 +312,16 @@ class Review(Run):
             "CI already enforces: ruff check + ruff format --check on changed Python files, pytest tests, "
             f"cdk synth, gitleaks. Workflows: {', '.join(Path(w).name for w in workflows)}.\n"
             f"CONTRIBUTING.md (excerpt):\n{show('CONTRIBUTING.md')[:3000]}"
+        )
+
+    def diff_files(self) -> tuple[str, dict[str, dict]]:
+        """(head sha, parsed -U0 diff) for the PR, fetched the same way execute() does."""
+        base = self.fetch()
+        head = self.pr["head"]["sha"]
+        return head, parse_diff(
+            self.git(
+                "diff", "-U0", "--no-color", "--find-renames", base, head, cwd=self.repo
+            )
         )
 
     def excerpt(self, head: str, path: str, info: dict, context: int = CONTEXT) -> str:
@@ -454,7 +468,8 @@ class Review(Run):
         ]
         risky = list(dict.fromkeys(p for p in [*sensitive, *flagged] if p in files))
         risky.sort(key=lambda p: (p not in sensitive, -len(files[p]["added"])))
-        left = LARGE_REVIEW_USD - self.cost()
+        cap = self.cost_cap or LARGE_REVIEW_USD
+        left = cap - self.cost()
         # A fresh prompt is billed as a cache write on these models, so that is the input price. Output is
         # typically 100-600 tokens; reserve ASTRA_OUT_RESERVE and let maxTokens stop a runaway answer.
         p_in, p_out, _, p_write = PRICES[ASTRA]
@@ -490,9 +505,7 @@ class Review(Run):
         if (
             not excerpts or chars < len(intro) + MIN_ASTRA_CHARS
         ):  # too little budget left for a useful second pass
-            passes[0]["astra"] = (
-                f"skipped: ${max(left, 0):.3f} left of ${LARGE_REVIEW_USD}"
-            )
+            passes[0]["astra"] = f"skipped: ${max(left, 0):.3f} left of ${cap}"
             return {
                 "summary": summaries[0] if summaries else "",
                 "verdict": "changes needed"

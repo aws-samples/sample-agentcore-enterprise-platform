@@ -24,7 +24,7 @@ from factory.ci_fixer import Run
 from factory.consult import Consult
 from factory.developer import Developer, MergeHandler, next_task, open_agent_prs
 from factory.pm import ProductManager
-from factory.reviewer import Review
+from factory.reviewer import Review, build_review
 
 REPO = os.environ.get(
     "FACTORY_REPO", "aws-samples/sample-agentcore-enterprise-platform"
@@ -103,6 +103,39 @@ def validate(payload: dict) -> dict:
         number = int(payload["pull_request"]["number"])
         if number <= 0:
             raise ValueError("pull_request.number must be positive")
+        if payload.get("publish"):
+            if not re.fullmatch(
+                r"\d{4}-\d\d-\d\dT[\d:.+]+#[0-9a-f]{12}",
+                str(payload.get("from_run_sk", "")),
+            ):
+                raise ValueError(
+                    "publish needs from_run_sk: the runs-table sort key of the stored review"
+                )
+            extras = payload.get("extra_findings") or []
+            if not isinstance(extras, list) or len(extras) > 10:
+                raise ValueError("extra_findings must be a list of at most 10")
+            for f in extras:
+                if not (
+                    isinstance(f, dict)
+                    and isinstance(f.get("path"), str)
+                    and isinstance(f.get("line"), int)
+                    and f.get("severity") in ("blocker", "major", "minor", "nit")
+                    and isinstance(f.get("title"), str)
+                    and 0 < len(f["title"]) <= 200
+                    and isinstance(f.get("body"), str)
+                    and 0 < len(f["body"]) <= 3000
+                ):
+                    raise ValueError(
+                        "each extra finding needs path, int line, severity, title, body"
+                    )
+            if (
+                not isinstance(payload.get("summary", ""), str)
+                or len(payload.get("summary", "")) > 4000
+            ):
+                raise ValueError("summary must be a string of at most 4000 characters")
+        cap = payload.get("cost_cap_usd")
+        if cap is not None and not (isinstance(cap, (int, float)) and 0 < cap <= 2.0):
+            raise ValueError("cost_cap_usd must be a number in (0, 2.0]")
         return {"id": number}
     if payload.get("role") == "product_manager" and payload.get("mode") == "consult":
         if not re.fullmatch(r"[\w-]{8,64}", str(payload.get("conversation_id", ""))):
@@ -214,6 +247,15 @@ def handle_review(payload: dict) -> dict:
         Path("/tmp/factory") / f"pr-{number}",
         REGION,
     )
+    if payload.get(
+        "cost_cap_usd"
+    ):  # one-off large review: the dollar cap governs, so lift the token cap with it
+        agent.cost_cap = float(payload["cost_cap_usd"])
+        agent.TOKEN_CAP = 1_200_000
+    if payload.get("publish"):
+        # One-off, explicitly requested publish of a stored review; the global switch stays off.
+        rec = _safe(lambda: publish_stored(agent, pr, token, payload))
+        return _finish(agent, rec, False, ("pr_url", "review", "source_run"))
     if pr["user"]["login"] == "dependabot[bot]":
         rec = {"outcome": "skipped", "reason": "dependabot PR"}
     else:
@@ -236,6 +278,51 @@ def handle_review(payload: dict) -> dict:
             for k in ("review", "verdict", "summary", "model_reason", "files_skipped")
             if rec.get(k)
         },
+    }
+
+
+def publish_stored(agent: Review, pr: dict, token: str, payload: dict) -> dict:
+    """Post a review stored by an earlier dry run, plus human-added findings, as one COMMENT review."""
+    if not token:
+        return {"outcome": "failed", "reason": "no GitHub App token"}
+    from boto3.dynamodb.conditions import Key
+
+    table = boto3.resource("dynamodb", region_name=REGION).Table(
+        os.environ["FACTORY_RUNS_TABLE"]
+    )
+    items = table.query(
+        KeyConditionExpression=Key("pk").eq("agent#pr_reviewer")
+        & Key("sk").eq(payload["from_run_sk"])
+    )["Items"]
+    if not items:
+        return {"outcome": "failed", "reason": "stored review not found"}
+    item = items[0]
+    if item.get("trigger") != str(pr["number"]) or item.get("ref") != pr["head"]["sha"]:
+        return {
+            "outcome": "failed",
+            "reason": "stored review is for another PR or an older head; re-review first",
+        }
+    extras = [
+        f | {"title": f"(not from the reviewer agent) {f['title']}", "suggestion": ""}
+        for f in payload.get("extra_findings") or []
+    ]
+    result = {
+        "summary": payload.get("summary") or item.get("summary", ""),
+        "verdict": item.get("verdict", ""),
+        "findings": json.loads(item.get("findings") or "[]") + extras,
+    }
+    head, files = agent.diff_files()
+    review = build_review(result, files, head, "+".join(item.get("models") or {}), [])
+    review["event"] = (
+        "COMMENT"  # posting was approved as a comment: never APPROVE or REQUEST_CHANGES
+    )
+    url = github.post_review(REPO, int(pr["number"]), token, review)
+    return {
+        "outcome": "review_posted",
+        "pr_url": url,
+        "review": review,
+        "source_run": f"{item['sk']} (review cost ${item.get('est_cost_usd')})",
+        "check_passed": True,
     }
 
 
