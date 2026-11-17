@@ -1,0 +1,84 @@
+"""HMAC gate of the webhook ingress (no AWS). Run: python -m pytest factory/infra/tests -q"""
+
+import hashlib
+import hmac
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lambdas"))
+import ingress
+
+SECRET = b"test-secret"
+REPO = "aws-samples/sample-agentcore-enterprise-platform"
+
+
+@pytest.fixture
+def sent(monkeypatch):
+    sent = []
+    monkeypatch.setattr(ingress, "_secret", lambda: SECRET)
+    monkeypatch.setattr(ingress, "_first_delivery", lambda d: True)
+    monkeypatch.setattr(ingress, "_enqueue", lambda m, group, dedupe_id: sent.append(m))
+    return sent
+
+
+def event(body: bytes, sig: str | None) -> dict:
+    headers = {"X-GitHub-Event": "workflow_run", "X-GitHub-Delivery": "d-1"}
+    if sig is not None:
+        headers["X-Hub-Signature-256"] = sig
+    return {"headers": headers, "body": body.decode(), "isBase64Encoded": False}
+
+
+def sign(body: bytes) -> str:
+    return "sha256=" + hmac.new(SECRET, body, hashlib.sha256).hexdigest()
+
+
+BODY = json.dumps(
+    {
+        "action": "completed",
+        "repository": {"full_name": REPO},
+        "workflow_run": {
+            "id": 42,
+            "conclusion": "failure",
+            "head_branch": "main",
+            "path": ".github/workflows/x.yml",
+            "head_repository": {"full_name": REPO},
+        },
+    }
+).encode()
+
+
+def test_valid_signature_is_queued(sent):
+    assert ingress.handler(event(BODY, sign(BODY)), None)["statusCode"] == 202
+    assert sent and sent[0]["workflow_run"]["id"] == 42
+
+
+def test_tampered_byte_is_rejected(sent):
+    tampered = BODY.replace(b"42", b"43")
+    assert ingress.handler(event(tampered, sign(BODY)), None)["statusCode"] == 401
+    assert not sent
+
+
+def test_missing_or_malformed_header_is_rejected(sent):
+    assert ingress.handler(event(BODY, None), None)["statusCode"] == 401
+    assert ingress.handler(event(BODY, sign(BODY)[7:]), None)["statusCode"] == 401
+    assert not sent
+
+
+def test_secret_unavailable_fails_closed(sent, monkeypatch):
+    def boom():
+        raise ValueError("no secret")
+
+    monkeypatch.setattr(ingress, "_secret", boom)
+    assert ingress.handler(event(BODY, sign(BODY)), None)["statusCode"] == 500
+    assert not sent
+
+
+def test_other_repo_and_factory_branch_are_dropped(sent):
+    other = BODY.replace(REPO.encode(), b"someone/else", 1)
+    assert ingress.handler(event(other, sign(other)), None)["statusCode"] == 202
+    loop = BODY.replace(b'"main"', b'"factory/ci-fix/1"')
+    assert ingress.handler(event(loop, sign(loop)), None)["statusCode"] == 202
+    assert not sent

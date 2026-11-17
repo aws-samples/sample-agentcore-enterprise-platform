@@ -1,0 +1,461 @@
+secret-boundary	UNKNOWN STEP	﻿2026-11-10T13:27:37.1134364Z Current runner version: '2.338.2'
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1162194Z ##[group]Runner Image Provisioner
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1163174Z Hosted Compute Agent
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1163935Z Version: 20261028.624
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1164772Z Commit: 54898b74c23fde5556c9b3c3a2290865feef0dfe
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1165661Z Build Date: 2026-10-28T21:51:42Z
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1166816Z Worker ID: {a2bbe818-c352-413e-bba8-1d08c8b30531}
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1167824Z Region: centralus
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1168594Z Cloud: Azure
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1169327Z ##[endgroup]
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1171131Z ##[group]Operating System
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1171994Z Ubuntu
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1172645Z 26.04.1
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1173288Z LTS
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1174073Z ##[endgroup]
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1174747Z ##[group]Runner Image
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1175596Z Image: ubuntu-26.04
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1176547Z Version: 20261101.186.1
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1178174Z Included Software: https://github.com/actions/runner-images/blob/ubuntu26/20261101.186/images/ubuntu/Ubuntu2604-Readme.md
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1180197Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu26%2F20261101.186
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1181494Z ##[endgroup]
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1182929Z ##[group]GITHUB_TOKEN Permissions
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1185257Z Contents: read
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1186176Z Metadata: read
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1186858Z ##[endgroup]
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1189084Z Secret source: Dependabot
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1190126Z Cache mode: write
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1191072Z Prepare workflow directory
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1459996Z Prepare all required actions
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.1514984Z Getting action download info
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.3851717Z Download action repository 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.5600173Z Download action repository 'actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97' (SHA:5fda3b95a4ea91299a34e894583c3862153e4b97)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.6550049Z Download action repository 'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38' (SHA:249970729cb0ef3589644e2896645e5dc5ba9c38)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.8335990Z Complete job name: secret-boundary
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.9041293Z ##[group]Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.9042287Z with:
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.9042752Z   fetch-depth: 0
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.9043339Z   repository: aws-samples/sample-agentcore-enterprise-platform
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.9046914Z   token: ***
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.9047406Z   ssh-strict: true
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.9047883Z   ssh-user: git
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.9048347Z   persist-credentials: true
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.9048832Z   clean: true
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.9049358Z   sparse-checkout-cone-mode: true
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.9049871Z   fetch-tags: false
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.9050307Z   show-progress: true
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.9050810Z   lfs: false
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.9051242Z   submodules: false
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.9051749Z   set-safe-directory: true
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.9052328Z   allow-unsafe-pr-checkout: false
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:37.9053028Z ##[endgroup]
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1142160Z Syncing repository: aws-samples/sample-agentcore-enterprise-platform
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1144078Z ##[group]Getting Git version info
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1145077Z Working directory is '/home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform'
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1146632Z [command]/usr/bin/git version
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1159142Z git version 2.56.0
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1206218Z ##[endgroup]
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1214072Z Temporarily overriding HOME='/home/runner/work/_temp/a773ab3a-f00d-4caa-87b3-ef03ef51710e' before making global git config changes
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1215391Z Adding repository directory to the temporary git global config as a safe directory
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1218052Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1263141Z Deleting the contents of '/home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform'
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1265682Z ##[group]Determining repository object format
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1267388Z ##[endgroup]
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1268509Z ##[group]Initializing the repository
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1271392Z [command]/usr/bin/git init /home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1342124Z hint: Using 'master' as the name for the initial branch. This default branch name
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1343176Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1344065Z hint: to use in all of your new repositories, which will suppress this warning,
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1344801Z hint: call:
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1345278Z hint:
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1345992Z hint: 	git config --global init.defaultBranch <name>
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1346752Z hint:
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1347390Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1348295Z hint: 'development'. The just-created branch can be renamed via this command:
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1349019Z hint:
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1349508Z hint: 	git branch -m <name>
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1350066Z hint:
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1351099Z hint: Disable this message with "git config set advice.defaultBranchName false"
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1352641Z Initialized empty Git repository in /home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform/.git/
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1360132Z [command]/usr/bin/git remote add origin https://github.com/aws-samples/sample-agentcore-enterprise-platform
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1399804Z ##[endgroup]
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1400627Z ##[group]Disabling automatic garbage collection
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1402240Z [command]/usr/bin/git config --local gc.auto 0
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1429494Z ##[endgroup]
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1430484Z ##[group]Setting up auth
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1432804Z Removing SSH command configuration
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1433950Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1460529Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1813610Z Removing HTTP extra header
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1819764Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.1851216Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.2091577Z Removing includeIf entries pointing to credentials config files
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.2096559Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.2125030Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.2355494Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-f3825bf9-f173-4058-a117-924a6ee2a43f.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.2387853Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform/.git.path /home/runner/work/_temp/git-credentials-f3825bf9-f173-4058-a117-924a6ee2a43f.config
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.2415972Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-f3825bf9-f173-4058-a117-924a6ee2a43f.config
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.2444530Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-f3825bf9-f173-4058-a117-924a6ee2a43f.config
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.2472539Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-f3825bf9-f173-4058-a117-924a6ee2a43f.config
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.2499933Z ##[endgroup]
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.2500551Z ##[group]Fetching the repository
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.2505158Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules origin +refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/* +de4305d1984e3792b8da26ce6095aad5f284c857:refs/remotes/pull/116/merge
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8937528Z From https://github.com/aws-samples/sample-agentcore-enterprise-platform
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8947415Z  * [new branch]      chore/final-live-evidence                -> origin/chore/final-live-evidence
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8948913Z  * [new branch]      chore/live-evidence-closure              -> origin/chore/live-evidence-closure
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8950350Z  * [new branch]      chore/make-check-shell                   -> origin/chore/make-check-shell
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8951867Z  * [new branch]      chore/repository-structure               -> origin/chore/repository-structure
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8953942Z  * [new branch]      ci/dependabot-hold-mcp-major             -> origin/ci/dependabot-hold-mcp-major
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8955436Z  * [new branch]      ci/shell-gate                            -> origin/ci/shell-gate
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8957583Z  * [new branch]      dependabot/docker/agent-code/agui-langgraph-agent/docker/library/python-3.15-slim -> origin/dependabot/docker/agent-code/agui-langgraph-agent/docker/library/python-3.15-slim
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8960430Z  * [new branch]      dependabot/docker/agent-code/agui-strands-agent/docker/library/python-3.15-slim -> origin/dependabot/docker/agent-code/agui-strands-agent/docker/library/python-3.15-slim
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8963429Z  * [new branch]      dependabot/docker/agent-code/claude-sdk-agent/docker/library/python-3.15-slim -> origin/dependabot/docker/agent-code/claude-sdk-agent/docker/library/python-3.15-slim
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8966992Z  * [new branch]      dependabot/docker/agent-code/claude-sdk-multi-agent/docker/library/python-3.15-slim -> origin/dependabot/docker/agent-code/claude-sdk-multi-agent/docker/library/python-3.15-slim
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8969530Z  * [new branch]      dependabot/docker/agent-code/code-agent/docker/library/python-3.15-slim -> origin/dependabot/docker/agent-code/code-agent/docker/library/python-3.15-slim
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8971913Z  * [new branch]      dependabot/docker/agent-code/langgraph-agent/docker/library/python-3.15-slim -> origin/dependabot/docker/agent-code/langgraph-agent/docker/library/python-3.15-slim
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8974144Z  * [new branch]      dependabot/docker/agent-code/orchestrator/docker/library/python-3.15-slim -> origin/dependabot/docker/agent-code/orchestrator/docker/library/python-3.15-slim
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8976549Z  * [new branch]      dependabot/docker/agent-code/research-agent/docker/library/python-3.15-slim -> origin/dependabot/docker/agent-code/research-agent/docker/library/python-3.15-slim
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8978836Z  * [new branch]      dependabot/docker/agent-code/strands-agent/docker/library/python-3.15-slim -> origin/dependabot/docker/agent-code/strands-agent/docker/library/python-3.15-slim
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8980653Z  * [new branch]      dependabot/github_actions/actions-c7dbcbd817 -> origin/dependabot/github_actions/actions-c7dbcbd817
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8982330Z  * [new branch]      dependabot/pip/agent-code/agui-langgraph-agent/langgraph-1.2.14 -> origin/dependabot/pip/agent-code/agui-langgraph-agent/langgraph-1.2.14
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8984588Z  * [new branch]      dependabot/pip/agent-code/agui-langgraph-agent/mcp-1.30.0 -> origin/dependabot/pip/agent-code/agui-langgraph-agent/mcp-1.30.0
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8987515Z  * [new branch]      dependabot/pip/agent-code/agui-langgraph-agent/pyjwt-2.15.0 -> origin/dependabot/pip/agent-code/agui-langgraph-agent/pyjwt-2.15.0
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8990342Z  * [new branch]      dependabot/pip/agent-code/agui-strands-agent/mcp-1.30.0 -> origin/dependabot/pip/agent-code/agui-strands-agent/mcp-1.30.0
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8992950Z  * [new branch]      dependabot/pip/agent-code/agui-strands-agent/pyjwt-2.15.0 -> origin/dependabot/pip/agent-code/agui-strands-agent/pyjwt-2.15.0
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8995128Z  * [new branch]      dependabot/pip/agent-code/claude-sdk-agent/mcp-1.30.0 -> origin/dependabot/pip/agent-code/claude-sdk-agent/mcp-1.30.0
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8997445Z  * [new branch]      dependabot/pip/agent-code/langgraph-agent/pyjwt-2.15.0 -> origin/dependabot/pip/agent-code/langgraph-agent/pyjwt-2.15.0
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.8998947Z  * [new branch]      dependabot/pip/python-deps-cc832ef96a    -> origin/dependabot/pip/python-deps-cc832ef96a
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9000466Z  * [new branch]      deps/langchain-claude-family             -> origin/deps/langchain-claude-family
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9001777Z  * [new branch]      deps/root-toolchain                      -> origin/deps/root-toolchain
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9002784Z  * [new branch]      deps/strands-family                      -> origin/deps/strands-family
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9003801Z  * [new branch]      docs-migration-eba-site                  -> origin/docs-migration-eba-site
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9005048Z  * [new branch]      docs/architecture-accounts-diagram       -> origin/docs/architecture-accounts-diagram
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9006597Z  * [new branch]      docs/module-7-gateway-targets            -> origin/docs/module-7-gateway-targets
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9007730Z  * [new branch]      docs/participant-guide                   -> origin/docs/participant-guide
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9009569Z  * [new branch]      docs/record-v0.1.0-release               -> origin/docs/record-v0.1.0-release
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9011262Z  * [new branch]      docs/security-controls-accuracy          -> origin/docs/security-controls-accuracy
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9013149Z  * [new branch]      feat/cloudwatch-alarms-dashboard         -> origin/feat/cloudwatch-alarms-dashboard
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9015133Z  * [new branch]      feat/cost-allocation-tags                -> origin/feat/cost-allocation-tags
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9017222Z  * [new branch]      feat/customer-preflight-v0.1             -> origin/feat/customer-preflight-v0.1
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9018934Z  * [new branch]      feat/deployment-contract                 -> origin/feat/deployment-contract
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9020462Z  * [new branch]      feat/docs-modules                        -> origin/feat/docs-modules
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9021882Z  * [new branch]      feat/eba-console                         -> origin/feat/eba-console
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9023456Z  * [new branch]      feat/identity-token-controls             -> origin/feat/identity-token-controls
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9025166Z  * [new branch]      feat/migration-cutover-plan              -> origin/feat/migration-cutover-plan
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9026967Z  * [new branch]      feat/migration-data-plan                 -> origin/feat/migration-data-plan
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9028479Z  * [new branch]      feat/migration-eba-verification          -> origin/feat/migration-eba-verification
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9030386Z  * [new branch]      feat/migration-network-probe             -> origin/feat/migration-network-probe
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9031578Z  * [new branch]      feat/migration-readiness-gates           -> origin/feat/migration-readiness-gates
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9032804Z  * [new branch]      feat/platform-config                     -> origin/feat/platform-config
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9033955Z  * [new branch]      feat/production-mode-g1                  -> origin/feat/production-mode-g1
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9035161Z  * [new branch]      feat/profiles-materialize-presets        -> origin/feat/profiles-materialize-presets
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9036843Z  * [new branch]      feat/research-agent-search               -> origin/feat/research-agent-search
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9038473Z  * [new branch]      feat/use-case-extension                  -> origin/feat/use-case-extension
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9040289Z  * [new branch]      feat/verify-command                      -> origin/feat/verify-command
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9041589Z  * [new branch]      feat/web-search-connector                -> origin/feat/web-search-connector
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9042586Z  * [new branch]      fix-readme                               -> origin/fix-readme
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9043508Z  * [new branch]      fix/3lo-secrets                          -> origin/fix/3lo-secrets
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9044520Z  * [new branch]      fix/a2a-header-allowlist                 -> origin/fix/a2a-header-allowlist
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9046269Z  * [new branch]      fix/a2a-protocol-contract                -> origin/fix/a2a-protocol-contract
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9048003Z  * [new branch]      fix/dashboard-truth                      -> origin/fix/dashboard-truth
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9049976Z  * [new branch]      fix/deployment-account-secret-guard      -> origin/fix/deployment-account-secret-guard
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9052012Z  * [new branch]      fix/docsify-project-path                 -> origin/fix/docsify-project-path
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9053888Z  * [new branch]      fix/fail-closed-cli                      -> origin/fix/fail-closed-cli
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9056016Z  * [new branch]      fix/guardrail-check-under-allowlist      -> origin/fix/guardrail-check-under-allowlist
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9058109Z  * [new branch]      fix/idp-secret-name-into-main            -> origin/fix/idp-secret-name-into-main
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9059934Z  * [new branch]      fix/labeler-config                       -> origin/fix/labeler-config
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9061763Z  * [new branch]      fix/migration-adapter-runtime            -> origin/fix/migration-adapter-runtime
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9063650Z  * [new branch]      fix/migration-contract                   -> origin/fix/migration-contract
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9065356Z  * [new branch]      fix/module-prereqs                       -> origin/fix/module-prereqs
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9067140Z  * [new branch]      fix/security-preset-compat               -> origin/fix/security-preset-compat
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9069009Z  * [new branch]      fix/strands-agent-verify-identity        -> origin/fix/strands-agent-verify-identity
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9070285Z  * [new branch]      main                                     -> origin/main
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9071519Z  * [new branch]      security/production-readiness-g0         -> origin/security/production-readiness-g0
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9072921Z  * [new tag]         v0.1.0                                   -> v0.1.0
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9074213Z  * [new ref]         de4305d1984e3792b8da26ce6095aad5f284c857 -> pull/116/merge
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9076865Z ##[endgroup]
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9077547Z ##[group]Determining the checkout info
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9078284Z ##[endgroup]
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9078751Z [command]/usr/bin/git sparse-checkout disable
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9080622Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9082942Z ##[group]Checking out the ref
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9084080Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/116/merge
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9292091Z Note: switching to 'refs/remotes/pull/116/merge'.
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9292980Z 
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9293720Z You are in 'detached HEAD' state. You can look around, make experimental
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9295349Z changes and commit them, and you can discard any commits you make in this
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9297178Z state without impacting any branches by switching back to a branch.
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9298140Z 
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9298726Z If you want to create a new branch to retain commits you create, you may
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9299865Z do so (now or later) by using -c with the switch command. Example:
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9300698Z 
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9301134Z   git switch -c <new-branch-name>
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9301604Z 
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9301961Z Or undo this operation with:
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9302592Z 
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9302920Z   git switch -
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9303249Z 
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9303906Z Turn off this advice by setting config variable advice.detachedHead to false
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9304920Z 
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9306124Z HEAD is now at de4305d Merge 2447b950ab1a6be9efa567998429194e35151e5f into ad346d8fb9f3f78ead9022dae79ab06edc0280fa
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9308980Z ##[endgroup]
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9340876Z [command]/usr/bin/git log -1 --format=%H
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9362776Z de4305d1984e3792b8da26ce6095aad5f284c857
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9603979Z ##[group]Run set -euo pipefail
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9605001Z ^[[36;1mset -euo pipefail^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9606387Z ^[[36;1marchive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9608461Z ^[[36;1murl="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9610703Z ^[[36;1mcurl --fail --silent --show-error --location --output "/tmp/${archive}" "${url}"^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9612516Z ^[[36;1mecho "${GITLEAKS_SHA256}  /tmp/${archive}" | sha256sum --check^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9613908Z ^[[36;1mtar -xzf "/tmp/${archive}" -C /tmp gitleaks^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9615267Z ^[[36;1msudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9616619Z ^[[36;1mgitleaks version^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9664181Z shell: /usr/bin/bash -e {0}
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9665027Z env:
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9665690Z   GITLEAKS_VERSION: 8.30.1
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9667262Z   GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:38.9668752Z ##[endgroup]
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:39.2226211Z /tmp/gitleaks_8.30.1_linux_x64.tar.gz: OK
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:39.5325555Z 8.30.1
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:39.5391915Z ##[group]Run set +e
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:39.5392310Z ^[[36;1mset +e^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:39.5392699Z ^[[36;1mprintf 'api_key = "AKIA%s"\n' '1234567890ABCDEF' |^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:39.5393261Z ^[[36;1m  gitleaks stdin --config .gitleaks.toml --redact --no-banner --log-level error^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:39.5393774Z ^[[36;1mscan_result=$?^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:39.5394105Z ^[[36;1mset -e^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:39.5394440Z ^[[36;1mif [ "${scan_result}" -ne 1 ]; then^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:39.5394905Z ^[[36;1m  echo "Gitleaks failed to detect the synthetic credential canary" >&2^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:39.5395355Z ^[[36;1m  exit 1^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:39.5395658Z ^[[36;1mfi^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:39.5439726Z shell: /usr/bin/bash -e {0}
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:39.5440100Z ##[endgroup]
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:39.9083280Z ##[group]Run gitleaks git . --config .gitleaks.toml --redact --no-banner
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:39.9083727Z ^[[36;1mgitleaks git . --config .gitleaks.toml --redact --no-banner^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:39.9129306Z shell: /usr/bin/bash -e {0}
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:39.9129526Z ##[endgroup]
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:40.5338371Z ^[[90m1:27PM^[[0m ^[[32mINF^[[0m ^[[1m212 commits scanned.^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:40.5338993Z ^[[90m1:27PM^[[0m ^[[32mINF^[[0m ^[[1mscanned ~2933091 bytes (2.93 MB) in 399ms^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:40.5339513Z ^[[90m1:27PM^[[0m ^[[32mINF^[[0m ^[[1mno leaks found^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:40.5466982Z ##[group]Run actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:40.5467309Z with:
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:40.5467496Z   python-version: 3.13
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:40.5467692Z   cache: pip
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:40.5467856Z   check-latest: false
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:40.5469723Z   token: ***
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:40.5469895Z   update-environment: true
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:40.5470096Z   allow-prereleases: false
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:40.5470283Z   freethreaded: false
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:40.5470494Z ##[endgroup]
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:40.6418291Z ##[group]Installed versions
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:40.6492804Z Successfully set up CPython (3.13.18)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:40.6493423Z ##[endgroup]
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:40.8317189Z [command]/opt/hostedtoolcache/Python/3.13.18/x64/bin/pip cache dir
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.0657512Z /home/runner/.cache/pip
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.2445381Z pip cache is not found
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.2628520Z ##[group]Run actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.2629007Z with:
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.2629166Z   node-version: 22
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.2629339Z   check-latest: false
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.2631198Z   token: ***
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.2631374Z   package-manager-cache: true
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.2631571Z env:
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.2631778Z   pythonLocation: /opt/hostedtoolcache/Python/3.13.18/x64
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.2632140Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.13.18/x64/lib/pkgconfig
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.2632486Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.18/x64
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.2632788Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.18/x64
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.2633078Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.18/x64
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.2633376Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.13.18/x64/lib
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.2633625Z ##[endgroup]
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.3790576Z Found in cache @ /opt/hostedtoolcache/node/22.23.4/x64
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.3792295Z ##[group]Environment details
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.6996786Z node: v22.23.4
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.6997076Z npm: 10.9.9
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.6997252Z yarn: 1.22.22
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.6997744Z ##[endgroup]
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.7108575Z ##[group]Run npm install --global aws-cdk@2.1135.1
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.7108897Z ^[[36;1mnpm install --global aws-cdk@2.1135.1^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.7109154Z ^[[36;1mpip install -r requirements.txt^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.7158486Z shell: /usr/bin/bash -e {0}
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.7158700Z env:
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.7158927Z   pythonLocation: /opt/hostedtoolcache/Python/3.13.18/x64
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.7159284Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.13.18/x64/lib/pkgconfig
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.7159618Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.18/x64
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.7159927Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.18/x64
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.7160220Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.18/x64
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.7160527Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.13.18/x64/lib
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:41.7160798Z ##[endgroup]
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:42.7616570Z 
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:42.7621923Z added 1 package in 996ms
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:43.4223510Z Collecting aws-cdk-lib>=2.275.0 (from -r requirements.txt (line 1))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:43.4857032Z   Downloading aws_cdk_lib-2.275.0-py3-none-any.whl.metadata (93 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:43.6185150Z Collecting constructs<11.0.0,>=10.8.1 (from -r requirements.txt (line 2))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:43.6316405Z   Downloading constructs-10.8.1-py3-none-any.whl.metadata (2.9 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:43.6683411Z Collecting pyyaml>=6.0.3 (from -r requirements.txt (line 5))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:43.6813398Z   Downloading pyyaml-6.0.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.4 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:43.8215542Z Collecting boto3>=1.43.126 (from -r requirements.txt (line 8))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:43.8346204Z   Downloading boto3-1.43.127-py3-none-any.whl.metadata (6.6 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:43.9969178Z Collecting botocore>=1.43.126 (from -r requirements.txt (line 9))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:44.0100904Z   Downloading botocore-1.43.127-py3-none-any.whl.metadata (5.6 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:44.0377526Z Collecting requests>=2.34.2 (from -r requirements.txt (line 10))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:44.0508079Z   Downloading requests-2.34.2-py3-none-any.whl.metadata (4.8 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:44.0738950Z Collecting colorama>=0.4.6 (from -r requirements.txt (line 11))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:44.0869255Z   Downloading colorama-0.4.6-py2.py3-none-any.whl.metadata (17 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:44.1170649Z Collecting pytest>=9.2.0 (from -r requirements.txt (line 12))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:44.1300034Z   Downloading pytest-9.2.0-py3-none-any.whl.metadata (7.9 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:44.2097241Z Collecting pydantic<3,>=2.14.3 (from -r requirements.txt (line 13))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:44.2225593Z   Downloading pydantic-2.14.3-py3-none-any.whl.metadata (141 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:44.2703820Z Collecting jsii<2.0.0,>=1.139.0 (from constructs<11.0.0,>=10.8.1->-r requirements.txt (line 2))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:44.2843848Z   Downloading jsii-1.142.0-py3-none-any.whl.metadata (5.0 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:44.3061297Z Collecting publication>=0.0.3 (from constructs<11.0.0,>=10.8.1->-r requirements.txt (line 2))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:44.3187988Z   Downloading publication-0.0.3-py2.py3-none-any.whl.metadata (8.7 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:44.3420392Z Collecting annotated-types>=0.6.0 (from pydantic<3,>=2.14.3->-r requirements.txt (line 13))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:44.3547431Z   Downloading annotated_types-0.8.0-py3-none-any.whl.metadata (15 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:44.8865422Z Collecting pydantic-core==2.50.4 (from pydantic<3,>=2.14.3->-r requirements.txt (line 13))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:44.8996328Z   Downloading pydantic_core-2.50.4-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (6.6 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:44.9233568Z Collecting typing-extensions>=4.16.0 (from pydantic<3,>=2.14.3->-r requirements.txt (line 13))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:44.9362013Z   Downloading typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:44.9751826Z Collecting typing-inspection>=0.4.4 (from pydantic<3,>=2.14.3->-r requirements.txt (line 13))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:44.9879668Z   Downloading typing_inspection-0.4.5-py3-none-any.whl.metadata (2.6 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.0115703Z Collecting attrs<27.0,>=21.2 (from jsii<2.0.0,>=1.139.0->constructs<11.0.0,>=10.8.1->-r requirements.txt (line 2))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.0246056Z   Downloading attrs-26.1.0-py3-none-any.whl.metadata (8.8 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.0480498Z Collecting cattrs<27.0,>=1.8 (from jsii<2.0.0,>=1.139.0->constructs<11.0.0,>=10.8.1->-r requirements.txt (line 2))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.0608441Z   Downloading cattrs-26.2.1-py3-none-any.whl.metadata (8.5 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.1059807Z Collecting typeguard==2.13.3 (from jsii<2.0.0,>=1.139.0->constructs<11.0.0,>=10.8.1->-r requirements.txt (line 2))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.1190257Z   Downloading typeguard-2.13.3-py3-none-any.whl.metadata (3.6 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.1419664Z Collecting python-dateutil (from jsii<2.0.0,>=1.139.0->constructs<11.0.0,>=10.8.1->-r requirements.txt (line 2))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.1546709Z   Downloading python_dateutil-4.0.0-py3-none-any.whl.metadata (7.3 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.1959156Z Collecting aws-cdk.asset-awscli-v1==2.2.292 (from aws-cdk-lib>=2.275.0->-r requirements.txt (line 1))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.2087398Z   Downloading aws_cdk_asset_awscli_v1-2.2.292-py3-none-any.whl.metadata (1.1 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.2303233Z Collecting aws-cdk.asset-node-proxy-agent-v6<3.0.0,>=2.1.3 (from aws-cdk-lib>=2.275.0->-r requirements.txt (line 1))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.2430114Z   Downloading aws_cdk_asset_node_proxy_agent_v6-2.1.3-py3-none-any.whl.metadata (1.2 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.3040843Z Collecting aws-cdk.cloud-assembly-schema<56.0.0,>=55.0.0 (from aws-cdk-lib>=2.275.0->-r requirements.txt (line 1))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.3169785Z   Downloading aws_cdk_cloud_assembly_schema-55.4.0-py3-none-any.whl.metadata (3.9 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.3563198Z Collecting jmespath<2.0.0,>=0.7.1 (from boto3>=1.43.126->-r requirements.txt (line 8))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.3691245Z   Downloading jmespath-1.1.0-py3-none-any.whl.metadata (7.6 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.3939054Z Collecting s3transfer<0.20.0,>=0.19.0 (from boto3>=1.43.126->-r requirements.txt (line 8))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.4068049Z   Downloading s3transfer-0.19.3-py3-none-any.whl.metadata (1.7 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.4203319Z Collecting python-dateutil (from jsii<2.0.0,>=1.139.0->constructs<11.0.0,>=10.8.1->-r requirements.txt (line 2))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.4330933Z   Downloading python_dateutil-2.9.0.post0-py2.py3-none-any.whl.metadata (8.4 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.4602235Z Collecting urllib3!=2.2.0,<3,>=1.25.4 (from botocore>=1.43.126->-r requirements.txt (line 9))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.4729535Z   Downloading urllib3-2.8.0-py3-none-any.whl.metadata (7.4 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.4960924Z Collecting six>=1.5 (from python-dateutil->jsii<2.0.0,>=1.139.0->constructs<11.0.0,>=10.8.1->-r requirements.txt (line 2))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.5090367Z   Downloading six-1.17.0-py2.py3-none-any.whl.metadata (1.7 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.6169095Z Collecting charset_normalizer<4,>=2 (from requests>=2.34.2->-r requirements.txt (line 10))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.6324812Z   Downloading charset_normalizer-3.5.2-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (46 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.6576844Z Collecting idna<4,>=2.5 (from requests>=2.34.2->-r requirements.txt (line 10))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.6704587Z   Downloading idna-3.20-py3-none-any.whl.metadata (7.2 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.6988918Z Collecting certifi>=2023.5.7 (from requests>=2.34.2->-r requirements.txt (line 10))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.7115781Z   Downloading certifi-2026.10.23-py3-none-any.whl.metadata (2.5 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.7336884Z Collecting iniconfig>=2 (from pytest>=9.2.0->-r requirements.txt (line 12))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.7463600Z   Downloading iniconfig-2.3.1-py3-none-any.whl.metadata (2.8 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.8117939Z Collecting packaging>=24 (from pytest>=9.2.0->-r requirements.txt (line 12))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.8245325Z   Downloading packaging-26.3-py3-none-any.whl.metadata (3.5 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.8459779Z Collecting pluggy<2,>=1.6 (from pytest>=9.2.0->-r requirements.txt (line 12))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.8587386Z   Downloading pluggy-1.7.0-py3-none-any.whl.metadata (5.0 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.8841342Z Collecting pygments>=2.15 (from pytest>=9.2.0->-r requirements.txt (line 12))
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.8971340Z   Downloading pygments-2.21.0-py3-none-any.whl.metadata (2.5 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.9178541Z Downloading constructs-10.8.1-py3-none-any.whl (787 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.9420299Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 787.0/787.0 kB 29.3 MB/s  0:00:00
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.9552774Z Downloading pydantic-2.14.3-py3-none-any.whl (494 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:45.9998340Z Downloading pydantic_core-2.50.4-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (2.3 MB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:46.0282219Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.3/2.3 MB 75.7 MB/s  0:00:00
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:46.0412254Z Downloading jsii-1.142.0-py3-none-any.whl (506 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:46.0580061Z Downloading typeguard-2.13.3-py3-none-any.whl (17 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:46.0730227Z Downloading attrs-26.1.0-py3-none-any.whl (67 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:46.0918128Z Downloading cattrs-26.2.1-py3-none-any.whl (74 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:46.1066049Z Downloading typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:46.1620957Z Downloading aws_cdk_lib-2.275.0-py3-none-any.whl (59.8 MB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:46.6927244Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 59.8/59.8 MB 112.7 MB/s  0:00:00
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:46.7068084Z Downloading aws_cdk_asset_awscli_v1-2.2.292-py3-none-any.whl (21.2 MB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:46.8853508Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 21.2/21.2 MB 118.8 MB/s  0:00:00
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:46.8984620Z Downloading aws_cdk_asset_node_proxy_agent_v6-2.1.3-py3-none-any.whl (1.6 MB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:47.0321242Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.6/1.6 MB 9.8 MB/s  0:00:00
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:47.0451693Z Downloading aws_cdk_cloud_assembly_schema-55.4.0-py3-none-any.whl (282 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:47.1459450Z Downloading pyyaml-6.0.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (801 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:47.1796226Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 801.6/801.6 kB 16.9 MB/s  0:00:00
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:47.1926624Z Downloading boto3-1.43.127-py3-none-any.whl (140 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:47.2776226Z Downloading botocore-1.43.127-py3-none-any.whl (16.3 MB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:47.4585590Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 16.3/16.3 MB 89.4 MB/s  0:00:00
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:47.4715976Z Downloading jmespath-1.1.0-py3-none-any.whl (20 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:47.5499441Z Downloading python_dateutil-2.9.0.post0-py2.py3-none-any.whl (229 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:47.5939532Z Downloading s3transfer-0.19.3-py3-none-any.whl (90 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:47.6298009Z Downloading urllib3-2.8.0-py3-none-any.whl (135 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:47.7606502Z Downloading requests-2.34.2-py3-none-any.whl (73 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:47.9396912Z Downloading charset_normalizer-3.5.2-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (254 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:47.9963178Z Downloading idna-3.20-py3-none-any.whl (69 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:48.0194504Z Downloading colorama-0.4.6-py2.py3-none-any.whl (25 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:48.0390937Z Downloading pytest-9.2.0-py3-none-any.whl (411 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:48.0613261Z Downloading pluggy-1.7.0-py3-none-any.whl (27 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:48.0834691Z Downloading annotated_types-0.8.0-py3-none-any.whl (13 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:48.1896039Z Downloading certifi-2026.10.23-py3-none-any.whl (135 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:48.2214176Z Downloading iniconfig-2.3.1-py3-none-any.whl (7.6 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:48.2362186Z Downloading packaging-26.3-py3-none-any.whl (129 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:48.2506009Z Downloading publication-0.0.3-py2.py3-none-any.whl (7.7 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:48.2645736Z Downloading pygments-2.21.0-py3-none-any.whl (1.3 MB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:48.2737719Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.3/1.3 MB 132.3 MB/s  0:00:00
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:48.2867417Z Downloading six-1.17.0-py2.py3-none-any.whl (11 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:48.3012315Z Downloading typing_inspection-0.4.5-py3-none-any.whl (14 kB)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:27:48.4980740Z Installing collected packages: publication, urllib3, typing-extensions, typeguard, six, pyyaml, pygments, pluggy, packaging, jmespath, iniconfig, idna, colorama, charset_normalizer, certifi, attrs, annotated-types, typing-inspection, requests, python-dateutil, pytest, pydantic-core, cattrs, pydantic, jsii, botocore, s3transfer, constructs, aws-cdk.cloud-assembly-schema, aws-cdk.asset-node-proxy-agent-v6, aws-cdk.asset-awscli-v1, boto3, aws-cdk-lib
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.2395237Z 
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.2425002Z Successfully installed annotated-types-0.8.0 attrs-26.1.0 aws-cdk-lib-2.275.0 aws-cdk.asset-awscli-v1-2.2.292 aws-cdk.asset-node-proxy-agent-v6-2.1.3 aws-cdk.cloud-assembly-schema-55.4.0 boto3-1.43.127 botocore-1.43.127 cattrs-26.2.1 certifi-2026.10.23 charset_normalizer-3.5.2 colorama-0.4.6 constructs-10.8.1 idna-3.20 iniconfig-2.3.1 jmespath-1.1.0 jsii-1.142.0 packaging-26.3 pluggy-1.7.0 publication-0.0.3 pydantic-2.14.3 pydantic-core-2.50.4 pygments-2.21.0 pytest-9.2.0 python-dateutil-2.9.0.post0 pyyaml-6.0.3 requests-2.34.2 s3transfer-0.19.3 six-1.17.0 typeguard-2.13.3 typing-extensions-4.16.0 typing-inspection-0.4.5 urllib3-2.8.0
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.2431635Z 
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.2431885Z [notice] A new release of pip is available: 26.2.2 -> 26.3
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.5901350Z [notice] To update, run: pip install --upgrade pip
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.5933438Z ##[group]Run cdk --app "python3 app.py" synth --quiet
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.5933785Z ^[[36;1mcdk --app "python3 app.py" synth --quiet^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.5934041Z ^[[36;1mpython -m pytest \^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.5934255Z ^[[36;1m  tests/test_auth_hardening.py \^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.5934489Z ^[[36;1m  tests/test_dashboard.py \^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.5934732Z ^[[36;1m  tests/test_m2m_secret_boundary.py \^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.5934995Z ^[[36;1m  tests/test_scripts_token.py \^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.5935272Z ^[[36;1m  --basetemp="${RUNNER_TEMP}/secret-boundary-pytest" \^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.5935545Z ^[[36;1m  -q^[[0m
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.5979261Z shell: /usr/bin/bash -e {0}
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.5979473Z env:
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.5979695Z   pythonLocation: /opt/hostedtoolcache/Python/3.13.18/x64
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.5980044Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.13.18/x64/lib/pkgconfig
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.5980386Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.18/x64
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.5980716Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.18/x64
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.5981019Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.18/x64
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.5981312Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.13.18/x64/lib
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.5981582Z   CDK_DEFAULT_ACCOUNT: 111111111111
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.5981801Z   CDK_DEFAULT_REGION: us-east-1
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:09.5982075Z ##[endgroup]
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:17.2328126Z [WARNING] aws-cdk-lib.Stack#addDependency is deprecated, and will be removed in the next major release.
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:17.2328882Z   Use `addStackDependency` instead.
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.0471965Z This CDK CLI is not compatible with the CDK library used by your application. Please upgrade the CLI to the latest version.
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.0473446Z (Cloud assembly schema version mismatch: Maximum schema version supported is 54.x.x, but found 55.0.0. You need at least CLI version 2.1148.0 to read this manifest.)
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.1627318Z ##[error]Process completed with exit code 1.
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.1731980Z Post job cleanup.
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.2452316Z [command]/usr/bin/git version
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.2490739Z git version 2.56.0
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.2551106Z Temporarily overriding HOME='/home/runner/work/_temp/a532e8ea-48b0-475b-8de7-2995a7b6cbb5' before making global git config changes
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.2551800Z Adding repository directory to the temporary git global config as a safe directory
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.2556712Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.2587163Z Removing SSH command configuration
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.2592373Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.2637658Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.2869769Z Removing HTTP extra header
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.2874323Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.2907319Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.3151930Z Removing includeIf entries pointing to credentials config files
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.3157826Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.3183400Z includeif.gitdir:/home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform/.git.path
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.3184759Z includeif.gitdir:/home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform/.git/worktrees/*.path
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.3185627Z includeif.gitdir:/github/workspace/.git.path
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.3186333Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.3192770Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform/.git.path
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.3213690Z /home/runner/work/_temp/git-credentials-f3825bf9-f173-4058-a117-924a6ee2a43f.config
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.3222089Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform/.git.path \/home\/runner\/work\/_temp\/git\-credentials\-f3825bf9\-f173\-4058\-a117\-924a6ee2a43f\.config
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.3262297Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform/.git/worktrees/*.path
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.3285062Z /home/runner/work/_temp/git-credentials-f3825bf9-f173-4058-a117-924a6ee2a43f.config
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.3293614Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform/.git/worktrees/*.path \/home\/runner\/work\/_temp\/git\-credentials\-f3825bf9\-f173\-4058\-a117\-924a6ee2a43f\.config
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.3323154Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.3343340Z /github/runner_temp/git-credentials-f3825bf9-f173-4058-a117-924a6ee2a43f.config
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.3349449Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-f3825bf9\-f173\-4058\-a117\-924a6ee2a43f\.config
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.3379102Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.3399422Z /github/runner_temp/git-credentials-f3825bf9-f173-4058-a117-924a6ee2a43f.config
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.3406708Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-f3825bf9\-f173\-4058\-a117\-924a6ee2a43f\.config
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.3436494Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.3672427Z Removing credentials config '/home/runner/work/_temp/git-credentials-f3825bf9-f173-4058-a117-924a6ee2a43f.config'
+secret-boundary	UNKNOWN STEP	2026-11-10T13:28:18.3821252Z Cleaning up orphan processes

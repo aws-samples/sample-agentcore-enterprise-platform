@@ -1,0 +1,281 @@
+python-lint	UNKNOWN STEP	﻿2026-09-21T20:31:20.9535951Z Current runner version: '2.337.0'
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9571435Z ##[group]Runner Image Provisioner
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9572832Z Hosted Compute Agent
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9574274Z Version: 20260828.587
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9575472Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9576726Z Build Date: 2026-08-28T16:44:25Z
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9577962Z Worker ID: {b33e7017-5766-4ef0-93b7-aeefb5bf05ff}
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9579201Z Azure Region: eastus
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9580255Z ##[endgroup]
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9582681Z ##[group]Operating System
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9584051Z Ubuntu
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9584937Z 24.04.5
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9585784Z LTS
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9586779Z ##[endgroup]
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9587721Z ##[group]Runner Image
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9588662Z Image: ubuntu-24.04
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9589749Z Version: 20260907.300.1
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9591904Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260907.300/images/ubuntu/Ubuntu2404-Readme.md
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9594986Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260907.300
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9596735Z ##[endgroup]
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9598624Z ##[group]GITHUB_TOKEN Permissions
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9601250Z Contents: read
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9602233Z Metadata: read
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9603185Z ##[endgroup]
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9606508Z Secret source: Actions
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9608179Z Cache mode: write
+python-lint	UNKNOWN STEP	2026-09-21T20:31:20.9609466Z Prepare workflow directory
+python-lint	UNKNOWN STEP	2026-09-21T20:31:21.0092723Z Prepare all required actions
+python-lint	UNKNOWN STEP	2026-09-21T20:31:21.0164848Z Getting action download info
+python-lint	UNKNOWN STEP	2026-09-21T20:31:21.2871981Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+python-lint	UNKNOWN STEP	2026-09-21T20:31:21.4338611Z Download action repository 'tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96' (SHA:9426d40962ed5378910ee2e21d5f8c6fcbf2dd96)
+python-lint	UNKNOWN STEP	2026-09-21T20:31:21.6007467Z Download action repository 'actions/setup-python@v7' (SHA:5fda3b95a4ea91299a34e894583c3862153e4b97)
+python-lint	UNKNOWN STEP	2026-09-21T20:31:21.8554302Z Complete job name: python-lint
+python-lint	UNKNOWN STEP	2026-09-21T20:31:21.9387837Z ##[group]Run actions/checkout@v7
+python-lint	UNKNOWN STEP	2026-09-21T20:31:21.9388818Z with:
+python-lint	UNKNOWN STEP	2026-09-21T20:31:21.9389429Z   repository: aws-samples/sample-agentcore-enterprise-platform
+python-lint	UNKNOWN STEP	2026-09-21T20:31:21.9393353Z   token: ***
+python-lint	UNKNOWN STEP	2026-09-21T20:31:21.9394078Z   ssh-strict: true
+python-lint	UNKNOWN STEP	2026-09-21T20:31:21.9394564Z   ssh-user: git
+python-lint	UNKNOWN STEP	2026-09-21T20:31:21.9395014Z   persist-credentials: true
+python-lint	UNKNOWN STEP	2026-09-21T20:31:21.9395494Z   clean: true
+python-lint	UNKNOWN STEP	2026-09-21T20:31:21.9395945Z   sparse-checkout-cone-mode: true
+python-lint	UNKNOWN STEP	2026-09-21T20:31:21.9396459Z   fetch-depth: 1
+python-lint	UNKNOWN STEP	2026-09-21T20:31:21.9396916Z   fetch-tags: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:21.9397355Z   show-progress: true
+python-lint	UNKNOWN STEP	2026-09-21T20:31:21.9397795Z   lfs: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:21.9398209Z   submodules: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:21.9398668Z   set-safe-directory: true
+python-lint	UNKNOWN STEP	2026-09-21T20:31:21.9399166Z   allow-unsafe-pr-checkout: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:21.9400003Z ##[endgroup]
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0444957Z Syncing repository: aws-samples/sample-agentcore-enterprise-platform
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0448079Z ##[group]Getting Git version info
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0449939Z Working directory is '/home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform'
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0452249Z [command]/usr/bin/git version
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0516737Z git version 2.55.0
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0538344Z ##[endgroup]
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0549730Z Temporarily overriding HOME='/home/runner/work/_temp/449df5db-dd37-4d53-8ecb-5ebdcc260d05' before making global git config changes
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0555526Z Adding repository directory to the temporary git global config as a safe directory
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0557809Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0606731Z Deleting the contents of '/home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform'
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0610273Z ##[group]Determining repository object format
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0612282Z ##[endgroup]
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0613682Z ##[group]Initializing the repository
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0619608Z [command]/usr/bin/git init /home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0731727Z hint: Using 'master' as the name for the initial branch. This default branch name
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0733606Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0735515Z hint: to use in all of your new repositories, which will suppress this warning,
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0736310Z hint: call:
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0736727Z hint:
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0737279Z hint: 	git config --global init.defaultBranch <name>
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0737963Z hint:
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0738917Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0740294Z hint: 'development'. The just-created branch can be renamed via this command:
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0741083Z hint:
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0741528Z hint: 	git branch -m <name>
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0742072Z hint:
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0742732Z hint: Disable this message with "git config set advice.defaultBranchName false"
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0744468Z Initialized empty Git repository in /home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform/.git/
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0748138Z [command]/usr/bin/git remote add origin https://github.com/aws-samples/sample-agentcore-enterprise-platform
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0798957Z ##[endgroup]
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0800240Z ##[group]Disabling automatic garbage collection
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0801873Z [command]/usr/bin/git config --local gc.auto 0
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0834531Z ##[endgroup]
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0836137Z ##[group]Setting up auth
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0837042Z Removing SSH command configuration
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0840820Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.0874423Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.1206888Z Removing HTTP extra header
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.1212721Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.1246256Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.1471116Z Removing includeIf entries pointing to credentials config files
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.1472242Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.1516628Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.1760485Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-5e1867fd-e123-4ad9-916b-5d9b6a5525f6.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.1800010Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform/.git.path /home/runner/work/_temp/git-credentials-5e1867fd-e123-4ad9-916b-5d9b6a5525f6.config
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.1832027Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-5e1867fd-e123-4ad9-916b-5d9b6a5525f6.config
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.1867873Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-5e1867fd-e123-4ad9-916b-5d9b6a5525f6.config
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.1899506Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-5e1867fd-e123-4ad9-916b-5d9b6a5525f6.config
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.2003303Z ##[endgroup]
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.2004822Z ##[group]Fetching the repository
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.2007163Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +ad346d8fb9f3f78ead9022dae79ab06edc0280fa:refs/remotes/origin/main
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.5394993Z From https://github.com/aws-samples/sample-agentcore-enterprise-platform
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.5396980Z  * [new ref]         ad346d8fb9f3f78ead9022dae79ab06edc0280fa -> origin/main
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.5403046Z [command]/usr/bin/git branch --list --remote origin/main
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.5429510Z   origin/main
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.5439725Z [command]/usr/bin/git rev-parse refs/remotes/origin/main
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.5462845Z ad346d8fb9f3f78ead9022dae79ab06edc0280fa
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.5468454Z ##[endgroup]
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.5469758Z ##[group]Determining the checkout info
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.5471813Z ##[endgroup]
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.5473037Z [command]/usr/bin/git sparse-checkout disable
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.5523555Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.5553465Z ##[group]Checking out the ref
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.5556853Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.5857241Z Switched to a new branch 'main'
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.5861344Z branch 'main' set up to track 'origin/main'.
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.5870804Z ##[endgroup]
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.5915651Z [command]/usr/bin/git log -1 --format=%H
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.5941592Z ad346d8fb9f3f78ead9022dae79ab06edc0280fa
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6656726Z ##[group]Run tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6658505Z with:
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6659361Z   files: **/*.py
+python-lint	UNKNOWN STEP	
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6660268Z   separator:  
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6661218Z   include_all_old_new_renamed_files: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6662446Z   old_new_separator: ,
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6663434Z   old_new_files_separator:  
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6664751Z   files_from_source_file_separator: 
+python-lint	UNKNOWN STEP	
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6665917Z   files_separator: 
+python-lint	UNKNOWN STEP	
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6666948Z   files_yaml_from_source_file_separator: 
+python-lint	UNKNOWN STEP	
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6668303Z   files_ignore_yaml_from_source_file_separator: 
+python-lint	UNKNOWN STEP	
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6669601Z   files_ignore_separator: 
+python-lint	UNKNOWN STEP	
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6670735Z   files_ignore_from_source_file_separator: 
+python-lint	UNKNOWN STEP	
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6671933Z   path: .
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6672791Z   quotepath: true
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6673702Z   diff_relative: true
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6674794Z   dir_names: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6675821Z   dir_names_exclude_current_dir: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6677043Z   dir_names_include_files_separator: 
+python-lint	UNKNOWN STEP	
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6678423Z   dir_names_deleted_files_include_only_deleted_dirs: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6679771Z   json: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6680645Z   escape_json: true
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6681560Z   safe_output: true
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6682493Z   fetch_depth: 25
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6683413Z   skip_initial_fetch: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6684645Z   fetch_additional_submodule_history: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6685896Z   since_last_remote_commit: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6687038Z   write_output_files: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6688099Z   output_dir: .github/outputs
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6689293Z   output_renamed_files_as_deleted_and_added: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6690613Z   recover_deleted_files: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6691720Z   recover_files_separator: 
+python-lint	UNKNOWN STEP	
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6692814Z   recover_files_ignore_separator: 
+python-lint	UNKNOWN STEP	
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6701807Z   token: ***
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6702770Z   api_url: https://api.github.com
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6704007Z   use_rest_api: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6705007Z   fail_on_initial_diff_error: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6706167Z   fail_on_submodule_diff_error: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6707337Z   negation_patterns_first: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6708396Z   matrix: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6709513Z   exclude_submodules: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6710551Z   exclude_symlinks: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6711547Z   skip_same_sha: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6712555Z   fetch_missing_history_max_retries: 20
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6713863Z   use_posix_path_separator: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6714954Z   tags_pattern: *
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.6715840Z ##[endgroup]
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.7830431Z ##[group]changed-files
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.7943210Z Using local .git directory
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.8373351Z Running on a push event...
+python-lint	UNKNOWN STEP	2026-09-21T20:31:22.8377132Z Repository is shallow, fetching more history...
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.4931726Z Retrieving changes between ed31ff1b908fd6c841f1cb19990743ff2cb29e09 (main) → ad346d8fb9f3f78ead9022dae79ab06edc0280fa (main)
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.4994806Z All Done!
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.4997024Z ##[endgroup]
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.4999331Z ##[group]changed-files-patterns
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.5059012Z All Done!
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.5061463Z ##[endgroup]
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.5361807Z ##[group]Run actions/setup-python@v7
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.5363020Z with:
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.5364111Z   python-version: 3.13
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.5365057Z   check-latest: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.5373202Z   token: ***
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.5374360Z   update-environment: true
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.5375369Z   allow-prereleases: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.5376341Z   freethreaded: false
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.5377226Z ##[endgroup]
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.6558224Z ##[group]Installed versions
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.6653272Z Successfully set up CPython (3.13.15)
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.6656917Z ##[endgroup]
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.6829519Z ##[group]Run pip install ruff
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.6830615Z ^[[36;1mpip install ruff^[[0m
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.6880679Z shell: /usr/bin/bash -e {0}
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.6881674Z env:
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.6882683Z   pythonLocation: /opt/hostedtoolcache/Python/3.13.15/x64
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.6884534Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.13.15/x64/lib/pkgconfig
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.6886222Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.15/x64
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.6887695Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.15/x64
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.6889178Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.15/x64
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.6890686Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.13.15/x64/lib
+python-lint	UNKNOWN STEP	2026-09-21T20:31:23.6891956Z ##[endgroup]
+python-lint	UNKNOWN STEP	2026-09-21T20:31:26.3826680Z Collecting ruff
+python-lint	UNKNOWN STEP	2026-09-21T20:31:26.4315378Z   Downloading ruff-0.16.8-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (20 kB)
+python-lint	UNKNOWN STEP	2026-09-21T20:31:26.4469100Z Downloading ruff-0.16.8-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (10.3 MB)
+python-lint	UNKNOWN STEP	2026-09-21T20:31:26.5226555Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 10.3/10.3 MB 184.7 MB/s  0:00:00
+python-lint	UNKNOWN STEP	2026-09-21T20:31:26.6483017Z Installing collected packages: ruff
+python-lint	UNKNOWN STEP	2026-09-21T20:31:26.9522182Z Successfully installed ruff-0.16.8
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0153003Z ##[group]Run echo "Checking changed Python files:"
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0153453Z ^[[36;1mecho "Checking changed Python files:"^[[0m
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0154149Z ^[[36;1mecho "${ALL_CHANGED_FILES}" | tr ' ' '\n'^[[0m
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0154554Z ^[[36;1mruff check --output-format=github ${ALL_CHANGED_FILES}^[[0m
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0190225Z shell: /usr/bin/bash -e {0}
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0190482Z env:
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0190752Z   pythonLocation: /opt/hostedtoolcache/Python/3.13.15/x64
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0191201Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.13.15/x64/lib/pkgconfig
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0191629Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.15/x64
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0192024Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.15/x64
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0192423Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.15/x64
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0192814Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.13.15/x64/lib
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0195160Z   ALL_CHANGED_FILES: scripts/check_repository_structure.py tests/test_repository_structure.py app.py infra_utils/platform_config.py stacks/networking_stack.py stacks/runtime_stack.py tests/test_adapter.py tests/test_migration_config.py tests/test_migration_infrastructure.py tests/test_migration_network_probe.py migration/adapter/adapter.py migration/network-probe/handler.py migration/simulation/existing-ec2-agent/agent.py migration/simulation/existing-ec2-agent/server.py
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0197189Z ##[endgroup]
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0253373Z Checking changed Python files:
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0265714Z scripts/check_repository_structure.py
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0266182Z tests/test_repository_structure.py
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0266582Z app.py
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0266950Z infra_utils/platform_config.py
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0267407Z stacks/networking_stack.py
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0267820Z stacks/runtime_stack.py
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0268223Z tests/test_adapter.py
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0268692Z tests/test_migration_config.py
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0269214Z tests/test_migration_infrastructure.py
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0269770Z tests/test_migration_network_probe.py
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0270081Z migration/adapter/adapter.py
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0270350Z migration/network-probe/handler.py
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0270661Z migration/simulation/existing-ec2-agent/agent.py
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0271009Z migration/simulation/existing-ec2-agent/server.py
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0431394Z ##[error]migration/simulation/existing-ec2-agent/agent.py:6:1: I001 Import block is un-sorted or un-formatted
+python-lint	UNKNOWN STEP	  help: Organize imports
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0441252Z ##[error]Process completed with exit code 1.
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.0582512Z Post job cleanup.
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.1462496Z [command]/usr/bin/git version
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.1502013Z git version 2.55.0
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.1541384Z Copying '/home/runner/.gitconfig' to '/home/runner/work/_temp/c4abb22b-8319-4506-ba28-ce1b7ffed9c8/.gitconfig'
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.1550140Z Temporarily overriding HOME='/home/runner/work/_temp/c4abb22b-8319-4506-ba28-ce1b7ffed9c8' before making global git config changes
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.1551436Z Adding repository directory to the temporary git global config as a safe directory
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.1556653Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.1587919Z Removing SSH command configuration
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.1594222Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.1628185Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.1849347Z Removing HTTP extra header
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.1854399Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.1887751Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.2107499Z Removing includeIf entries pointing to credentials config files
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.2113879Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.2142890Z includeif.gitdir:/home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform/.git.path
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.2144826Z includeif.gitdir:/home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform/.git/worktrees/*.path
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.2146007Z includeif.gitdir:/github/workspace/.git.path
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.2146902Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.2153591Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform/.git.path
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.2175635Z /home/runner/work/_temp/git-credentials-5e1867fd-e123-4ad9-916b-5d9b6a5525f6.config
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.2186406Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform/.git.path \/home\/runner\/work\/_temp\/git\-credentials\-5e1867fd\-e123\-4ad9\-916b\-5d9b6a5525f6\.config
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.2220201Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform/.git/worktrees/*.path
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.2241511Z /home/runner/work/_temp/git-credentials-5e1867fd-e123-4ad9-916b-5d9b6a5525f6.config
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.2252443Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/sample-agentcore-enterprise-platform/sample-agentcore-enterprise-platform/.git/worktrees/*.path \/home\/runner\/work\/_temp\/git\-credentials\-5e1867fd\-e123\-4ad9\-916b\-5d9b6a5525f6\.config
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.2292050Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.2314892Z /github/runner_temp/git-credentials-5e1867fd-e123-4ad9-916b-5d9b6a5525f6.config
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.2322707Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-5e1867fd\-e123\-4ad9\-916b\-5d9b6a5525f6\.config
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.2353377Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.2374815Z /github/runner_temp/git-credentials-5e1867fd-e123-4ad9-916b-5d9b6a5525f6.config
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.2382010Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-5e1867fd\-e123\-4ad9\-916b\-5d9b6a5525f6\.config
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.2414955Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.2639169Z Removing credentials config '/home/runner/work/_temp/git-credentials-5e1867fd-e123-4ad9-916b-5d9b6a5525f6.config'
+python-lint	UNKNOWN STEP	2026-09-21T20:31:27.2787236Z Cleaning up orphan processes

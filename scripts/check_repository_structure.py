@@ -17,6 +17,7 @@ ALLOWED_TOP_LEVEL_DIRECTORIES = {
     "dashboard",
     "docker",
     "docs",
+    "factory",
     "infra_utils",
     "migration",
     "presets",
