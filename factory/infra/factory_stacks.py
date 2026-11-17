@@ -623,6 +623,32 @@ class SoftwareFactoryStack(cdk.Stack):
             )
         )
 
+        # 00:05 UTC: the cost-stop day is over; move the messages it parked (and only those) back to the queue.
+        redrive = _lambda.Function(
+            self,
+            "Redrive",
+            function_name="software-factory-redrive-parked",
+            runtime=_lambda.Runtime.PYTHON_3_13,
+            handler="redrive.handler",
+            code=code,
+            timeout=cdk.Duration.minutes(2),
+            memory_size=128,
+            environment={"DLQ_URL": dlq.queue_url, "QUEUE_URL": queue.queue_url},
+            log_group=self._log_group(
+                "RedriveLogs", "/aws/lambda/software-factory-redrive-parked"
+            ),
+        )
+        dlq.grant_consume_messages(redrive)
+        queue.grant_send_messages(redrive)
+        redrive_rule = events.Rule(
+            self,
+            "RedriveDaily",
+            rule_name="software-factory-redrive-parked",
+            schedule=events.Schedule.cron(minute="5", hour="0"),
+            targets=[targets.LambdaFunction(redrive)],
+        )
+        cdk.CfnOutput(self, "RedriveRuleArn", value=redrive_rule.rule_arn)
+
         # Scheduled runs. Each only queues a message; the dispatcher (cost stop included) starts the run,
         # and the queue drains only while factory_dispatch is on.
         self.schedules = []

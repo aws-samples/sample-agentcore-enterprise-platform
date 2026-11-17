@@ -85,6 +85,13 @@ def handler(event, context, now: datetime | None = None):
                         "MessageGroupId", "parked"
                     ),
                     MessageDeduplicationId=record["messageId"],
+                    # The 00:05 UTC redrive moves only messages carrying this mark back to the queue.
+                    MessageAttributes={
+                        "parked": {
+                            "DataType": "String",
+                            "StringValue": "daily-cost-stop",
+                        }
+                    },
                 )
                 print(
                     json.dumps(
