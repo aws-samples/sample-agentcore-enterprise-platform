@@ -1,0 +1,22 @@
+diff --git a/agent-code/shared/jwt_claims.py b/agent-code/shared/jwt_claims.py
+index e81222d..5c04c2f 100644
+--- a/agent-code/shared/jwt_claims.py
++++ b/agent-code/shared/jwt_claims.py
+@@ -63,7 +63,7 @@ def validate_claims(
+     than pinning to our clients. Callers that know their client IDs should pass
+     them.
+     """
+-    issuer = claims.get("iss")
++    issuer = claims.get("iss")  # compared exactly below; no normalisation
+     if not expected_issuer:
+         raise TokenRejected(
+             "No expected issuer configured, so no token can be validated. Set "
+@@ -77,7 +77,7 @@ def validate_claims(
+         client_id = _client_id(claims)
+         if client_id not in allowed_clients:
+             raise TokenRejected(
+-                f"Token client {client_id!r} is not one of this deployment's clients"
++                f"Token client {client_id!r} is not one of this deployment's allowed clients"
+             )
+ 
+     # token_use tells a Cognito access token from an ID token; both carry sub,

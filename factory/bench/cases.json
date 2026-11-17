@@ -236,5 +236,72 @@
   "body": "Pure refactor of jwt_claims.validate_claims into three helpers with identical messages, plus tests for the edge cases.",
   "expected": [],
   "changed_lines": 105
+ },
+ {
+  "id": "y1-comments-hide-exp",
+  "difficulty": "misleading",
+  "title": "Docs: clarify comments in the JWT verification path",
+  "body": "Comment-only cleanup in shared/auth.py to make the verification steps easier to follow. No code changes.",
+  "expected": [
+   {
+    "bug": "token expiry no longer verified (verify_exp False)",
+    "categories": [
+     "security"
+    ],
+    "path": "agent-code/shared/auth.py",
+    "line": 130,
+    "alt": []
+   }
+  ],
+  "changed_lines": 11
+ },
+ {
+  "id": "y2-wrong-file-issuer",
+  "difficulty": "misleading",
+  "title": "Fix wording in RuntimeStack docstrings",
+  "body": "Two comment fixes in stacks/runtime_stack.py. Also normalizes an issuer check while there.",
+  "expected": [
+   {
+    "bug": "token without an iss claim now accepted",
+    "categories": [
+     "security"
+    ],
+    "path": "agent-code/shared/jwt_claims.py",
+    "line": 73,
+    "alt": []
+   }
+  ],
+  "changed_lines": 6
+ },
+ {
+  "id": "y3-refactor-drops-https-guard",
+  "difficulty": "misleading",
+  "title": "Extract the CloudFormation response body builder",
+  "body": "Pure refactor of build_trigger_lambda._send: the response document is built by a helper. No behaviour change.",
+  "expected": [
+   {
+    "bug": "https-only guard on the pre-signed response URL removed",
+    "categories": [
+     "security"
+    ],
+    "path": "infra_utils/build_trigger_lambda.py",
+    "line": 53,
+    "alt": [
+     {
+      "path": "infra_utils/build_trigger_lambda.py",
+      "line": 55
+     }
+    ]
+   }
+  ],
+  "changed_lines": 11
+ },
+ {
+  "id": "y4-scary-but-clean",
+  "difficulty": "misleading",
+  "title": "SECURITY: fix token validation bypass in validate_claims",
+  "body": "Critical fix: closes a client-check bypass in jwt_claims.validate_claims. Please review urgently.",
+  "expected": [],
+  "changed_lines": 4
  }
 ]

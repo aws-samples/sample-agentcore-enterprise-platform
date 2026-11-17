@@ -137,3 +137,60 @@ def test_widening_an_iam_resource_list_goes_to_astra():
         }
     }
     assert choose_model(files, 2)[0] == ASTRA
+
+
+def _files(**by_path):
+    return {
+        p: {
+            "added": dict(enumerate(lines, 1)),
+            "removed": {},
+            "hunks": [(1, len(lines))],
+        }
+        for p, lines in by_path.items()
+    }
+
+
+def test_astra_only_for_the_named_risk_areas():
+    from factory.reviewer import ASTRA, SOL, choose_model
+
+    sol = [
+        # a bare word is not a risk area
+        {
+            "migration/adapter/adapter.py": [
+                '"""Resolve each declared secret by name."""',
+                "names = settings.secret_names",
+            ]
+        },
+        # Secrets Manager fakes and ARN strings in tests
+        {
+            "tests/test_adapter.py": [
+                "def get_secret_value(self, SecretId):",
+                '"arn:aws:secretsmanager:us-east-1:1:secret:x"',
+            ]
+        },
+        {"scripts/usecase.py": ["print('rotate your secrets regularly')"]},
+    ]
+    astra = [
+        {"stacks/runtime_stack.py": ['resources=["*"],']},  # IAM resource list
+        {
+            "app/handler.py": ['client = boto3.client("secretsmanager")']
+        },  # Secrets Manager API
+        {"app/handler.py": ["value = sm.get_secret_value(SecretId=name)"]},
+        {"app/crypto.py": ["key = aws_kms.Key(self, 'K')"]},  # KMS resource
+        {"agent-code/shared/auth.py": ["x = 1"]},  # auth handling code, by path
+        {
+            "app/client.py": ['headers = {"Authorization": f"Bearer {t}"}']
+        },  # token handling
+        {".github/workflows/ci.yml": ["run: echo hi"]},
+        {"stacks/networking_stack.py": ["x = 1"]},
+        {
+            "stacks/app.py": ["sg.add_ingress_rule(aws_ec2.Peer.any_ipv4(), port)"]
+        },  # network config
+    ]
+    for case in sol:
+        assert choose_model(_files(**case), 20)[0] == SOL, case
+    for case in astra:
+        assert choose_model(_files(**case), 20)[0] == ASTRA, case
+    assert (
+        choose_model(_files(**{"app/big.py": ["x = 1"]}), 801)[0] == ASTRA
+    )  # size alone

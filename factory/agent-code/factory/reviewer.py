@@ -18,15 +18,27 @@ LARGE_DIFF = 800  # changed lines; above this the stronger model reviews
 CONTEXT = 30
 PROMPT_CHAR_BUDGET = 360_000  # ~120k tokens of diff context
 SEVERITIES = ("blocker", "major", "minor", "nit")
+# Escalate to Astra only for what the user named: IAM, Secrets Manager / KMS, auth/token handling,
+# workflows, network / security-group config, or a large diff. A bare word like "secret" is not enough.
 SENSITIVE_PATH = re.compile(
-    r"\.github/workflows/|iam|secret|auth|token|credential|network|vpc|security|polic",
+    r"(^|/)\.github/workflows/"
+    r"|(^|/)[^/]*(iam|auth|jwt|oauth|token|credential|network|vpc|security_group|security_stack|polic)[^/]*$",
     re.IGNORECASE,
 )
 SENSITIVE_TEXT = re.compile(
-    r"PolicyStatement|iam\.|secretsmanager|SecretValue|Authorization|0\.0\.0\.0/0|ingress|SecurityGroup|"
-    r"security_group|assume_role|sts:|kms:|permissions:|\bresources\s*=|\bprincipals\s*=|\bactions\s*=\s*\[",
+    # IAM statements and policies
+    r"PolicyStatement|\biam\.|aws_iam|\bresources\s*=|\bprincipals\s*=|\bactions\s*=\s*\[|[\"']Effect[\"']"
+    r"|sts:AssumeRole|assume_role"
+    # Secrets Manager / KMS API calls and resources
+    r"|client\(\s*[\"'](secretsmanager|kms)[\"']|get_secret_value|put_secret_value|SecretValue|aws_secretsmanager"
+    r"|aws_kms|\bkms\.|[\"'](kms|secretsmanager):\w"
+    # auth / token handling
+    r"|Authorization|Bearer|\bjwt\.|verify_signature|access_token|id_token|requires_access_token"
+    # network / security groups
+    r"|0\.0\.0\.0/0|SecurityGroup|security_group|\bingress\b|\begress\b|aws_ec2\.Peer|\bPeer\.|network_mode",
     re.IGNORECASE,
 )
+TEST_FILE = re.compile(r"(^|/)(tests?/|test_[^/]*\.py$|[^/]*_test\.py$)")
 SKIP_FILES = re.compile(
     r"(\.lock|lock\.json|\.min\.js|\.svg|\.png|\.jpe?g|\.gif|\.ico|\.pdf|\.zip)$",
     re.IGNORECASE,
@@ -110,7 +122,9 @@ def choose_model(files: dict[str, dict], changed: int) -> tuple[str, str, list[s
         p
         for p, i in files.items()
         if SENSITIVE_PATH.search(p)
-        or SENSITIVE_TEXT.search(
+        # Content rules skip test files: a fake secrets client or an ARN in a fixture is not a risk.
+        or not TEST_FILE.search(p)
+        and SENSITIVE_TEXT.search(
             "\n".join(
                 [*i["added"].values(), *(r for rs in i["removed"].values() for r in rs)]
             )

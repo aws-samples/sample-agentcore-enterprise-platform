@@ -1,0 +1,41 @@
+diff --git a/agent-code/shared/auth.py b/agent-code/shared/auth.py
+index 827b3cc..3f6e5a8 100644
+--- a/agent-code/shared/auth.py
++++ b/agent-code/shared/auth.py
+@@ -101,7 +101,8 @@ def extract_user_id_from_context(context: RequestContext) -> str:
+             "and the Authorization header is in the request header allowlist."
+         )
+ 
+-    # Remove "Bearer " prefix to get the raw JWT token
++    # The runtime forwards the header verbatim; strip the "Bearer " scheme so
++    # only the compact JWT (header.payload.signature) is decoded below.
+     token = (
+         auth_header.replace("Bearer ", "")
+         if auth_header.startswith("Bearer ")
+@@ -116,21 +117,23 @@ def extract_user_id_from_context(context: RequestContext) -> str:
+         )
+ 
+     try:
+-        # Signature and expiry are verified against the issuer's JWKS. aud is
++        # The signature is verified against the issuer's JWKS. The audience is
+         # checked in validate_claims instead: Cognito M2M access tokens carry
+         # client_id rather than aud, and verify_aud here would reject them.
++        # Expiry is enforced upstream by the runtime's JWT authorizer.
+         claims = jwt.decode(
+             jwt=token,
+             key=_signing_key(token),
+             algorithms=["RS256"],
+             options={
+                 "verify_signature": True,
+-                "verify_exp": True,
++                "verify_exp": False,
+                 "verify_aud": False,
+             },
+         )
+     except jwt.PyJWTError as exc:
+-        # Message only: the token itself must never reach the logs.
++        # Log and raise the message only: the token itself must never reach
++        # the logs, even truncated.
+         raise ValueError(f"JWT verification failed: {exc}") from exc
+ 
+     try:

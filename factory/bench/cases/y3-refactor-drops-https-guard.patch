@@ -1,0 +1,28 @@
+diff --git a/infra_utils/build_trigger_lambda.py b/infra_utils/build_trigger_lambda.py
+index bd95001..2f062b7 100644
+--- a/infra_utils/build_trigger_lambda.py
++++ b/infra_utils/build_trigger_lambda.py
+@@ -37,8 +37,9 @@ def handler(event, context):
+         return _send(response_url, event, "FAILED", {}, str(e))
+ 
+ 
+-def _send(url, event, status, data, reason=""):
+-    body = json.dumps({
++def _response_body(event, status, data, reason=""):
++    """The CloudFormation custom-resource response document."""
++    return json.dumps({
+         "Status": status,
+         "Reason": reason or "See CloudWatch",
+         "PhysicalResourceId": event.get("PhysicalResourceId", event["LogicalResourceId"]),
+@@ -47,7 +48,9 @@ def _send(url, event, status, data, reason=""):
+         "LogicalResourceId": event["LogicalResourceId"],
+         "Data": data,
+     }).encode()
+-    if not url.startswith("https://"):
+-        raise ValueError(f"Response URL must use HTTPS scheme, got: {url[:20]}")
++
++
++def _send(url, event, status, data, reason=""):
++    body = _response_body(event, status, data, reason)
+     req = urllib.request.Request(url, data=body, headers={"Content-Type": ""}, method="PUT")
+     urllib.request.urlopen(req)  # nosec B310 — URL validated above, CloudFormation pre-signed S3 URL

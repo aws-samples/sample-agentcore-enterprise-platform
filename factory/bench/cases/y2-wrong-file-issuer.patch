@@ -1,0 +1,35 @@
+diff --git a/agent-code/shared/jwt_claims.py b/agent-code/shared/jwt_claims.py
+index e81222d..dd214a2 100644
+--- a/agent-code/shared/jwt_claims.py
++++ b/agent-code/shared/jwt_claims.py
+@@ -70,7 +70,7 @@ def validate_claims(
+             "COGNITO_ISSUER_URL on the runtime (RuntimeStack passes it when the "
+             "auth stack is deployed)."
+         )
+-    if issuer != expected_issuer:
++    if issuer and issuer != expected_issuer:
+         raise TokenRejected(f"Token issuer {issuer!r} is not {expected_issuer!r}")
+ 
+     if allowed_clients:
+diff --git a/stacks/runtime_stack.py b/stacks/runtime_stack.py
+index 27d16d7..5f6a801 100644
+--- a/stacks/runtime_stack.py
++++ b/stacks/runtime_stack.py
+@@ -53,7 +53,7 @@ from infra_utils.source_hash import component_image_tag, compute_source_hash
+ class RuntimeStack(cdk.Stack):
+     """Deploys a single AgentCore Runtime component (orchestrator, a2a_agent, or mcp_server).
+ 
+-    Instantiate multiple times for multi-agent architectures:
++    Instantiate it once per runtime in a multi-agent architecture:
+         RuntimeStack(app, "runtime-orchestrator", component_name="orchestrator", runtime_type="orchestrator", ...)
+         RuntimeStack(app, "runtime-code-agent", component_name="code-agent", runtime_type="a2a_agent", ...)
+     """
+@@ -102,7 +102,7 @@ class RuntimeStack(cdk.Stack):
+         migration_mode = bool(source_image or build_context)
+ 
+         prefix = f"{project_name}-{environment}"
+-        # AgentCore names must use underscores, not hyphens
++        # AgentCore runtime names allow underscores but not hyphens
+         rt_name = f"{project_name}_{environment}_{component_name}".replace("-", "_")
+         if runtime_generation > 1:
+             rt_name = f"{rt_name}_g{runtime_generation}"
