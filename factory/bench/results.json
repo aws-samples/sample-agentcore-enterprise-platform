@@ -5,13 +5,13 @@
    "difficulty": "easy",
    "outcome": "reviewed_dry_run",
    "reason": "bench:e1-ecr-pull-star",
-   "cost": 0.0383,
+   "cost": 0.0139,
    "models": {
     "us.openai.gpt-6-astra": {
      "input_tokens": 2,
-     "output_tokens": 212,
-     "cache_read": 0,
-     "cache_write": 1937,
+     "output_tokens": 213,
+     "cache_read": 1937,
+     "cache_write": 0,
      "calls": 1
     }
    },
@@ -24,7 +24,7 @@
      "severity": "major",
      "category": "security",
      "title": "Retain repository-scoped ECR image access",
-     "body": "Both ecr:BatchGetImage and ecr:GetDownloadUrlForLayer support repository-level permissions. Using \"*\" allows a compromised runtime to retrieve images and layers from unrelated repositories in the account, absent other restrictions, potentially exposing proprietary code or sensitive image contents. The separate ECRAuth statement already grants the wildcard authorization-token permission; image reads do not need the same scope.",
+     "body": "Both ecr:BatchGetImage and ecr:GetDownloadUrlForLayer support repository-level permissions. Using \"*\" allows a compromised runtime to retrieve images and layers from unrelated repositories in the account, absent other policy restrictions, potentially exposing proprietary code or sensitive image contents. The separate ECRAuth statement already provides the wildcard permission required for authorization; image reads do not need that scope.",
      "suggestion": "                resources=[ecr_repo_arn],"
     }
    ],
@@ -39,11 +39,11 @@
    "difficulty": "easy",
    "outcome": "reviewed_dry_run",
    "reason": "bench:e2-jwt-logged",
-   "cost": 0.0129,
+   "cost": 0.0126,
    "models": {
     "us.openai.gpt-6-astra": {
      "input_tokens": 2,
-     "output_tokens": 197,
+     "output_tokens": 192,
      "cache_read": 1835,
      "cache_write": 0,
      "calls": 1
@@ -57,8 +57,8 @@
      "line": 141,
      "severity": "major",
      "category": "security",
-     "title": "Do not log the verified bearer token",
-     "body": "This INFO message writes the complete, valid JWT to runtime logs on successful authentication. Anyone with access to those logs or downstream log exports could replay the token to act as its principal until it expires. It also persists any sensitive claims in the token beyond the authentication request. Log access should not grant access to live authentication credentials.",
+     "title": "Do not log verified bearer tokens",
+     "body": "This INFO-level message writes the complete, valid JWT to runtime logs after successful verification. Anyone with access to those logs or downstream log exports could replay the token to access services accepting it until it expires. It also persists all embedded claims in logs. Logging a credential is not necessary to diagnose verification results.",
      "suggestion": "    logger.info(\"Verified JWT for user_id: %s\", user_id)"
     }
    ],
@@ -77,7 +77,7 @@
    "models": {
     "us.openai.gpt-6.1-sol": {
      "input_tokens": 2,
-     "output_tokens": 208,
+     "output_tokens": 206,
      "cache_read": 1811,
      "cache_write": 0,
      "calls": 1
@@ -91,8 +91,8 @@
      "line": 30,
      "severity": "major",
      "category": "correctness",
-     "title": "Failed builds now report custom-resource success",
-     "body": "FAILED, FAULT, STOPPED, and TIMED_OUT all satisfy this condition, so the handler sends SUCCESS and returns before reaching the failure handling below. CloudFormation can therefore complete the custom resource and proceed with deployment even though the required build failed. The existing failure branch already stops polling on unsuccessful terminal statuses.",
+     "title": "Failed builds are now reported to CloudFormation as successful",
+     "body": "FAILED, FAULT, STOPPED, and TIMED_OUT all satisfy this condition, so the handler sends SUCCESS and returns before reaching the failure handling below. CloudFormation can therefore mark the custom resource successful and continue deployment even though the required build failed. The previous logic already stopped polling for both successful and failed terminal states.",
      "suggestion": "            if status == \"SUCCEEDED\":"
     }
    ],
@@ -107,11 +107,11 @@
    "difficulty": "medium",
    "outcome": "reviewed_dry_run",
    "reason": "bench:m2-trail-encryption",
-   "cost": 0.0276,
+   "cost": 0.0308,
    "models": {
     "us.openai.gpt-6-astra": {
      "input_tokens": 2,
-     "output_tokens": 468,
+     "output_tokens": 527,
      "cache_read": 1664,
      "cache_write": 0,
      "calls": 1
@@ -125,18 +125,18 @@
      "line": 52,
      "severity": "major",
      "category": "security",
-     "title": "Restore TLS enforcement on the audit bucket",
-     "body": "Removing enforce_ssl=True removes the bucket policy denying requests over insecure transport. CloudTrail delivery uses HTTPS, but other authorized readers and writers can now access audit objects over HTTP, exposing their contents in transit. This is an independent security regression unrelated to simplifying encryption.",
-     "suggestion": ""
+     "title": "Preserve customer-managed encryption for retained audit buckets",
+     "body": "When retain_data and enable_kms are both true, this bucket previously configured default SSE-KMS encryption with self.kms_key. UNENCRYPTED removes that configuration and silently bypasses the selected customer-managed key. S3's automatic SSE-S3 encryption does not preserve the customer-managed key's access and lifecycle controls.",
+     "suggestion": "encryption=(\n    s3.BucketEncryption.KMS\n    if retain_data and self.kms_key\n    else s3.BucketEncryption.S3_MANAGED\n),\nencryption_key=self.kms_key if retain_data else None,"
     },
     {
      "path": "stacks/security_stack.py",
      "line": 52,
      "severity": "major",
      "category": "security",
-     "title": "Preserve customer-managed bucket encryption when KMS is enabled",
-     "body": "With retain_data=True and enable_kms=True, this bucket previously configured default SSE-KMS encryption using self.kms_key. UNENCRYPTED removes that configuration and leaves encryption to S3's default SSE-S3 behavior. Objects relying on bucket-default encryption consequently lose the customer-managed key controls despite KMS remaining enabled in the stack. S3's automatic encryption does not preserve that security property.",
-     "suggestion": "encryption=(s3.BucketEncryption.KMS if retain_data and self.kms_key else s3.BucketEncryption.S3_MANAGED),\nencryption_key=self.kms_key if retain_data else None,\nenforce_ssl=True,"
+     "title": "Restore HTTPS enforcement on the CloudTrail bucket",
+     "body": "The replacement also deletes enforce_ssl=True. That removes CDK's bucket-policy denial of requests made without secure transport, allowing otherwise-authorized clients to access sensitive audit objects over HTTP. Encryption at rest does not protect those transfers, and this regression affects both retention modes.",
+     "suggestion": ""
     }
    ],
    "tp": 2,
@@ -154,7 +154,7 @@
    "models": {
     "us.openai.gpt-6.1-sol": {
      "input_tokens": 2,
-     "output_tokens": 194,
+     "output_tokens": 195,
      "cache_read": 1544,
      "cache_write": 0,
      "calls": 1
@@ -168,8 +168,8 @@
      "line": 96,
      "severity": "major",
      "category": "correctness",
-     "title": "Await the token fetch before constructing the Authorization header",
-     "body": "_fetch_gateway_token() is asynchronous, so calling it without await returns a coroutine and does not execute token retrieval. The header consequently becomes `Bearer <coroutine object ...>` rather than containing an OAuth access token, causing authenticated gateway requests to fail whenever gateway tools are enabled.",
+     "title": "Await token retrieval before constructing the Authorization header",
+     "body": "_fetch_gateway_token() is asynchronous, so calling it without await returns a coroutine and does not execute token retrieval. The header consequently becomes `Bearer <coroutine object ...>` instead of containing the OAuth access token, causing gateway authentication to fail whenever gateway tools are enabled.",
      "suggestion": "    fresh_token = await _fetch_gateway_token()"
     }
    ],
@@ -184,11 +184,11 @@
    "difficulty": "hard",
    "outcome": "reviewed_dry_run",
    "reason": "bench:h2-test-no-assert",
-   "cost": 0.0023,
+   "cost": 0.0024,
    "models": {
     "us.openai.gpt-6.1-sol": {
      "input_tokens": 2,
-     "output_tokens": 191,
+     "output_tokens": 197,
      "cache_read": 2061,
      "cache_write": 0,
      "calls": 1
@@ -202,8 +202,8 @@
      "line": 54,
      "severity": "major",
      "category": "tests",
-     "title": "Issuer rejection test now passes when the token is accepted",
-     "body": "The try/except passes both when validate_claims raises TokenRejected and when it returns normally. Consequently, a regression that accepts a foreign issuer with an allowed client would no longer fail this test. Message tolerance should remove only the match constraint, not the assertion that rejection occurs.",
+     "title": "Issuer rejection test passes even when the token is accepted",
+     "body": "The try/except succeeds both when validate_claims raises TokenRejected and when it returns normally. Consequently, this test no longer verifies that a token from another issuer is rejected and would pass if issuer validation regressed for configured client allowlists. Removing the message matcher does not require removing the exception assertion.",
      "suggestion": "    with pytest.raises(TokenRejected):"
     }
    ],
@@ -222,7 +222,7 @@
    "models": {
     "us.openai.gpt-6.1-sol": {
      "input_tokens": 2,
-     "output_tokens": 62,
+     "output_tokens": 61,
      "cache_read": 1831,
      "cache_write": 0,
      "calls": 1
@@ -242,11 +242,11 @@
    "difficulty": "clean",
    "outcome": "reviewed_dry_run",
    "reason": "bench:c2-clean-claims-walrus",
-   "cost": 0.0008,
+   "cost": 0.0013,
    "models": {
     "us.openai.gpt-6.1-sol": {
      "input_tokens": 2,
-     "output_tokens": 54,
+     "output_tokens": 106,
      "cache_read": 1593,
      "cache_write": 0,
      "calls": 1
@@ -260,15 +260,199 @@
    "fp": 0,
    "missed": [],
    "false_positives": []
+  },
+  {
+   "id": "x1-env-layer-order",
+   "difficulty": "large",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:x1-env-layer-order",
+   "cost": 0.0167,
+   "models": {
+    "us.openai.gpt-6.1-sol": {
+     "input_tokens": 2,
+     "output_tokens": 245,
+     "cache_read": 0,
+     "cache_write": 5108,
+     "calls": 1
+    }
+   },
+   "model_reason": "100 changed lines",
+   "verdict": "changes needed",
+   "findings": [
+    {
+     "path": "migration/adapter/adapter.py",
+     "line": 149,
+     "severity": "major",
+     "category": "correctness",
+     "title": "Preserve resolved-secret precedence over migration environment values",
+     "body": "Previously, resolved secrets were applied last. The new layer order lets MIGRATION_ENV_JSON or legacy MIGRATION_ENV overwrite them. For example, a declared JIRA_TOKEN placeholder now replaces the fetched Secrets Manager credential, causing the child to receive the wrong credential and potentially fail authentication. The existing test explicitly covered this collision, but this PR removes it. Restore the original precedence and retain a collision regression test.",
+     "suggestion": "    layers = (environ, migration_env(environ), secrets)"
+    }
+   ],
+   "tp": 1,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "x2-role-construct",
+   "difficulty": "large",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:x2-role-construct",
+   "cost": 0.1041,
+   "models": {
+    "us.openai.gpt-6-astra": {
+     "input_tokens": 2,
+     "output_tokens": 272,
+     "cache_read": 0,
+     "cache_write": 6479,
+     "calls": 1
+    }
+   },
+   "model_reason": "186 changed lines; sensitive: infra_utils/agentcore_role.py, stacks/runtime_stack.py",
+   "verdict": "changes needed",
+   "findings": [
+    {
+     "path": "infra_utils/agentcore_role.py",
+     "line": 83,
+     "severity": "major",
+     "category": "security",
+     "title": "Model allow-list is additive rather than restrictive",
+     "body": "When model_resources is supplied, the role still receives the unconditional BedrockModels Allow covering every foundation model and inference profile. IAM combines Allow statements, so adding BedrockAllowList does not narrow that access. Previously RuntimeStack substituted the configured resources for the wildcard defaults; now an agent can invoke models outside the platform.yaml allow-list. Use model_resources instead of the wildcard resources in the baseline statement when configured, remove the redundant additive statement, and add a regression test asserting that configured allow-lists leave no wildcard model grants.",
+     "suggestion": ""
+    }
+   ],
+   "tp": 1,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "x3-restart-budget",
+   "difficulty": "large",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:x3-restart-budget",
+   "cost": 0.0158,
+   "models": {
+    "us.openai.gpt-6.1-sol": {
+     "input_tokens": 2,
+     "output_tokens": 312,
+     "cache_read": 0,
+     "cache_write": 4501,
+     "calls": 1
+    }
+   },
+   "model_reason": "113 changed lines",
+   "verdict": "changes needed",
+   "findings": [
+    {
+     "path": "migration/adapter/adapter.py",
+     "line": 243,
+     "severity": "major",
+     "category": "correctness",
+     "title": "Check the restart budget before spawning another child",
+     "body": "self.start() runs before _budget_left(), so a limit of N permits N+1 actual restarts. In particular, MIGRATION_RESTART_LIMIT=0 still restarts the child once. When the budget check fails, the supervisor returns with a newly spawned child still running, but marks it unhealthy, causing the adapter to reject it and leaving its subsequent exit unsupervised. The added tests only check restarts_used and unhealthy; they never assert the number of starts, so they miss this regression.",
+     "suggestion": ""
+    }
+   ],
+   "tp": 1,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "x4-settings-dataclass",
+   "difficulty": "large",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:x4-settings-dataclass",
+   "cost": 0.1055,
+   "models": {
+    "us.openai.gpt-6-astra": {
+     "input_tokens": 2,
+     "output_tokens": 457,
+     "cache_read": 0,
+     "cache_write": 5843,
+     "calls": 1
+    }
+   },
+   "model_reason": "110 changed lines; sensitive: tests/test_adapter.py",
+   "verdict": "changes needed",
+   "findings": [
+    {
+     "path": "migration/adapter/adapter.py",
+     "line": 120,
+     "severity": "major",
+     "category": "correctness",
+     "title": "Preserve the existing ENVIRONMENT default for secret lookup",
+     "body": "Previously, secret_id_for() defaulted a missing ENVIRONMENT to an empty string; the new parser defaults it to \"prod\". Consequently, a deployment without ENVIRONMENT and without an explicit ARN override now requests <project>/prod/migration/<NAME> instead of <project>//migration/<NAME>. This can break startup with a missing-secret error or load a different production credential if the runtime role permits it. A settings refactor should not silently change which secret is retrieved, and the new default tests do not cover this behavior.",
+     "suggestion": "            environment=environ.get(\"ENVIRONMENT\", \"\"),"
+    }
+   ],
+   "tp": 1,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "x5-clean-rename",
+   "difficulty": "clean-large",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:x5-clean-rename",
+   "cost": 0.0936,
+   "models": {
+    "us.openai.gpt-6-astra": {
+     "input_tokens": 2,
+     "output_tokens": 114,
+     "cache_read": 0,
+     "cache_write": 6352,
+     "calls": 1
+    }
+   },
+   "model_reason": "103 changed lines; sensitive: tests/test_adapter.py",
+   "verdict": "approve-worthy",
+   "findings": [],
+   "tp": 0,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "x6-clean-claims-helpers",
+   "difficulty": "clean-large",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:x6-clean-claims-helpers",
+   "cost": 0.0114,
+   "models": {
+    "us.openai.gpt-6.1-sol": {
+     "input_tokens": 2,
+     "output_tokens": 105,
+     "cache_read": 0,
+     "cache_write": 3722,
+     "calls": 1
+    }
+   },
+   "model_reason": "105 changed lines",
+   "verdict": "approve-worthy",
+   "findings": [],
+   "tp": 0,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
   }
  ],
  "totals": {
-  "tp": 7,
+  "tp": 11,
   "fp": 0,
   "fn": 0,
   "precision": 1.0,
   "recall": 1.0,
   "f1": 1.0
  },
- "cost_usd": 0.0876
+ "cost_usd": 0.4138
 }

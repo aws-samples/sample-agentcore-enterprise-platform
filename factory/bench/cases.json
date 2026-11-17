@@ -126,5 +126,115 @@
   "body": "Pure refactor: same checks, same messages.",
   "expected": [],
   "changed_lines": 3
+ },
+ {
+  "id": "x1-env-layer-order",
+  "difficulty": "large",
+  "title": "Tidy the adapter's env parsing and add edge-case tests",
+  "body": "Refactors parse_pairs / parse_env_json, layers build_child_env explicitly, and adds tests for the parsing edge cases. No behaviour change intended.",
+  "expected": [
+   {
+    "bug": "declared migration env now overrides resolved secrets",
+    "categories": [
+     "security",
+     "correctness"
+    ],
+    "path": "migration/adapter/adapter.py",
+    "line": 149,
+    "alt": [
+     {
+      "path": "tests/test_adapter.py",
+      "line": 206
+     }
+    ]
+   }
+  ],
+  "changed_lines": 100
+ },
+ {
+  "id": "x2-role-construct",
+  "difficulty": "large",
+  "title": "Build runtime roles from the shared AgentCoreRole construct",
+  "body": "Moves the baseline runtime permissions into infra_utils/agentcore_role.py so they are defined once, and keeps the AgentCore-specific statements in RuntimeStack.",
+  "expected": [
+   {
+    "bug": "model allow-list no longer enforced: wildcard model statement always granted",
+    "categories": [
+     "security"
+    ],
+    "path": "infra_utils/agentcore_role.py",
+    "line": 75,
+    "alt": [
+     {
+      "path": "infra_utils/agentcore_role.py",
+      "line": 83
+     },
+     {
+      "path": "stacks/runtime_stack.py",
+      "line": 375
+     }
+    ]
+   }
+  ],
+  "changed_lines": 186
+ },
+ {
+  "id": "x3-restart-budget",
+  "difficulty": "large",
+  "title": "Make the migration adapter's restart budget configurable",
+  "body": "Adds restart_limit (MIGRATION_RESTART_LIMIT, default 1), restarts faster after a crash, and adds restart-budget tests.",
+  "expected": [
+   {
+    "bug": "child restarted before the budget check: one extra process past the limit, left running",
+    "categories": [
+     "correctness",
+     "reliability"
+    ],
+    "path": "migration/adapter/adapter.py",
+    "line": 242,
+    "alt": [
+     {
+      "path": "migration/adapter/adapter.py",
+      "line": 243
+     }
+    ]
+   }
+  ],
+  "changed_lines": 113
+ },
+ {
+  "id": "x4-settings-dataclass",
+  "difficulty": "large",
+  "title": "Parse the migration adapter's settings once",
+  "body": "Introduces MigrationSettings so every env read goes through one parser, and adds settings tests.",
+  "expected": [
+   {
+    "bug": "ENVIRONMENT defaults to 'prod': a deploy without it reads the prod secret path",
+    "categories": [
+     "security",
+     "correctness"
+    ],
+    "path": "migration/adapter/adapter.py",
+    "line": 120,
+    "alt": []
+   }
+  ],
+  "changed_lines": 110
+ },
+ {
+  "id": "x5-clean-rename",
+  "difficulty": "clean-large",
+  "title": "Rename Child to ChildProcess and cover liveness and timeouts",
+  "body": "Pure rename plus new tests for the stderr tail, liveness and the live health timeout bounds.",
+  "expected": [],
+  "changed_lines": 103
+ },
+ {
+  "id": "x6-clean-claims-helpers",
+  "difficulty": "clean-large",
+  "title": "Split validate_claims into named checks and widen its tests",
+  "body": "Pure refactor of jwt_claims.validate_claims into three helpers with identical messages, plus tests for the edge cases.",
+  "expected": [],
+  "changed_lines": 105
  }
 ]

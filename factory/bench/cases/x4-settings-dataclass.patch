@@ -1,0 +1,161 @@
+diff --git a/migration/adapter/adapter.py b/migration/adapter/adapter.py
+index 7423c22..e0af85b 100644
+--- a/migration/adapter/adapter.py
++++ b/migration/adapter/adapter.py
+@@ -47,6 +47,7 @@ import os
+ import subprocess  # nosec B404 — supervising the customer's own command is the point
+ import sys
+ import threading
++from dataclasses import dataclass
+ import time
+ import urllib.error
+ import urllib.request
+@@ -99,23 +100,50 @@ def migration_env(environ: dict) -> dict[str, str]:
+     return parse_pairs(environ.get("MIGRATION_ENV", ""))
+ 
+ 
++@dataclass(frozen=True)
++class MigrationSettings:
++    """Everything the adapter reads from its environment, parsed once."""
++
++    project: str
++    environment: str
++    port: str
++    invoke_path: str
++    health_path: str
++    secret_names: tuple[str, ...]
++    secret_arns: dict[str, str]
++    startup_timeout: float
++
++    @classmethod
++    def from_environ(cls, environ: dict) -> "MigrationSettings":
++        return cls(
++            project=environ.get("PROJECT_NAME", ""),
++            environment=environ.get("ENVIRONMENT", "prod"),
++            port=environ.get("MIGRATION_PORT", "8000"),
++            invoke_path=environ.get("MIGRATION_INVOKE_PATH", "/invocations"),
++            health_path=environ.get("MIGRATION_HEALTH_PATH", ""),
++            secret_names=tuple(
++                n.strip()
++                for n in environ.get("MIGRATION_SECRETS", "").split(",")
++                if n.strip()
++            ),
++            secret_arns=parse_pairs(environ.get("MIGRATION_SECRET_ARNS", "")),
++            startup_timeout=float(environ.get("MIGRATION_STARTUP_TIMEOUT", "60")),
++        )
++
++
+ def secret_id_for(name: str, environ: dict) -> str:
+     """Secrets Manager id for a declared secret: explicit ARN override, else
+     the platform naming convention <project>/<environment>/migration/<NAME>."""
+-    overrides = parse_pairs(environ.get("MIGRATION_SECRET_ARNS", ""))
+-    if name in overrides:
+-        return overrides[name]
+-    project = environ.get("PROJECT_NAME", "")
+-    env = environ.get("ENVIRONMENT", "")
+-    return f"{project}/{env}/migration/{name}"
++    settings = MigrationSettings.from_environ(environ)
++    if name in settings.secret_arns:
++        return settings.secret_arns[name]
++    return f"{settings.project}/{settings.environment}/migration/{name}"
+ 
+ 
+ def resolve_secrets(environ: dict, client=None) -> dict[str, str]:
+     """Fetch declared secrets. Fails fast naming the missing secret — a child
+     started with a missing credential fails later and further from the cause."""
+-    names = [
+-        n.strip() for n in environ.get("MIGRATION_SECRETS", "").split(",") if n.strip()
+-    ]
++    names = MigrationSettings.from_environ(environ).secret_names
+     if not names:
+         return {}
+     if client is None:
+@@ -346,15 +374,13 @@ _child: Child | None = None
+ 
+ 
+ def _invoke_url() -> str:
+-    port = os.environ.get("MIGRATION_PORT", "8000")
+-    path = os.environ.get("MIGRATION_INVOKE_PATH", "/invocations")
+-    return f"http://127.0.0.1:{port}{path}"
++    s = MigrationSettings.from_environ(dict(os.environ))
++    return f"http://127.0.0.1:{s.port}{s.invoke_path}"
+ 
+ 
+ def _health_url() -> str:
+-    port = os.environ.get("MIGRATION_PORT", "8000")
+-    path = os.environ.get("MIGRATION_HEALTH_PATH", "") or "/"
+-    return f"http://127.0.0.1:{port}{path}"
++    s = MigrationSettings.from_environ(dict(os.environ))
++    return f"http://127.0.0.1:{s.port}{s.health_path or '/'}"
+ 
+ 
+ @app.entrypoint
+@@ -418,7 +444,7 @@ def main():
+     _child.start()
+     threading.Thread(target=_child.supervise, daemon=True).start()
+ 
+-    timeout = float(os.environ.get("MIGRATION_STARTUP_TIMEOUT", "60"))
++    timeout = MigrationSettings.from_environ(dict(os.environ)).startup_timeout
+     declared_health = bool(os.environ.get("MIGRATION_HEALTH_PATH", ""))
+     try:
+         wait_for_child(_health_url(), timeout, _child, require_2xx=declared_health)
+diff --git a/tests/test_adapter.py b/tests/test_adapter.py
+index 40af9e9..fcf2f22 100644
+--- a/tests/test_adapter.py
++++ b/tests/test_adapter.py
+@@ -399,3 +399,55 @@ def test_invoke_preserves_forwarding_after_health_check(monkeypatch):
+         "payload": {"prompt": "hi"},
+         "url": adapter._invoke_url(),
+     }
++
++
++# ── MigrationSettings ──
++FULL_ENV = {
++    "PROJECT_NAME": "proj",
++    "ENVIRONMENT": "dev",
++    "MIGRATION_PORT": "9000",
++    "MIGRATION_INVOKE_PATH": "/run",
++    "MIGRATION_HEALTH_PATH": "/healthz",
++    "MIGRATION_SECRETS": "JIRA_TOKEN, GIT_TOKEN,",
++    "MIGRATION_SECRET_ARNS": "GIT_TOKEN=arn:aws:secretsmanager:us-east-1:1:secret:custom-abc",
++    "MIGRATION_STARTUP_TIMEOUT": "15",
++}
++
++
++def test_settings_parse_every_field():
++    s = adapter.MigrationSettings.from_environ(FULL_ENV)
++    assert s.project == "proj" and s.environment == "dev"
++    assert (s.port, s.invoke_path, s.health_path) == ("9000", "/run", "/healthz")
++    assert s.secret_names == ("JIRA_TOKEN", "GIT_TOKEN")
++    assert s.secret_arns["GIT_TOKEN"].endswith("custom-abc")
++    assert s.startup_timeout == 15.0
++
++
++def test_settings_defaults_for_the_child_contract():
++    s = adapter.MigrationSettings.from_environ({})
++    assert (s.port, s.invoke_path, s.health_path) == ("8000", "/invocations", "")
++    assert s.secret_names == () and s.secret_arns == {}
++    assert s.startup_timeout == 60.0
++
++
++def test_urls_follow_settings(monkeypatch):
++    for key, value in FULL_ENV.items():
++        monkeypatch.setenv(key, value)
++    assert adapter._invoke_url() == "http://127.0.0.1:9000/run"
++    assert adapter._health_url() == "http://127.0.0.1:9000/healthz"
++
++
++def test_health_url_defaults_to_root(monkeypatch):
++    monkeypatch.delenv("MIGRATION_HEALTH_PATH", raising=False)
++    assert adapter._health_url().endswith("/")
++
++
++def test_settings_are_frozen():
++    s = adapter.MigrationSettings.from_environ(FULL_ENV)
++    with pytest.raises(AttributeError):
++        s.port = "1"
++
++
++def test_secret_id_uses_explicit_arn_override():
++    assert adapter.secret_id_for("GIT_TOKEN", FULL_ENV).endswith("custom-abc")
++    assert adapter.secret_id_for("JIRA_TOKEN", FULL_ENV) == "proj/dev/migration/JIRA_TOKEN"

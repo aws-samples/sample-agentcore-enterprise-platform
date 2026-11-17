@@ -1,0 +1,132 @@
+diff --git a/agent-code/shared/jwt_claims.py b/agent-code/shared/jwt_claims.py
+index e81222d..03bc3fd 100644
+--- a/agent-code/shared/jwt_claims.py
++++ b/agent-code/shared/jwt_claims.py
+@@ -63,7 +63,13 @@ def validate_claims(
+     than pinning to our clients. Callers that know their client IDs should pass
+     them.
+     """
+-    issuer = claims.get("iss")
++    _check_issuer(claims.get("iss"), expected_issuer)
++    _check_client(claims, allowed_clients)
++    return _subject(claims)
++
++
++def _check_issuer(issuer: str | None, expected_issuer: str) -> None:
++    """Exact match against the configured issuer; no issuer configured rejects all."""
+     if not expected_issuer:
+         raise TokenRejected(
+             "No expected issuer configured, so no token can be validated. Set "
+@@ -73,15 +79,24 @@ def validate_claims(
+     if issuer != expected_issuer:
+         raise TokenRejected(f"Token issuer {issuer!r} is not {expected_issuer!r}")
+ 
+-    if allowed_clients:
+-        client_id = _client_id(claims)
+-        if client_id not in allowed_clients:
+-            raise TokenRejected(
+-                f"Token client {client_id!r} is not one of this deployment's clients"
+-            )
+ 
+-    # token_use tells a Cognito access token from an ID token; both carry sub,
+-    # and either is fine for identifying the caller. Refresh tokens are not JWTs.
++def _check_client(claims: dict, allowed_clients: tuple[str, ...]) -> None:
++    """Pin the OAuth client when the deployment knows its clients."""
++    if not allowed_clients:
++        return
++    client_id = _client_id(claims)
++    if client_id not in allowed_clients:
++        raise TokenRejected(
++            f"Token client {client_id!r} is not one of this deployment's clients"
++        )
++
++
++def _subject(claims: dict) -> str:
++    """The identity to act as.
++
++    token_use tells a Cognito access token from an ID token; both carry sub,
++    and either is fine for identifying the caller. Refresh tokens are not JWTs.
++    """
+     subject = claims.get("sub")
+     if not subject:
+         raise TokenRejected(
+diff --git a/tests/test_jwt_claims.py b/tests/test_jwt_claims.py
+index 3c3d9e2..eebe6b0 100644
+--- a/tests/test_jwt_claims.py
++++ b/tests/test_jwt_claims.py
+@@ -86,3 +86,75 @@ def test_no_allowed_clients_still_pins_the_issuer():
+ def test_empty_claims_are_rejected():
+     with pytest.raises(TokenRejected):
+         validate_claims({}, ISSUER, CLIENTS)
++
++
++# ── helpers kept behaviour-identical to validate_claims ──
++from jwt_claims import _client_id, jwks_uri, gateway_token_scopes  # noqa: E402
++
++
++@pytest.mark.parametrize(
++    ("claims", "expected"),
++    [
++        ({"aud": "a"}, "a"),
++        ({"aud": ["a", "b"]}, "a"),
++        ({"aud": []}, None),
++        ({"client_id": "m2m"}, "m2m"),
++        ({"aud": "", "client_id": "m2m"}, "m2m"),
++        ({}, None),
++    ],
++)
++def test_client_id_sources(claims, expected):
++    assert _client_id(claims) == expected
++
++
++def test_issuer_with_trailing_slash_is_not_the_same_issuer():
++    claims = {"iss": ISSUER + "/", "aud": APP_CLIENT, "sub": "user-1"}
++    with pytest.raises(TokenRejected, match="issuer"):
++        validate_claims(claims, ISSUER, CLIENTS)
++
++
++def test_missing_issuer_claim_is_rejected():
++    with pytest.raises(TokenRejected, match="issuer"):
++        validate_claims({"aud": APP_CLIENT, "sub": "user-1"}, ISSUER, CLIENTS)
++
++
++def test_empty_subject_is_rejected():
++    with pytest.raises(TokenRejected, match="sub"):
++        validate_claims({"iss": ISSUER, "aud": APP_CLIENT, "sub": ""}, ISSUER, CLIENTS)
++
++
++def test_client_check_runs_before_subject_check():
++    claims = {"iss": ISSUER, "client_id": "other"}
++    with pytest.raises(TokenRejected, match="client"):
++        validate_claims(claims, ISSUER, CLIENTS)
++
++
++def test_jwks_uri_prefers_discovery():
++    assert jwks_uri(ISSUER, {"jwks_uri": "https://keys"}) == "https://keys"
++    assert jwks_uri(ISSUER + "/") == ISSUER + "/.well-known/jwks.json"
++
++
++def test_gateway_scopes_skip_empty_items():
++    assert gateway_token_scopes({"GATEWAY_TOKEN_SCOPES": "a,,b,"}) == ["a", "b"]
++    assert gateway_token_scopes({}) == []
++
++
++def test_m2m_token_with_aud_list_uses_first_audience():
++    claims = {"iss": ISSUER, "aud": [M2M_CLIENT, "other"], "sub": "svc"}
++    assert validate_claims(claims, ISSUER, CLIENTS) == "svc"
++
++
++def test_any_client_from_the_issuer_when_no_clients_pinned():
++    claims = {"iss": ISSUER, "client_id": "whatever", "sub": "svc"}
++    assert validate_claims(claims, ISSUER, ()) == "svc"
++
++
++def test_rejections_are_value_errors_for_callers():
++    assert issubclass(TokenRejected, ValueError)
++
++
++@pytest.mark.parametrize("bad_issuer", ["", "https://cognito-idp.us-east-1.amazonaws.com", ISSUER.upper()])
++def test_near_miss_issuers_are_rejected(bad_issuer):
++    claims = {"iss": bad_issuer, "aud": APP_CLIENT, "sub": "user-1"}
++    with pytest.raises(TokenRejected):
++        validate_claims(claims, ISSUER, CLIENTS)

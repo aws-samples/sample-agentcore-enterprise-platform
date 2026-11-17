@@ -1,0 +1,166 @@
+diff --git a/migration/adapter/adapter.py b/migration/adapter/adapter.py
+index 7423c22..d548118 100644
+--- a/migration/adapter/adapter.py
++++ b/migration/adapter/adapter.py
+@@ -184,11 +184,12 @@ def live_health_timeout(environ: dict) -> float:
+ 
+ 
+ class Child:
+-    """The customer's process: start, tail stderr, restart once, report state."""
++    """The customer's process: start, tail stderr, restart within a budget, report state."""
+ 
+-    def __init__(self, cmd: list[str], env: dict[str, str]):
++    def __init__(self, cmd: list[str], env: dict[str, str], restart_limit: int = 1):
+         self.cmd = cmd
+         self.env = env
++        self.restart_limit = restart_limit
+         self.stderr_tail: deque[str] = deque(maxlen=STDERR_TAIL_LINES)
+         self.restarts_used = 0
+         self.unhealthy = False
+@@ -196,7 +197,12 @@ class Child:
+         self._lock = threading.Lock()
+ 
+     def start(self):
+-        log.info("starting child: %s", self.cmd)
++        log.info(
++            "starting child (restarts used %d/%d): %s",
++            self.restarts_used,
++            self.restart_limit,
++            self.cmd,
++        )
+         self.proc = subprocess.Popen(  # nosec B603 — cmd is the source image's own Entrypoint+Cmd
+             self.cmd,
+             env=self.env,
+@@ -204,7 +210,10 @@ class Child:
+             text=True,
+         )
+         threading.Thread(
+-            target=self._pump_stderr, args=(self.proc,), daemon=True
++            target=self._pump_stderr,
++            args=(self.proc,),
++            name="child-stderr",
++            daemon=True,
+         ).start()
+ 
+     def _pump_stderr(self, proc):
+@@ -212,20 +221,34 @@ class Child:
+             self.stderr_tail.append(line.rstrip("\n"))
+             sys.stderr.write(f"[child] {line}")
+ 
++    def _budget_left(self) -> bool:
++        """Account one exit. True while another restart is allowed."""
++        with self._lock:
++            if self.restarts_used >= self.restart_limit:
++                self.unhealthy = True
++                return False
++            self.restarts_used += 1
++            return True
++
+     def supervise(self):
+-        """Blockingly watch the child; restart once, then mark unhealthy.
+-        Run in a daemon thread."""
++        """Blockingly watch the child; restart within the budget, then mark
++        unhealthy. Run in a daemon thread.
++
++        The restart is issued as soon as the exit is seen, so a crash costs as
++        little downtime as possible; the budget check follows it.
++        """
+         while True:
+-            self.proc.wait()
+-            with self._lock:
+-                code = self.proc.returncode
+-                if self.restarts_used >= 1:
+-                    self.unhealthy = True
+-                    log.error("child exited again (rc=%s); giving up", code)
+-                    return
+-                self.restarts_used += 1
+-            log.warning("child exited (rc=%s); restarting once", code)
++            code = self.proc.wait()
+             self.start()
++            if not self._budget_left():
++                log.error("child exited again (rc=%s); giving up", code)
++                return
++            log.warning(
++                "child exited (rc=%s); restarted (%d/%d)",
++                code,
++                self.restarts_used,
++                self.restart_limit,
++            )
+ 
+     def alive(self) -> bool:
+         return not self.unhealthy and self.proc is not None and self.proc.poll() is None
+@@ -414,7 +437,8 @@ def main():
+         sys.exit(6)
+ 
+     global _child
+-    _child = Child(cmd, child_env)
++    restart_limit = int(os.environ.get("MIGRATION_RESTART_LIMIT", "1"))
++    _child = Child(cmd, child_env, restart_limit=restart_limit)
+     _child.start()
+     threading.Thread(target=_child.supervise, daemon=True).start()
+ 
+diff --git a/tests/test_adapter.py b/tests/test_adapter.py
+index 40af9e9..b502958 100644
+--- a/tests/test_adapter.py
++++ b/tests/test_adapter.py
+@@ -399,3 +399,60 @@ def test_invoke_preserves_forwarding_after_health_check(monkeypatch):
+         "payload": {"prompt": "hi"},
+         "url": adapter._invoke_url(),
+     }
++
++
++# ── restart budget ──
++class _FakeProc:
++    def __init__(self, rc=1):
++        self.returncode = rc
++        self.stderr = iter(())
++
++    def wait(self):
++        return self.returncode
++
++    def poll(self):
++        return self.returncode
++
++
++def _child_with_fake_procs(monkeypatch, limit):
++    child = adapter.Child(["agent"], {}, restart_limit=limit)
++    started = []
++
++    def fake_start():
++        started.append(len(started))
++        child.proc = _FakeProc()
++
++    monkeypatch.setattr(child, "start", fake_start)
++    child.proc = _FakeProc()
++    return child, started
++
++
++def test_default_restart_limit_is_one():
++    assert adapter.Child(["agent"], {}).restart_limit == 1
++
++
++def test_child_gives_up_and_reports_unhealthy(monkeypatch):
++    child, started = _child_with_fake_procs(monkeypatch, limit=1)
++    child.supervise()
++    assert child.unhealthy is True
++    assert child.restarts_used == 1
++    assert child.alive() is False
++
++
++def test_restart_limit_two_allows_two_restarts(monkeypatch):
++    child, started = _child_with_fake_procs(monkeypatch, limit=2)
++    child.supervise()
++    assert child.restarts_used == 2
++    assert child.unhealthy is True
++
++
++def test_restart_limit_zero_never_counts_a_restart(monkeypatch):
++    child, started = _child_with_fake_procs(monkeypatch, limit=0)
++    child.supervise()
++    assert child.restarts_used == 0
++    assert child.unhealthy is True
++
++
++def test_restart_limit_is_read_from_the_environment(monkeypatch):
++    monkeypatch.setenv("MIGRATION_RESTART_LIMIT", "3")
++    assert int(adapter.os.environ["MIGRATION_RESTART_LIMIT"]) == 3

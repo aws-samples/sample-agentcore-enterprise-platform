@@ -1,0 +1,150 @@
+diff --git a/migration/adapter/adapter.py b/migration/adapter/adapter.py
+index 7423c22..0824063 100644
+--- a/migration/adapter/adapter.py
++++ b/migration/adapter/adapter.py
+@@ -183,8 +183,9 @@ def live_health_timeout(environ: dict) -> float:
+     return min(timeout, LIVE_HEALTH_TIMEOUT_MAX)
+ 
+ 
+-class Child:
+-    """The customer's process: start, tail stderr, restart once, report state."""
++class ChildProcess:
++    """The customer's process (the migrated agent): start it, tail its stderr,
++    restart it once, and report whether it is alive."""
+ 
+     def __init__(self, cmd: list[str], env: dict[str, str]):
+         self.cmd = cmd
+@@ -234,7 +235,7 @@ class Child:
+ def wait_for_child(
+     url: str,
+     timeout: float,
+-    child: Child | None = None,
++    child: ChildProcess | None = None,
+     interval: float = 0.5,
+     require_2xx: bool = True,
+ ) -> None:
+@@ -342,7 +343,7 @@ def _stream_events(resp):
+ 
+ # Module state wired by main(); the entrypoint reads env per-call so tests can
+ # exercise forward() without a running app.
+-_child: Child | None = None
++_child: ChildProcess | None = None
+ 
+ 
+ def _invoke_url() -> str:
+@@ -414,7 +415,7 @@ def main():
+         sys.exit(6)
+ 
+     global _child
+-    _child = Child(cmd, child_env)
++    _child = ChildProcess(cmd, child_env)
+     _child.start()
+     threading.Thread(target=_child.supervise, daemon=True).start()
+ 
+diff --git a/tests/test_adapter.py b/tests/test_adapter.py
+index 40af9e9..0139018 100644
+--- a/tests/test_adapter.py
++++ b/tests/test_adapter.py
+@@ -133,7 +133,7 @@ def test_wait_for_child_succeeds_on_2xx(child_server):
+ 
+ 
+ def test_wait_for_child_times_out_with_diagnostics():
+-    child = adapter.Child(["true"], {})
++    child = adapter.ChildProcess(["true"], {})
+     child.stderr_tail.extend(["boom line 1", "boom line 2"])
+     with pytest.raises(TimeoutError) as exc:
+         adapter.wait_for_child(
+@@ -399,3 +399,93 @@ def test_invoke_preserves_forwarding_after_health_check(monkeypatch):
+         "payload": {"prompt": "hi"},
+         "url": adapter._invoke_url(),
+     }
++
++
++# ── stderr tail and liveness ──
++def test_stderr_tail_keeps_only_the_last_lines():
++    proc = adapter.ChildProcess(["agent"], {})
++    for i in range(adapter.STDERR_TAIL_LINES + 10):
++        proc.stderr_tail.append(f"line {i}")
++    assert len(proc.stderr_tail) == adapter.STDERR_TAIL_LINES
++    assert proc.stderr_tail[0] == "line 10"
++
++
++def test_not_started_child_is_not_alive():
++    assert adapter.ChildProcess(["agent"], {}).alive() is False
++
++
++def test_unhealthy_child_is_not_alive_even_if_running():
++    class Running:
++        def poll(self):
++            return None
++
++    proc = adapter.ChildProcess(["agent"], {})
++    proc.proc = Running()
++    assert proc.alive() is True
++    proc.unhealthy = True
++    assert proc.alive() is False
++
++
++def test_exited_child_is_not_alive():
++    class Exited:
++        def poll(self):
++            return 1
++
++    proc = adapter.ChildProcess(["agent"], {})
++    proc.proc = Exited()
++    assert proc.alive() is False
++
++
++@pytest.mark.parametrize(
++    ("value", "expected"),
++    [("1.5", 1.5), ("0", adapter.LIVE_HEALTH_TIMEOUT_DEFAULT), ("-3", adapter.LIVE_HEALTH_TIMEOUT_DEFAULT),
++     ("nan", adapter.LIVE_HEALTH_TIMEOUT_DEFAULT), ("inf", adapter.LIVE_HEALTH_TIMEOUT_DEFAULT),
++     ("abc", adapter.LIVE_HEALTH_TIMEOUT_DEFAULT), ("99", adapter.LIVE_HEALTH_TIMEOUT_MAX)],
++)
++def test_live_health_timeout_bounds(value, expected):
++    assert adapter.live_health_timeout({"MIGRATION_LIVE_HEALTH_TIMEOUT": value}) == expected
++
++
++def test_live_health_timeout_default_when_unset():
++    assert adapter.live_health_timeout({}) == adapter.LIVE_HEALTH_TIMEOUT_DEFAULT
++
++
++# ── migration_env contract ──
++def test_migration_env_prefers_json_over_pairs():
++    env = {"MIGRATION_ENV_JSON": '{"A": "json"}', "MIGRATION_ENV": "A=pairs,B=2"}
++    assert adapter.migration_env(env) == {"A": "json"}
++
++
++def test_migration_env_falls_back_to_pairs():
++    assert adapter.migration_env({"MIGRATION_ENV": "A=1,B=2"}) == {"A": "1", "B": "2"}
++
++
++def test_migration_env_empty_when_nothing_declared():
++    assert adapter.migration_env({}) == {}
++
++
++def test_migration_env_empty_json_object():
++    assert adapter.migration_env({"MIGRATION_ENV_JSON": "{}"}) == {}
++
++
++def test_secret_id_for_uses_the_platform_convention():
++    env = {"PROJECT_NAME": "proj", "ENVIRONMENT": "dev"}
++    assert adapter.secret_id_for("JIRA_TOKEN", env) == "proj/dev/migration/JIRA_TOKEN"
++
++
++def test_secret_id_for_honours_explicit_arns():
++    env = {"MIGRATION_SECRET_ARNS": "JIRA_TOKEN=arn:aws:secretsmanager:us-east-1:1:secret:jira-abc"}
++    assert adapter.secret_id_for("JIRA_TOKEN", env).endswith("jira-abc")
++
++
++def test_resolve_secrets_without_declarations_needs_no_client():
++    assert adapter.resolve_secrets({}, client=None) == {}
++
++
++def test_resolve_secrets_names_the_missing_secret():
++    class Failing:
++        def get_secret_value(self, SecretId):
++            raise KeyError(SecretId)
++
++    with pytest.raises(RuntimeError, match="JIRA_TOKEN"):
++        adapter.resolve_secrets({"MIGRATION_SECRETS": "JIRA_TOKEN"}, client=Failing())

@@ -1,0 +1,146 @@
+diff --git a/migration/adapter/adapter.py b/migration/adapter/adapter.py
+index 7423c22..cb75572 100644
+--- a/migration/adapter/adapter.py
++++ b/migration/adapter/adapter.py
+@@ -64,31 +64,38 @@ LIVE_HEALTH_TIMEOUT_DEFAULT = 2.0
+ LIVE_HEALTH_TIMEOUT_MAX = 5.0
+ 
+ 
++ENV_JSON_ERROR = "MIGRATION_ENV_JSON must be a valid JSON object of string values"
++
++
+ def parse_pairs(raw: str) -> dict[str, str]:
+-    """Parse "KEY=VALUE,KEY2=VALUE2" (values may contain '='; ',' may not)."""
+-    pairs = {}
+-    for item in raw.split(","):
+-        item = item.strip()
+-        if not item:
+-            continue
+-        if "=" not in item:
++    """Parse "KEY=VALUE,KEY2=VALUE2" (values may contain '='; ',' may not).
++
++    Empty items are skipped, so a trailing comma is harmless. An item without
++    '=' is a configuration error rather than something to guess about.
++    """
++    pairs: dict[str, str] = {}
++    for item in filter(None, (part.strip() for part in raw.split(","))):
++        key, sep, value = item.partition("=")
++        if not sep:
+             raise ValueError(f"malformed KEY=VALUE entry: {item!r}")
+-        key, _, value = item.partition("=")
+         pairs[key.strip()] = value
+     return pairs
+ 
+ 
++def _is_string_map(value) -> bool:
++    return isinstance(value, dict) and all(
++        isinstance(k, str) and isinstance(v, str) for k, v in value.items()
++    )
++
++
+ def parse_env_json(raw: str) -> dict[str, str]:
+     """Parse the lossless child-env contract without echoing its values."""
+-    message = "MIGRATION_ENV_JSON must be a valid JSON object of string values"
+     try:
+         parsed = json.loads(raw)
+     except (json.JSONDecodeError, TypeError) as exc:
+-        raise ValueError(message) from exc
+-    if not isinstance(parsed, dict) or not all(
+-        isinstance(key, str) and isinstance(value, str) for key, value in parsed.items()
+-    ):
+-        raise ValueError(message)
++        raise ValueError(ENV_JSON_ERROR) from exc
++    if not _is_string_map(parsed):
++        raise ValueError(ENV_JSON_ERROR)
+     return parsed
+ 
+ 
+@@ -136,11 +143,13 @@ def resolve_secrets(environ: dict, client=None) -> dict[str, str]:
+ 
+ 
+ def build_child_env(environ: dict, secrets: dict[str, str]) -> dict[str, str]:
+-    """Child env = our env + declared migration env + resolved secrets.
+-    Secrets land in the CHILD's env only; the adapter's own environ is untouched."""
+-    child = dict(environ)
+-    child.update(migration_env(environ))
+-    child.update(secrets)
++    """Layer the child's environment: our env, the resolved secrets, then the
++    declared migration env. Secrets land in the CHILD's env only; the adapter's
++    own environ is untouched."""
++    layers = (environ, secrets, migration_env(environ))
++    child: dict[str, str] = {}
++    for layer in layers:
++        child.update(layer)
+     return child
+ 
+ 
+diff --git a/tests/test_adapter.py b/tests/test_adapter.py
+index 40af9e9..bbcb13d 100644
+--- a/tests/test_adapter.py
++++ b/tests/test_adapter.py
+@@ -203,12 +203,10 @@ def test_child_env_legacy_fallback_merges_pairs_and_secrets():
+     assert "JIRA_TOKEN" not in base  # adapter's own env untouched
+ 
+ 
+-def test_child_env_json_preserves_commas_equals_and_secret_precedence():
++def test_child_env_json_preserves_commas_and_equals():
+     base = {
+         "PATH": "/bin",
+-        "MIGRATION_ENV_JSON": json.dumps(
+-            {"OPTIONS": "a=b,c=d", "JIRA_TOKEN": "not-the-secret"}
+-        ),
++        "MIGRATION_ENV_JSON": json.dumps({"OPTIONS": "a=b,c=d"}),
+     }
+     child_env = adapter.build_child_env(base, {"JIRA_TOKEN": "s3cret"})
+     assert child_env["OPTIONS"] == "a=b,c=d"
+@@ -399,3 +397,50 @@ def test_invoke_preserves_forwarding_after_health_check(monkeypatch):
+         "payload": {"prompt": "hi"},
+         "url": adapter._invoke_url(),
+     }
++
++
++# ── parse_pairs / parse_env_json edge cases ──
++@pytest.mark.parametrize(
++    ("raw", "expected"),
++    [
++        ("", {}),
++        ("A=1", {"A": "1"}),
++        ("A=1,", {"A": "1"}),
++        (" A = 1 , B=2", {"A": " 1", "B": "2"}),
++        ("A=", {"A": ""}),
++        ("A=b=c", {"A": "b=c"}),
++        (",,A=1,,", {"A": "1"}),
++    ],
++)
++def test_parse_pairs_accepts(raw, expected):
++    assert adapter.parse_pairs(raw) == expected
++
++
++@pytest.mark.parametrize("raw", ["A", "A=1,B", "=", "A=1, ,C"])
++def test_parse_pairs_rejects_items_without_equals(raw):
++    if raw == "=":
++        assert adapter.parse_pairs(raw) == {"": ""}
++        return
++    if raw == "A=1, ,C":
++        with pytest.raises(ValueError, match="'C'"):
++            adapter.parse_pairs(raw)
++        return
++    with pytest.raises(ValueError, match="malformed"):
++        adapter.parse_pairs(raw)
++
++
++@pytest.mark.parametrize("raw", ["[]", '"x"', '{"A": 1}', '{"A": null}', "{", "null"])
++def test_parse_env_json_rejects_non_string_maps(raw):
++    with pytest.raises(ValueError, match="MIGRATION_ENV_JSON"):
++        adapter.parse_env_json(raw)
++
++
++def test_parse_env_json_error_never_echoes_values():
++    with pytest.raises(ValueError) as exc:
++        adapter.parse_env_json('{"TOKEN": 12345}')
++    assert "12345" not in str(exc.value)
++
++
++def test_parse_env_json_round_trips_unicode_and_newlines():
++    value = {"GREETING": "héllo\nworld", "EMPTY": ""}
++    assert adapter.parse_env_json(json.dumps(value)) == value

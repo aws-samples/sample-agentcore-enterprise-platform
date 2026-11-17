@@ -4,7 +4,8 @@
 
 Each case is a patch on BASE (the repo commit the cases were cut from). The runtime applies it in its own
 clone, so nothing is pushed to GitHub. Scoring: a seeded bug is caught (TP) when a blocker/major/minor
-finding names the same file, within 5 lines, in one of the expected categories. Every other blocker/major
+finding names the same file, within 5 lines of the bug (or of one of its listed
+alternative locations, for a bug that spans files), in one of the expected categories. Every other blocker/major
 finding is a false positive (FP); an uncaught bug is a false negative (FN).
 """
 
@@ -32,9 +33,12 @@ def score(expected: list[dict], findings: list[dict]) -> dict:
                 for i, f in enumerate(findings)
                 if i not in used
                 and f.get("severity") in ("blocker", "major", "minor")
-                and f.get("path") == bug["path"]
                 and isinstance(f.get("line"), int)
-                and abs(f["line"] - bug["line"]) <= LINE_SLACK
+                and any(
+                    f.get("path") == loc["path"]
+                    and abs(f["line"] - loc["line"]) <= LINE_SLACK
+                    for loc in [bug, *bug.get("alt", [])]
+                )
                 and f.get("category") in bug["categories"]
             ),
             None,

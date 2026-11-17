@@ -1,0 +1,261 @@
+diff --git a/infra_utils/agentcore_role.py b/infra_utils/agentcore_role.py
+index 937abd4..10e52e3 100644
+--- a/infra_utils/agentcore_role.py
++++ b/infra_utils/agentcore_role.py
+@@ -1,52 +1,92 @@
+-"""Reusable AgentCore IAM Role construct."""
++"""Reusable AgentCore IAM Role construct.
++
++The runtime stacks build their execution role from this construct, so the
++baseline (ECR pull, logs, X-Ray, metrics, model access, SSM) is defined once.
++"""
+ from aws_cdk import aws_iam as iam
+ from constructs import Construct
+ 
++MODEL_ACTIONS = [
++    "bedrock:InvokeModel",
++    "bedrock:InvokeModelWithResponseStream",
++    "bedrock:Converse",
++    "bedrock:ConverseStream",
++]
++
+ 
+ class AgentCoreRole(iam.Role):
+     """IAM Role for AgentCore Runtime with standard permissions."""
+ 
+-    def __init__(self, scope: Construct, id: str, *, project_name: str, component_name: str,
+-                 extra_policy_statements: list[iam.PolicyStatement] | None = None, **kwargs):
+-        super().__init__(scope, id,
++    def __init__(
++        self,
++        scope: Construct,
++        id: str,
++        *,
++        project_name: str,
++        component_name: str,
++        role_name: str | None = None,
++        ecr_repo_arn: str | None = None,
++        model_resources: list[str] | None = None,
++        extra_policy_statements: list[iam.PolicyStatement] | None = None,
++        **kwargs,
++    ):
++        super().__init__(
++            scope,
++            id,
+             assumed_by=iam.ServicePrincipal("bedrock-agentcore.amazonaws.com"),
+-            role_name=f"{project_name}-{component_name}-role",
+-            **kwargs)
++            role_name=role_name or f"{project_name}-{component_name}-role",
++            **kwargs,
++        )
+ 
+-        # Core permissions every AgentCore runtime needs
++        # Image pull, scoped to the component's own repository when it is known.
+         self.add_to_policy(iam.PolicyStatement(
+-            actions=[
+-                "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer", "ecr:GetAuthorizationToken",
+-            ],
+-            resources=["*"],
++            sid="ECRPull",
++            actions=["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
++            resources=[ecr_repo_arn] if ecr_repo_arn else ["*"],
+         ))
++        # GetAuthorizationToken returns an account-level token: IAM accepts only "*".
+         self.add_to_policy(iam.PolicyStatement(
++            sid="ECRAuth", actions=["ecr:GetAuthorizationToken"], resources=["*"],
++        ))
++        self.add_to_policy(iam.PolicyStatement(
++            sid="CloudWatchLogs",
+             actions=[
+                 "logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents",
++                "logs:PutResourcePolicy",
+             ],
+             resources=["arn:aws:logs:*:*:log-group:/aws/bedrock-agentcore/runtimes/*"],
+         ))
+         self.add_to_policy(iam.PolicyStatement(
++            sid="XRayTracing",
+             actions=["xray:PutTraceSegments", "xray:PutTelemetryRecords"],
+             resources=["*"],
+         ))
+         self.add_to_policy(iam.PolicyStatement(
+-            actions=[
+-                "cloudwatch:PutMetricData",
+-            ],
++            sid="CloudWatchMetrics",
++            actions=["cloudwatch:PutMetricData"],
+             resources=["*"],
+             conditions={"StringEquals": {"cloudwatch:namespace": "bedrock-agentcore"}},
+         ))
++        # Model access: any model the account has access to, the workshop default.
+         self.add_to_policy(iam.PolicyStatement(
+-            actions=[
+-                "bedrock:InvokeModel", "bedrock:Converse", "bedrock:ConverseStream",
++            sid="BedrockModels",
++            actions=MODEL_ACTIONS,
++            resources=[
++                "arn:aws:bedrock:*::foundation-model/*",
++                "arn:aws:bedrock:*:*:inference-profile/*",
+             ],
+-            resources=["arn:aws:bedrock:*::foundation-model/*"],
+         ))
++        if model_resources:
++            # platform.yaml allow-list: the role is the enforcement point, even
++            # against the containers' baked-in default model ids.
++            self.add_to_policy(iam.PolicyStatement(
++                sid="BedrockAllowList", actions=MODEL_ACTIONS, resources=model_resources,
++            ))
+         # Least-privilege (item 2): scope SSM reads to this project's parameter path rather
+         # than "*". See control-library/iam/runtime-execution-least-privilege.json for the
+         # full reference policy (ECR/logs/bedrock scoping) teams can adopt.
+         self.add_to_policy(iam.PolicyStatement(
++            sid="SSMAccess",
+             actions=["ssm:GetParameter", "ssm:GetParameters"],
+             resources=[f"arn:aws:ssm:*:*:parameter/{project_name}/*"],
+         ))
+diff --git a/stacks/runtime_stack.py b/stacks/runtime_stack.py
+index 27d16d7..a37bb7d 100644
+--- a/stacks/runtime_stack.py
++++ b/stacks/runtime_stack.py
+@@ -42,6 +42,7 @@ from aws_cdk import (
+ )
+ from constructs import Construct
+ 
++from infra_utils.agentcore_role import AgentCoreRole
+ from infra_utils.jwt_authorizer import custom_jwt_authorizer
+ from infra_utils.platform_config import allowed_model_resources
+ from infra_utils.policy_loader import load_control
+@@ -363,19 +364,18 @@ class RuntimeStack(cdk.Stack):
+                     guardrail.add_property_override(cfn_key, guardrail_cfg[cfn_key])
+ 
+         # ── AgentCore Runtime IAM Role ──
+-        runtime_role = iam.Role(
++        runtime_role = AgentCoreRole(
+             self,
+             "RuntimeRole",
+-            assumed_by=iam.ServicePrincipal("bedrock-agentcore.amazonaws.com"),
+-            role_name=f"{prefix}-{component_name}-runtime-role",
+-        )
+-        self._attach_runtime_permissions(
+-            runtime_role,
+-            repo.repository_arn,
+             project_name=project_name,
+-            allowed_models=allowed_models,
+-            guardrail=guardrail,
++            component_name=component_name,
++            role_name=f"{prefix}-{component_name}-runtime-role",
++            ecr_repo_arn=repo.repository_arn,
++            model_resources=(
++                allowed_model_resources(allowed_models) if allowed_models else None
++            ),
+         )
++        self._attach_runtime_permissions(runtime_role, guardrail=guardrail)
+         if migration_secret_names:
+             # The adapter resolves each declared migration secret into the
+             # child's env at startup — exactly these, nothing else. Same -*
+@@ -620,102 +620,16 @@ class RuntimeStack(cdk.Stack):
+     @staticmethod
+     def _attach_runtime_permissions(
+         role: iam.Role,
+-        ecr_repo_arn: str,
+         *,
+-        project_name: str,
+-        allowed_models: list[str] | None = None,
+         guardrail: bedrock.CfnGuardrail | None = None,
+     ) -> None:
+-        """Attach the standard AgentCore Runtime permissions to a role.
++        """Attach the AgentCore service permissions on top of AgentCoreRole's baseline.
+ 
+-        Wildcard resources are used only where the AWS action does not support
+-        resource-level permissions; each one says so. Everything that can be
+-        scoped is scoped, because this role is what a compromised agent inherits.
++        The baseline (ECR, logs, X-Ray, metrics, models, SSM) lives in
++        infra_utils/agentcore_role.py. Wildcard resources are used only where the
++        AWS action does not support resource-level permissions; each one says so.
+         """
+         statements = [
+-            # ECR image pull, limited to this component's own repository. It used
+-            # to be resources=["*"], which let any runtime role pull every image
+-            # in the account (Checkov CKV_AWS_108) — the repo ARN was already
+-            # being passed to this function and simply ignored.
+-            iam.PolicyStatement(
+-                sid="ECRPull",
+-                actions=["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
+-                resources=[ecr_repo_arn],
+-            ),
+-            # GetAuthorizationToken has no resource to scope to: it returns an
+-            # account-level token, so IAM only accepts "*".
+-            iam.PolicyStatement(
+-                sid="ECRAuth",
+-                actions=["ecr:GetAuthorizationToken"],
+-                resources=["*"],
+-            ),
+-            # CloudWatch Logs. PutResourcePolicy is what lets AgentCore allow
+-            # X-Ray to deliver this agent's spans into the agent's own log group
+-            # (the unified span destination) instead of the shared aws/spans
+-            # group. Kept scoped to the runtime log groups: account-wide it would
+-            # let the agent open any log group to another account.
+-            iam.PolicyStatement(
+-                sid="CloudWatchLogs",
+-                actions=[
+-                    "logs:CreateLogGroup",
+-                    "logs:CreateLogStream",
+-                    "logs:PutLogEvents",
+-                    "logs:PutResourcePolicy",
+-                ],
+-                resources=[
+-                    "arn:aws:logs:*:*:log-group:/aws/bedrock-agentcore/runtimes/*"
+-                ],
+-            ),
+-            # X-Ray tracing. These two actions accept no resource ARN, so "*" is
+-            # the only valid value — not a missed scoping opportunity.
+-            iam.PolicyStatement(
+-                sid="XRayTracing",
+-                actions=["xray:PutTraceSegments", "xray:PutTelemetryRecords"],
+-                resources=["*"],
+-            ),
+-            # CloudWatch metrics. PutMetricData also takes no resource ARN; the
+-            # namespace condition is what constrains it instead.
+-            iam.PolicyStatement(
+-                sid="CloudWatchMetrics",
+-                actions=["cloudwatch:PutMetricData"],
+-                resources=["*"],
+-                conditions={
+-                    "StringEquals": {"cloudwatch:namespace": "bedrock-agentcore"}
+-                },
+-            ),
+-            # Bedrock model invocation. Wildcard by default (any model the
+-            # account has access to — the workshop default); scoped to the
+-            # platform.yaml allow-list when one is set, so the role is the
+-            # enforcement point even against the containers' baked-in default
+-            # model ids.
+-            iam.PolicyStatement(
+-                sid="BedrockModels",
+-                actions=[
+-                    "bedrock:InvokeModel",
+-                    "bedrock:InvokeModelWithResponseStream",
+-                    "bedrock:Converse",
+-                    "bedrock:ConverseStream",
+-                ],
+-                resources=(
+-                    allowed_model_resources(allowed_models)
+-                    if allowed_models
+-                    else [
+-                        "arn:aws:bedrock:*::foundation-model/*",
+-                        "arn:aws:bedrock:*:*:inference-profile/*",
+-                    ]
+-                ),
+-            ),
+-            # SSM Parameter Store (cross-stack discovery), scoped to this
+-            # project's own parameter path. On "*" the agent could read every
+-            # parameter in the account, which is the classic data-exfiltration
+-            # path Checkov CKV_AWS_108 looks for. infra_utils/agentcore_role.py
+-            # — the file that calls itself the reference policy — already scoped
+-            # these actions this way; this makes the two agree.
+-            iam.PolicyStatement(
+-                sid="SSMAccess",
+-                actions=["ssm:GetParameter", "ssm:GetParameters"],
+-                resources=[f"arn:aws:ssm:*:*:parameter/{project_name}/*"],
+-            ),
+             # AgentCore service access (Gateway, Memory, A2A, Registry, etc.).
+             # Still "*", and knowingly so: scoping these needs the gateway,
+             # memory and sibling-runtime ARNs, and the A2A targets do not exist

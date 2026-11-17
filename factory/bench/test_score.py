@@ -61,3 +61,17 @@ def test_totals():
         "recall": 0.8,
         "f1": 0.727,
     }
+
+
+def test_a_split_bug_can_be_reported_at_any_listed_location():
+    split = [
+        {
+            "path": "a.py",
+            "line": 10,
+            "categories": ["security"],
+            "bug": "split",
+            "alt": [{"path": "b.py", "line": 40}],
+        }
+    ]
+    assert score(split, [f(path="b.py", line=43)])["tp"] == 1
+    assert score(split, [f(path="b.py", line=10)])["tp"] == 0
