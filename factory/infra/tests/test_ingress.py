@@ -20,6 +20,7 @@ def sent(monkeypatch):
     sent = []
     monkeypatch.setattr(ingress, "_secret", lambda: SECRET)
     monkeypatch.setattr(ingress, "_first_delivery", lambda d: True)
+    monkeypatch.setattr(ingress, "_installation_id", lambda: "")
     monkeypatch.setattr(ingress, "_enqueue", lambda m, group, dedupe_id: sent.append(m))
     return sent
 
@@ -81,4 +82,30 @@ def test_other_repo_and_factory_branch_are_dropped(sent):
     assert ingress.handler(event(other, sign(other)), None)["statusCode"] == 202
     loop = BODY.replace(b'"main"', b'"factory/ci-fix/1"')
     assert ingress.handler(event(loop, sign(loop)), None)["statusCode"] == 202
+    assert not sent
+
+
+def test_other_installation_is_dropped_once_app_is_configured(sent, monkeypatch):
+    monkeypatch.setattr(ingress, "_installation_id", lambda: "777")
+    mine = BODY.replace(b'"action"', b'"installation": {"id": 777}, "action"')
+    other = BODY.replace(b'"action"', b'"installation": {"id": 999}, "action"')
+    assert (
+        ingress.handler(event(other, sign(other)), None)["statusCode"] == 202
+        and not sent
+    )
+    assert (
+        ingress.handler(event(BODY, sign(BODY)), None)["statusCode"] == 202 and not sent
+    )
+    assert (
+        ingress.handler(event(mine, sign(mine)), None)["statusCode"] == 202
+        and len(sent) == 1
+    )
+
+
+def test_unreadable_app_secret_fails_closed(sent, monkeypatch):
+    def boom():
+        raise ValueError("no secret")
+
+    monkeypatch.setattr(ingress, "_installation_id", boom)
+    assert ingress.handler(event(BODY, sign(BODY)), None)["statusCode"] == 500
     assert not sent

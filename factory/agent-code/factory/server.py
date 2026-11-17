@@ -14,13 +14,12 @@ import sys
 import threading
 import time
 import traceback
-import urllib.error
-import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import boto3
 
+from factory import github
 from factory.ci_fixer import Run
 
 REPO = os.environ.get(
@@ -28,47 +27,28 @@ REPO = os.environ.get(
 )
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 MAX_BODY = 5 * 1024 * 1024
+# Pushing branches and opening PRs needs an explicit switch on top of the App secret.
+PUBLISH = os.environ.get("FACTORY_PUBLISH", "false") == "true"
 _busy = threading.Lock()  # one run per session; each session is its own microVM
 _state = {"last_update": int(time.time())}
 
 
-def github_app_configured() -> bool:
-    """The App secret is an empty placeholder until the user creates the GitHub App."""
+def load_app_creds() -> dict | None:
+    """The App secret is '{}' until the user creates the GitHub App; None means dry run."""
     name = os.environ.get("FACTORY_GITHUB_APP_SECRET")
     if not name:
-        return False
+        return None
     raw = boto3.client("secretsmanager", region_name=REGION).get_secret_value(
         SecretId=name
     )["SecretString"]
     creds = json.loads(raw or "{}")
-    return bool(
+    if (
         creds.get("app_id")
         and creds.get("installation_id")
         and creds.get("private_key_pem")
-    )
-
-
-def fetch_failed_log(run_id: int) -> str:
-    # shortcut: anonymous GitHub API (60 req/h, may need auth for logs); switch to the App installation token in step 3.
-    def get(url: str):
-        req = urllib.request.Request(
-            url,
-            headers={
-                "Accept": "application/vnd.github+json",
-                "User-Agent": "software-factory",
-            },
-        )
-        return urllib.request.urlopen(req, timeout=60)
-
-    base = f"https://api.github.com/repos/{REPO}/actions"
-    with get(f"{base}/runs/{run_id}/jobs?filter=latest") as r:
-        jobs = json.load(r)["jobs"]
-    logs = []
-    for job in jobs:
-        if job.get("conclusion") == "failure":
-            with get(f"{base}/jobs/{int(job['id'])}/logs") as r:
-                logs.append(r.read().decode(errors="replace")[-2_000_000:])
-    return "\n".join(logs)
+    ):
+        return creds
+    return None
 
 
 def validate(payload: dict) -> dict:
@@ -108,21 +88,24 @@ def handle(payload: dict) -> dict:
             timeout=600,
         )
     agent = Run(run, repo, work, None, REGION)
+    creds = None
     try:
+        creds = load_app_creds()
+        token, missing = github.installation_token(creds, REPO) if creds else ("", [])
         log_text = payload.get("log_text") or ""
-        if not log_text:
-            try:
-                log_text = fetch_failed_log(run["id"])
-            except (
-                urllib.error.URLError
-            ) as e:  # job logs need auth; the agent reproduces the check instead
-                print(f"log fetch failed ({e}); reproducing the check locally")
+        if not log_text and token:
+            log_text = github.failed_job_logs(REPO, run["id"], token)
+        # Without a token the agent re-runs the workflow's check to get the failure text.
         rec = agent.execute(log_text)
-        if github_app_configured():
-            rec["reason"] = (
-                rec.get("reason", "")
-                + " github app configured; push path not built yet (step 3)"
-            ).strip()
+        if missing:
+            rec["github_missing_permissions"] = ", ".join(missing)
+        if token and rec["outcome"] == "fix_ready_dry_run":
+            if PUBLISH:
+                rec.update(agent.publish(token))
+            else:
+                rec["reason"] = (
+                    "publish disabled (FACTORY_PUBLISH is not true): branch and PR not created"
+                )
     except Exception as e:  # noqa: BLE001 - every failure must still produce a run row
         traceback.print_exc()
         rec = {
@@ -130,11 +113,15 @@ def handle(payload: dict) -> dict:
             "reason": f"{type(e).__name__}: {e}"[:500],
             "check_passed": False,
         }
-    line = agent.record(rec, dry_run=True)
+    line = agent.record(rec, dry_run=not (creds and PUBLISH))
     print(json.dumps({"factory_run": line}), flush=True)
     return {
         **line,
-        **{k: rec[k] for k in ("pr_title", "pr_body", "diff", "triage") if rec.get(k)},
+        **{
+            k: rec[k]
+            for k in ("pr_title", "pr_body", "diff", "triage", "pr_url")
+            if rec.get(k)
+        },
     }
 
 

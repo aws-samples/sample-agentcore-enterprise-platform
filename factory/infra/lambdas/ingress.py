@@ -16,11 +16,8 @@ import boto3
 
 MAX_BODY = 1024 * 1024
 REPO = os.environ.get("REPO", "aws-samples/sample-agentcore-enterprise-platform")
-INSTALLATION_ID = os.environ.get(
-    "INSTALLATION_ID", ""
-)  # set once the GitHub App exists
 DEDUPE_TTL_S = 3 * 24 * 3600
-_cache: dict = {"secret": b"", "at": 0.0}
+_cache: dict = {"secret": b"", "at": 0.0, "installation": None, "inst_at": 0.0}
 _clients: dict = {}
 
 
@@ -43,6 +40,18 @@ def _secret() -> bytes:
     if not value:
         raise ValueError("webhook secret is empty")
     _cache.update(secret=value, at=time.time())
+    return value
+
+
+def _installation_id() -> str:
+    """installation_id from the GitHub App secret; '' while the secret is '{}' (dry run, App not created)."""
+    if _cache["installation"] is not None and time.time() - _cache["inst_at"] < 300:
+        return _cache["installation"]
+    raw = _client("secretsmanager").get_secret_value(
+        SecretId=os.environ["APP_SECRET_ARN"]
+    )["SecretString"]
+    value = str(json.loads(raw or "{}").get("installation_id") or "")
+    _cache.update(installation=value, inst_at=time.time())
     return value
 
 
@@ -111,9 +120,14 @@ def handler(event, context):
         return _resp(200, "pong")
     if payload.get("repository", {}).get("full_name") != REPO:
         return _resp(202, "ignored: repository")
+    try:
+        installation = _installation_id()
+    except Exception as e:  # noqa: BLE001 - fail closed: never enqueue without knowing the installation
+        print(f"app secret unavailable: {type(e).__name__}")
+        return _resp(500, "unavailable")
     if (
-        INSTALLATION_ID
-        and str(payload.get("installation", {}).get("id")) != INSTALLATION_ID
+        installation
+        and str((payload.get("installation") or {}).get("id")) != installation
     ):
         return _resp(202, "ignored: installation")
     if event_name != "workflow_run" or payload.get("action") != "completed":

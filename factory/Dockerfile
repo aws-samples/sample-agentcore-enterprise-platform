@@ -13,7 +13,8 @@ RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && npm install -g aws-cdk@2.1148.1
 # The repo's own CDK/test dependencies, so `cdk synth` and pytest run without a per-run install.
 COPY requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt ruff
+COPY factory/agent-code/requirements.txt /tmp/factory-requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt -r /tmp/factory-requirements.txt ruff
 RUN useradd -r -u 1001 -m factory
 COPY factory/agent-code /app
 WORKDIR /app

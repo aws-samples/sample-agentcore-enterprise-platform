@@ -6,6 +6,7 @@ failing check -> record diff and would-be PR. Dry run only: never pushes; with
 FACTORY_RUNS_TABLE set the result goes to DynamoDB and CloudWatch SoftwareFactory.
 """
 
+import base64
 import json
 import os
 import re
@@ -26,8 +27,16 @@ TRIAGE_MODEL = os.environ.get("FACTORY_TRIAGE_MODEL", "us.anthropic.claude-sonne
 FIX_MODEL = os.environ.get("FACTORY_FIX_MODEL", "us.anthropic.claude-opus-5-5")
 INPUT_TOKEN_CAP = int(os.environ.get("FACTORY_INPUT_TOKEN_CAP", "200000"))
 MAX_ATTEMPTS = 2
-# shortcut: assumed USD per 1M tokens (input, output); move to SSM price table (design 2.5) before trusting cost numbers.
-PRICES = {TRIAGE_MODEL: (3.0, 15.0), FIX_MODEL: (5.0, 25.0)}
+# USD per 1M tokens (input, output): AWS Pricing API, service AmazonBedrockFoundationModels, us-east-1,
+# "standard" on-demand rates (geographic us.* profiles; global profiles are 10% cheaper), read 2026-11-17.
+PRICES = {
+    "us.anthropic.claude-sonnet-5-5": (2.2, 11.0),
+    "us.anthropic.claude-opus-5-5": (4.4, 22.0),
+    "us.anthropic.claude-fable-5-2": (8.8, 44.0),
+    "us.openai.gpt-6.1-sol": (2.2, 11.0),
+    "us.openai.gpt-6-astra": (11.0, 55.0),
+}
+BASE_BRANCH = os.environ.get("FACTORY_BASE_BRANCH", "main")
 
 _TS = re.compile(r"^(?:[\w-]+\t[^\t]*\t)?\d{4}-\d\d-\d\dT[\d:.]+Z ?")
 _ANSI = re.compile(r"\x1b\[[0-9;]*m|\^\[\[[0-9;]*m")
@@ -141,7 +150,9 @@ class Run:
         return parse_json(text)
 
     def cost(self) -> float:
-        price = lambda k: PRICES.get(k, (5.0, 25.0))
+        price = lambda k: PRICES.get(
+            k, (11.0, 55.0)
+        )  # unknown model: priciest allowed rate
         return round(
             sum(
                 m["input_tokens"] * price(k)[0] / 1e6
@@ -386,6 +397,63 @@ class Run:
             self.ruff = str(target / "bin" / "ruff")
         return version or "bundled"
 
+    def publish(self, token: str) -> dict:
+        """Push the verified fix as factory/ci-fix/<run_id> and open a PR into the base branch."""
+        from factory import github
+
+        ident = [
+            "-c",
+            "user.name=software-factory[bot]",
+            "-c",
+            "user.email=software-factory@users.noreply.github.com",
+        ]
+        fix_sha = self.git("rev-parse", "HEAD").strip()
+        if self.run.get("head_branch") != BASE_BRANCH:
+            # The failing run was on a PR branch: the fix belongs on the base branch, so replay it there.
+            self.git("fetch", "-q", "origin", BASE_BRANCH)
+            self.git("checkout", "-q", "-B", self.branch, f"origin/{BASE_BRANCH}")
+            try:
+                self.git(*ident, "cherry-pick", fix_sha)
+            except subprocess.CalledProcessError:
+                subprocess.run(
+                    ["git", "cherry-pick", "--abort"],
+                    cwd=self.wt,
+                    check=False,
+                    capture_output=True,
+                )
+                return {
+                    "outcome": "no_fix",
+                    "reason": f"verified fix does not apply cleanly to {BASE_BRANCH}",
+                }
+        # Token via env, never argv or .git/config, and only for github.com.
+        basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+        env = {
+            "PATH": os.environ["PATH"],
+            "HOME": os.environ.get("HOME", "/tmp"),
+            "GIT_TERMINAL_PROMPT": "0",
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+            "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {basic}",
+        }
+        push = subprocess.run(
+            ["git", "push", "origin", f"HEAD:refs/heads/{self.branch}"],
+            cwd=self.wt,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if push.returncode:
+            return {
+                "outcome": "no_fix",
+                "reason": f"push refused: {push.stderr.strip()[-300:]}",
+            }
+        repo = self.run["repository"]["full_name"]
+        url = github.open_pull_request(
+            repo, token, self.branch, BASE_BRANCH, self.pr["title"], self.pr["body"]
+        )
+        return {"outcome": "fix_pr_opened", "pr_url": url}
+
     def autofix(self, tri: dict) -> list[str]:
         """ruff's own fixers, limited to the flagged codes and files."""
         notes = []
@@ -584,6 +652,11 @@ class Run:
                     pr_body=fix.get("pr_body", "")
                     + f"\n\n## Local check by the factory (passed)\n```\n{out[-1500:]}\n```",
                 )
+                self.pr = {
+                    "title": rec["pr_title"]
+                    or f"fix(ci): repair {self.run.get('name')}",
+                    "body": rec["pr_body"],
+                }
             else:
                 rec.update(
                     outcome="no_fix",
@@ -623,6 +696,8 @@ class Run:
                     "diff",
                     "pr_title",
                     "pr_body",
+                    "pr_url",
+                    "github_missing_permissions",
                     "triage",
                     "check_output",
                     "log_source",
@@ -669,6 +744,8 @@ class Run:
                 "Value": line["est_cost_usd"],
                 "Unit": "None",
             },
+            # No dimension: the account-wide daily cost alarm sums this one.
+            {"MetricName": "RunCostUSD", "Value": line["est_cost_usd"], "Unit": "None"},
             {
                 "MetricName": "Runs",
                 "Dimensions": [*dims, {"Name": "Outcome", "Value": line["outcome"]}],

@@ -24,6 +24,12 @@ from aws_cdk import (
     aws_budgets as budgets,
 )
 from aws_cdk import (
+    aws_cloudwatch as cloudwatch,
+)
+from aws_cdk import (
+    aws_cloudwatch_actions as cw_actions,
+)
+from aws_cdk import (
     aws_codebuild as codebuild,
 )
 from aws_cdk import (
@@ -34,6 +40,9 @@ from aws_cdk import (
 )
 from aws_cdk import (
     aws_iam as iam,
+)
+from aws_cdk import (
+    aws_kms as kms,
 )
 from aws_cdk import (
     aws_lambda as _lambda,
@@ -56,6 +65,9 @@ from aws_cdk import (
 from aws_cdk import (
     aws_sqs as sqs,
 )
+from aws_cdk import (
+    custom_resources as cr,
+)
 from constructs import Construct
 
 from infra_utils.platform_config import allowed_model_resources
@@ -73,6 +85,12 @@ ALLOWED_MODELS = [
 ]
 METRIC_NAMESPACE = "SoftwareFactory"
 LOG_RETENTION = logs.RetentionDays.ONE_MONTH
+LOG_PREFIXES = [
+    "/aws/lambda/software-factory-",
+    "/aws/codebuild/software-factory-",
+    "/aws/apigateway/software-factory-",
+    "/aws/bedrock-agentcore/runtimes/software_factory",
+]
 
 
 class SoftwareFactoryDataStack(cdk.Stack):
@@ -134,12 +152,117 @@ class SoftwareFactoryStack(cdk.Stack):
         **kwargs,
     ):
         super().__init__(scope, id, **kwargs)
+        self.log_key = self._log_key()
         runtime_arn = self._runtime(data)
         api = self._ingress(data, runtime_arn)
-        self._budget()
+        self._cost_alarms(self._budget())
         self._readonly_role(data, coordinator_role_name)
         cdk.CfnOutput(self, "WebhookUrl", value=f"{api.api_endpoint}/github")
         cdk.CfnOutput(self, "RuntimeArn", value=runtime_arn)
+
+    # --- logs ----------------------------------------------------------------
+    def _log_key(self) -> kms.Key:
+        key = kms.Key(
+            self,
+            "LogsKey",
+            alias="alias/software-factory-logs",
+            description="Encrypts the software factory's CloudWatch log groups",
+            enable_key_rotation=True,
+        )
+        # CloudWatch Logs uses the key only for this stack's own log groups.
+        key.add_to_resource_policy(
+            iam.PolicyStatement(
+                principals=[iam.ServicePrincipal(f"logs.{self.region}.amazonaws.com")],
+                actions=[
+                    "kms:Encrypt*",
+                    "kms:Decrypt*",
+                    "kms:ReEncrypt*",
+                    "kms:GenerateDataKey*",
+                    "kms:Describe*",
+                ],
+                resources=["*"],  # in a key policy "*" means this key
+                conditions={
+                    "ArnLike": {
+                        "kms:EncryptionContext:aws:logs:arn": [
+                            f"arn:aws:logs:{self.region}:{self.account}:log-group:{prefix}*"
+                            for prefix in LOG_PREFIXES
+                        ]
+                    }
+                },
+            )
+        )
+        return key
+
+    def _log_group(self, cid: str, name: str) -> logs.LogGroup:
+        return logs.LogGroup(
+            self,
+            cid,
+            log_group_name=name,
+            retention=LOG_RETENTION,
+            encryption_key=self.log_key,
+            removal_policy=cdk.RemovalPolicy.DESTROY,
+        )
+
+    def _runtime_log_settings(self, runtime_id: str) -> None:
+        """AgentCore creates the runtime's log group itself, so set retention and the key on it afterwards."""
+        name = f"/aws/bedrock-agentcore/runtimes/{runtime_id}-DEFAULT"
+        arn = f"arn:aws:logs:{self.region}:{self.account}:log-group:{name}"
+        policy = cr.AwsCustomResourcePolicy.from_statements(
+            [
+                iam.PolicyStatement(
+                    actions=[
+                        "logs:CreateLogGroup",
+                        "logs:PutRetentionPolicy",
+                        "logs:AssociateKmsKey",
+                    ],
+                    resources=[arn, f"{arn}:*"],
+                )
+            ]
+        )
+        fn_logs = self._log_group(
+            "LogSettingsFnLogs", "/aws/lambda/software-factory-log-settings"
+        )
+        calls = [
+            (
+                "RuntimeLogGroup",
+                "createLogGroup",
+                {"logGroupName": name},
+                "ResourceAlreadyExistsException",
+            ),
+            (
+                "RuntimeLogRetention",
+                "putRetentionPolicy",
+                {"logGroupName": name, "retentionInDays": 30},
+                None,
+            ),
+            (
+                "RuntimeLogKey",
+                "associateKmsKey",
+                {"logGroupName": name, "kmsKeyId": self.log_key.key_arn},
+                None,
+            ),
+        ]
+        previous = None
+        for cid, action, params, ignore in calls:
+            call = cr.AwsSdkCall(
+                service="CloudWatchLogs",
+                action=action,
+                parameters=params,
+                physical_resource_id=cr.PhysicalResourceId.of(f"{name}:{action}"),
+                ignore_error_codes_matching=ignore,
+            )
+            res = cr.AwsCustomResource(
+                self,
+                cid,
+                on_create=call,
+                on_update=call,
+                policy=policy,
+                log_group=fn_logs,
+                install_latest_aws_sdk=False,
+            )
+            if previous:
+                res.node.add_dependency(previous)
+            previous = res
 
     # --- runtime -----------------------------------------------------------
     def _runtime(self, data: SoftwareFactoryDataStack) -> str:
@@ -181,6 +304,14 @@ class SoftwareFactoryStack(cdk.Stack):
                 compute_type=codebuild.ComputeType.SMALL,
             ),
             timeout=cdk.Duration.minutes(30),
+            logging=codebuild.LoggingOptions(
+                cloud_watch=codebuild.CloudWatchLoggingOptions(
+                    log_group=self._log_group(
+                        "ImageBuildLogs",
+                        "/aws/codebuild/software-factory-image-build-logs",
+                    )
+                )
+            ),
             build_spec=codebuild.BuildSpec.from_object(
                 {
                     "version": "0.2",
@@ -216,6 +347,10 @@ class SoftwareFactoryStack(cdk.Stack):
             code=_lambda.Code.from_asset(os.path.join(REPO_ROOT, "infra_utils")),
             timeout=cdk.Duration.minutes(15),
             memory_size=256,
+            log_group=self._log_group(
+                "ImageBuildTriggerLogs",
+                "/aws/lambda/software-factory-image-build-trigger",
+            ),
         )
         trigger.add_to_role_policy(
             iam.PolicyStatement(
@@ -333,9 +468,13 @@ class SoftwareFactoryStack(cdk.Stack):
                 "FACTORY_RUNS_TABLE": data.runs.table_name,
                 "FACTORY_GITHUB_APP_SECRET": data.github_app.secret_name,  # a name, not a value
                 "FACTORY_REPO": GITHUB_REPO,
+                # Off until the user approves GitHub writes; while off, runs record the would-be PR.
+                "FACTORY_PUBLISH": self.node.try_get_context("factory_publish")
+                or "false",
             },
         )
         runtime.node.add_dependency(built, role)
+        self._runtime_log_settings(runtime.attr_agent_runtime_id)
         return runtime.attr_agent_runtime_arn
 
     # --- ingress -----------------------------------------------------------
@@ -373,21 +512,21 @@ class SoftwareFactoryStack(cdk.Stack):
             timeout=cdk.Duration.seconds(10),
             memory_size=256,
             reserved_concurrent_executions=5,
-            log_group=logs.LogGroup(
-                self,
-                "IngressLogs",
-                log_group_name="/aws/lambda/software-factory-ingress",
-                retention=LOG_RETENTION,
-                removal_policy=cdk.RemovalPolicy.DESTROY,
+            log_group=self._log_group(
+                "IngressLogs", "/aws/lambda/software-factory-ingress"
             ),
             environment={
                 "SECRET_ARN": data.webhook_secret.secret_arn,
+                "APP_SECRET_ARN": data.github_app.secret_arn,
                 "DEDUPE_TABLE": data.dedupe.table_name,
                 "QUEUE_URL": queue.queue_url,
                 "REPO": GITHUB_REPO,
             },
         )
         data.webhook_secret.grant_read(ingress)
+        # shortcut: reads the whole App secret (incl. private key) for installation_id; split it into its
+        # own secret if the ingress should not hold the key.
+        data.github_app.grant_read(ingress)
         ingress.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["dynamodb:PutItem", "dynamodb:DeleteItem"],
@@ -406,12 +545,8 @@ class SoftwareFactoryStack(cdk.Stack):
             timeout=cdk.Duration.seconds(60),
             memory_size=256,
             environment={"RUNTIME_ARN": runtime_arn},
-            log_group=logs.LogGroup(
-                self,
-                "DispatcherLogs",
-                log_group_name="/aws/lambda/software-factory-dispatcher",
-                retention=LOG_RETENTION,
-                removal_policy=cdk.RemovalPolicy.DESTROY,
+            log_group=self._log_group(
+                "DispatcherLogs", "/aws/lambda/software-factory-dispatcher"
             ),
         )
         dispatcher.add_to_role_policy(
@@ -437,11 +572,8 @@ class SoftwareFactoryStack(cdk.Stack):
                 "IngressIntegration", ingress
             ),
         )
-        access_logs = logs.LogGroup(
-            self,
-            "WebhookAccessLogs",
-            retention=LOG_RETENTION,
-            removal_policy=cdk.RemovalPolicy.DESTROY,
+        access_logs = self._log_group(
+            "WebhookAccessLogs", "/aws/apigateway/software-factory-webhook"
         )
         stage = apigw.HttpStage(
             self,
@@ -459,7 +591,7 @@ class SoftwareFactoryStack(cdk.Stack):
         return api
 
     # --- cost + coordinator ------------------------------------------------
-    def _budget(self) -> None:
+    def _budget(self) -> sns.Topic:
         topic = sns.Topic(
             self,
             "BudgetAlerts",
@@ -502,6 +634,39 @@ class SoftwareFactoryStack(cdk.Stack):
                 )
             ],
         )
+        return topic
+
+    def _cost_alarms(self, topic: sns.Topic) -> None:
+        topic.add_to_resource_policy(
+            iam.PolicyStatement(
+                actions=["sns:Publish"],
+                resources=[topic.topic_arn],
+                principals=[iam.ServicePrincipal("cloudwatch.amazonaws.com")],
+                conditions={
+                    "StringEquals": {"aws:SourceAccount": self.account},
+                    "ArnLike": {
+                        "aws:SourceArn": f"arn:aws:cloudwatch:{self.region}:{self.account}:alarm:software-factory-*"
+                    },
+                },
+            )
+        )
+        alarm = cloudwatch.Alarm(
+            self,
+            "DailyCostAlarm",
+            alarm_name="software-factory-daily-run-cost",
+            alarm_description="Factory agents' model spend (RunCostUSD) above $5 in one day",
+            metric=cloudwatch.Metric(
+                namespace=METRIC_NAMESPACE,
+                metric_name="RunCostUSD",
+                statistic="Sum",
+                period=cdk.Duration.days(1),
+            ),
+            threshold=5,
+            evaluation_periods=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+        )
+        alarm.add_alarm_action(cw_actions.SnsAction(topic))
 
     def _readonly_role(
         self, data: SoftwareFactoryDataStack, coordinator_role_name: str
