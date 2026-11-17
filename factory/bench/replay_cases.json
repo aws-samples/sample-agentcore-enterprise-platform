@@ -1,0 +1,526 @@
+[
+ {
+  "pr": 9,
+  "fix_pr": 15,
+  "merge": "a5497dd25245e18f4b6d779fb54153cfbbd04215",
+  "fix_merge": "ea41fc214f03a60ee9bbb5eb8f0257720f799224",
+  "defect": "Authorization header allowlist set unconditionally; the control plane rejects it without a JWT authorizer",
+  "truth": [
+   {
+    "path": "stacks/runtime_stack.py",
+    "line": 274
+   },
+   {
+    "path": "stacks/runtime_stack.py",
+    "line": 275
+   },
+   {
+    "path": "stacks/runtime_stack.py",
+    "line": 276
+   },
+   {
+    "path": "stacks/runtime_stack.py",
+    "line": 277
+   },
+   {
+    "path": "stacks/runtime_stack.py",
+    "line": 278
+   }
+  ],
+  "size": "5 files changed, 228 insertions(+), 12 deletions(-)"
+ },
+ {
+  "pr": 14,
+  "fix_pr": 28,
+  "merge": "3a52ea4cbf24bc7b0aca32ed7c5dd685f9afd83b",
+  "fix_merge": "a6f178655e825870bd2091a21c35dbf57db89964",
+  "defect": "research agent served the HTTP /invocations contract instead of the A2A protocol",
+  "truth": [
+   {
+    "path": "agent-code/research-agent/agent.py",
+    "line": 1
+   },
+   {
+    "path": "agent-code/research-agent/agent.py",
+    "line": 29
+   },
+   {
+    "path": "agent-code/research-agent/agent.py",
+    "line": 30
+   },
+   {
+    "path": "agent-code/research-agent/agent.py",
+    "line": 50
+   }
+  ],
+  "size": "6 files changed, 150 insertions(+), 13 deletions(-)"
+ },
+ {
+  "pr": 51,
+  "fix_pr": 58,
+  "merge": "e179ea7ca5027ed17d144f48b04bd53bc800ae63",
+  "fix_merge": "d2fed0a1d107ac7e1022b955b74d23d13adb9859",
+  "defect": "guardrail check simulated a generic model ARN, a false alarm under the model allow-list",
+  "truth": [
+   {
+    "path": "scripts/check_guardrail_enforcement.py",
+    "line": 31
+   },
+   {
+    "path": "scripts/check_guardrail_enforcement.py",
+    "line": 44
+   },
+   {
+    "path": "scripts/check_guardrail_enforcement.py",
+    "line": 45
+   },
+   {
+    "path": "scripts/check_guardrail_enforcement.py",
+    "line": 49
+   }
+  ],
+  "size": "18 files changed, 466 insertions(+), 10 deletions(-)"
+ },
+ {
+  "pr": 63,
+  "fix_pr": 80,
+  "merge": "f1ec398f2c46e964066641ee71d62adb3242142a",
+  "fix_merge": "794f6821ffad54fd6bff4fa89c8f07dd5637797a",
+  "defect": "migration contract accepted target runtimes/modes that are not deployed (fail-open planning)",
+  "truth": [
+   {
+    "path": "infra_utils/platform_config.py",
+    "line": 369
+   },
+   {
+    "path": "infra_utils/platform_config.py",
+    "line": 370
+   },
+   {
+    "path": "infra_utils/platform_config.py",
+    "line": 372
+   },
+   {
+    "path": "infra_utils/platform_config.py",
+    "line": 373
+   },
+   {
+    "path": "infra_utils/platform_config.py",
+    "line": 462
+   },
+   {
+    "path": "infra_utils/platform_config.py",
+    "line": 463
+   },
+   {
+    "path": "infra_utils/platform_config.py",
+    "line": 586
+   },
+   {
+    "path": "infra_utils/platform_config.py",
+    "line": 587
+   },
+   {
+    "path": "infra_utils/platform_config.py",
+    "line": 588
+   },
+   {
+    "path": "infra_utils/platform_config.py",
+    "line": 589
+   },
+   {
+    "path": "infra_utils/platform_config.py",
+    "line": 590
+   },
+   {
+    "path": "infra_utils/platform_config.py",
+    "line": 775
+   },
+   {
+    "path": "infra_utils/platform_config.py",
+    "line": 776
+   },
+   {
+    "path": "presets/migration.yaml",
+    "line": 21
+   },
+   {
+    "path": "presets/migration.yaml",
+    "line": 33
+   },
+   {
+    "path": "presets/migration.yaml",
+    "line": 37
+   },
+   {
+    "path": "presets/migration.yaml",
+    "line": 38
+   },
+   {
+    "path": "scripts/deploy.sh",
+    "line": 925
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 107
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 115
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 116
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 117
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 118
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 119
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 120
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 121
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 122
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 126
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 127
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 170
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 173
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 174
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 175
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 176
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 177
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 178
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 179
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 180
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 181
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 182
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 193
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 194
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 195
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 196
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 197
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 198
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 199
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 200
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 201
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 265
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 266
+   },
+   {
+    "path": "tests/test_migration_config.py",
+    "line": 267
+   }
+  ],
+  "size": "5 files changed, 820 insertions(+), 11 deletions(-)"
+ },
+ {
+  "pr": 64,
+  "fix_pr": 81,
+  "merge": "01957341a107d396ef6bba29e8ea68b24999d740",
+  "fix_merge": "f6d621470ad0abb9aed5ffb190ad4d7c8f1aa80f",
+  "defect": "adapter accepted unimplemented targets and parsed the child env lossily (comma pairs)",
+  "truth": [
+   {
+    "path": "app.py",
+    "line": 152
+   },
+   {
+    "path": "app.py",
+    "line": 163
+   },
+   {
+    "path": "app.py",
+    "line": 164
+   },
+   {
+    "path": "app.py",
+    "line": 165
+   },
+   {
+    "path": "app.py",
+    "line": 166
+   },
+   {
+    "path": "app.py",
+    "line": 167
+   },
+   {
+    "path": "migration-adapter/Dockerfile",
+    "line": 10
+   },
+   {
+    "path": "migration-adapter/Dockerfile",
+    "line": 11
+   },
+   {
+    "path": "migration-adapter/Dockerfile",
+    "line": 17
+   },
+   {
+    "path": "migration-adapter/Dockerfile",
+    "line": 18
+   },
+   {
+    "path": "migration-adapter/Dockerfile",
+    "line": 19
+   },
+   {
+    "path": "migration-adapter/Dockerfile",
+    "line": 47
+   },
+   {
+    "path": "migration-adapter/Dockerfile",
+    "line": 48
+   },
+   {
+    "path": "migration-adapter/Dockerfile",
+    "line": 49
+   },
+   {
+    "path": "migration-adapter/Dockerfile",
+    "line": 50
+   },
+   {
+    "path": "migration-adapter/Dockerfile",
+    "line": 51
+   },
+   {
+    "path": "migration-adapter/Dockerfile",
+    "line": 52
+   },
+   {
+    "path": "migration-adapter/Dockerfile",
+    "line": 53
+   },
+   {
+    "path": "migration-adapter/Dockerfile",
+    "line": 54
+   },
+   {
+    "path": "migration-adapter/Dockerfile",
+    "line": 55
+   },
+   {
+    "path": "migration-adapter/adapter.py",
+    "line": 19
+   },
+   {
+    "path": "migration-adapter/adapter.py",
+    "line": 30
+   },
+   {
+    "path": "migration-adapter/adapter.py",
+    "line": 31
+   },
+   {
+    "path": "migration-adapter/adapter.py",
+    "line": 32
+   },
+   {
+    "path": "migration-adapter/adapter.py",
+    "line": 107
+   },
+   {
+    "path": "migration-adapter/adapter.py",
+    "line": 110
+   },
+   {
+    "path": "migration-adapter/adapter.py",
+    "line": 181
+   },
+   {
+    "path": "migration-adapter/adapter.py",
+    "line": 268
+   },
+   {
+    "path": "migration-adapter/adapter.py",
+    "line": 272
+   },
+   {
+    "path": "migration-adapter/adapter.py",
+    "line": 273
+   },
+   {
+    "path": "migration-adapter/adapter.py",
+    "line": 297
+   },
+   {
+    "path": "stacks/runtime_stack.py",
+    "line": 421
+   },
+   {
+    "path": "stacks/runtime_stack.py",
+    "line": 422
+   },
+   {
+    "path": "stacks/runtime_stack.py",
+    "line": 564
+   },
+   {
+    "path": "stacks/runtime_stack.py",
+    "line": 565
+   },
+   {
+    "path": "stacks/runtime_stack.py",
+    "line": 566
+   },
+   {
+    "path": "stacks/runtime_stack.py",
+    "line": 577
+   },
+   {
+    "path": "tests/test_adapter.py",
+    "line": 159
+   },
+   {
+    "path": "workshop-simulation/existing-ec2-agent/Dockerfile",
+    "line": 8
+   }
+  ],
+  "size": "10 files changed, 1127 insertions(+), 49 deletions(-)"
+ },
+ {
+  "pr": 78,
+  "fix_pr": 79,
+  "merge": "5905d427992d8f70e04898d183eb62fba8a731df",
+  "fix_merge": "6261267367d7f6fef8ca3e08fd67d1d0ec4e473a",
+  "defect": "observability handoff broke on CloudFormation list-imports ValidationError for an export with no importers",
+  "truth": [
+   {
+    "path": "scripts/check-deploy-config.sh",
+    "line": 726
+   },
+   {
+    "path": "scripts/check-deploy-config.sh",
+    "line": 761
+   },
+   {
+    "path": "scripts/deploy.sh",
+    "line": 1363
+   },
+   {
+    "path": "scripts/deploy.sh",
+    "line": 1364
+   },
+   {
+    "path": "scripts/deploy.sh",
+    "line": 1365
+   },
+   {
+    "path": "scripts/deploy.sh",
+    "line": 1366
+   },
+   {
+    "path": "scripts/deploy.sh",
+    "line": 1367
+   },
+   {
+    "path": "scripts/deploy.sh",
+    "line": 1401
+   },
+   {
+    "path": "scripts/deploy.sh",
+    "line": 1402
+   },
+   {
+    "path": "scripts/deploy.sh",
+    "line": 1403
+   },
+   {
+    "path": "scripts/deploy.sh",
+    "line": 1404
+   },
+   {
+    "path": "scripts/deploy.sh",
+    "line": 1405
+   }
+  ],
+  "size": "4 files changed, 278 insertions(+), 25 deletions(-)"
+ }
+]

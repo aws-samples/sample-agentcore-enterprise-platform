@@ -1,0 +1,303 @@
+[
+ {
+  "pr": 9,
+  "fix_pr": 15,
+  "outcome": "reviewed_dry_run",
+  "reason": "bench:replay-9",
+  "cost": 0.141,
+  "model": [
+   "us.openai.gpt-6-astra"
+  ],
+  "verdict": "changes needed",
+  "hit": false,
+  "hits": [],
+  "other_major": [],
+  "findings": [
+   {
+    "path": "tests/test_agent_identity.py",
+    "line": 60,
+    "severity": "minor",
+    "category": "tests",
+    "title": "Check a verifier call rather than the presence of its name",
+    "body": "The new import alone satisfies `VERIFIER in source`, even if the entrypoint never invokes it. For example, replacing the verified assignment with `user_id = context.identity.sub` while retaining the import passes this test and the placeholder-identity test, despite restoring unverified access to conversation memory. Consequently, the test does not enforce the security invariant stated in its name and assertion.",
+    "suggestion": ""
+   }
+  ]
+ },
+ {
+  "pr": 14,
+  "fix_pr": 28,
+  "outcome": "reviewed_dry_run",
+  "reason": "bench:replay-14",
+  "cost": 0.0955,
+  "model": [
+   "us.openai.gpt-6-astra"
+  ],
+  "verdict": "changes needed",
+  "hit": false,
+  "hits": [],
+  "other_major": [
+   {
+    "path": "agent-code/research-agent/agent.py",
+    "line": 40,
+    "severity": "major",
+    "category": "reliability",
+    "title": "Gateway initialization happens outside the graceful-degradation handler",
+    "body": "The try block only constructs an MCPClient; its transport factory, token retrieval, and gateway connection are deferred until Strands initializes the tool provider. The Agent construction is outside that try block, so authentication, connection, or tool-discovery failures escape instead of producing the promised tool-free agent. With gateway settings configured, a gateway outage can therefore fail research requests that previously worked without tools.",
+    "suggestion": ""
+   }
+  ],
+  "findings": [
+   {
+    "path": "agent-code/research-agent/agent.py",
+    "line": 40,
+    "severity": "major",
+    "category": "reliability",
+    "title": "Gateway initialization happens outside the graceful-degradation handler",
+    "body": "The try block only constructs an MCPClient; its transport factory, token retrieval, and gateway connection are deferred until Strands initializes the tool provider. The Agent construction is outside that try block, so authentication, connection, or tool-discovery failures escape instead of producing the promised tool-free agent. With gateway settings configured, a gateway outage can therefore fail research requests that previously worked without tools.",
+    "suggestion": ""
+   }
+  ]
+ },
+ {
+  "pr": 51,
+  "fix_pr": 58,
+  "outcome": "reviewed_dry_run",
+  "reason": "bench:replay-51",
+  "cost": 0.4608,
+  "model": [
+   "us.openai.gpt-6-astra"
+  ],
+  "verdict": "changes needed",
+  "hit": true,
+  "hits": [
+   {
+    "path": "scripts/check_guardrail_enforcement.py",
+    "line": 49,
+    "severity": "minor",
+    "category": "correctness",
+    "title": "Simulate an allowed model rather than a hardcoded model ARN",
+    "body": "The positive simulation assumes the runtime's Bedrock allow statement permits every foundation model. When agents.allowed_models is configured, the role is instead scoped to those models, so the synthetic anthropic.claude ARN is implicitly denied even with the guardrail context present. Consequently, deploy.sh verify fails for a correctly configured deployment combining model allow-listing with require_guardrails. Resolve the configured model's permitted resource ARN and use it for both simulations, with a regression test covering an allow-listed deployment.",
+    "suggestion": ""
+   }
+  ],
+  "other_major": [],
+  "findings": [
+   {
+    "path": "scripts/check_guardrail_enforcement.py",
+    "line": 49,
+    "severity": "minor",
+    "category": "correctness",
+    "title": "Simulate an allowed model rather than a hardcoded model ARN",
+    "body": "The positive simulation assumes the runtime's Bedrock allow statement permits every foundation model. When agents.allowed_models is configured, the role is instead scoped to those models, so the synthetic anthropic.claude ARN is implicitly denied even with the guardrail context present. Consequently, deploy.sh verify fails for a correctly configured deployment combining model allow-listing with require_guardrails. Resolve the configured model's permitted resource ARN and use it for both simulations, with a regression test covering an allow-listed deployment.",
+    "suggestion": ""
+   },
+   {
+    "path": "scripts/verify.py",
+    "line": 73,
+    "severity": "minor",
+    "category": "correctness",
+    "title": "Only schedule runtime enforcement verification when a runtime exists",
+    "body": "This schedules the guardrail check solely from the feature flag, but a federated platform account deliberately has no runtime stacks. The check unconditionally looks up the orchestrator runtime role and exits with failure when it is absent, so verification fails for a healthy federated platform deployment with require_guardrails enabled. Gate the check on the runtime footprint and add a test for the platform-account case.",
+    "suggestion": "    if require_guardrails and \"runtime-orchestrator\" in suffixes:"
+   }
+  ]
+ },
+ {
+  "pr": 63,
+  "fix_pr": 80,
+  "outcome": "reviewed_dry_run",
+  "reason": "bench:replay-63",
+  "cost": 0.3762,
+  "model": [
+   "us.openai.gpt-6-astra"
+  ],
+  "verdict": "changes needed",
+  "hit": true,
+  "hits": [
+   {
+    "path": "infra_utils/platform_config.py",
+    "line": 777,
+    "severity": "minor",
+    "category": "correctness",
+    "title": "Use a lossless encoding for migration environment values",
+    "body": "The schema accepts commas in environment values, but this export cannot distinguish {\"A\": \"x,B=y\"} from {\"A\": \"x\", \"B\": \"y\"}: both become A=x,B=y. Comma-containing values are common for host lists and application configuration, so the exported contract already loses information even before runtime consumption is implemented. Serialize the mapping as JSON or another escaped representation and add round-trip tests covering commas, equals signs, and newlines.",
+    "suggestion": ""
+   }
+  ],
+  "other_major": [
+   {
+    "path": "scripts/deploy.sh",
+    "line": 910,
+    "severity": "major",
+    "category": "correctness",
+    "title": "Render the plan from the effective configuration",
+    "body": "The Python command reloads the raw manifest without applying the supported environment overrides, while the subsequent secret checks use shell-resolved values. For example, with AWS_REGION=eu-west-1 and region: us-east-1 in the manifest, the plan announces us-east-1 but checks secrets in eu-west-1. PROJECT_NAME and ENVIRONMENT overrides similarly make the printed stack and secret names disagree with the names being checked and deployed. This undermines the plan's purpose as a deployment preview. Resolve one effective configuration for both rendering and secret checks, and test overrides explicitly.",
+    "suggestion": ""
+   }
+  ],
+  "findings": [
+   {
+    "path": "scripts/deploy.sh",
+    "line": 910,
+    "severity": "major",
+    "category": "correctness",
+    "title": "Render the plan from the effective configuration",
+    "body": "The Python command reloads the raw manifest without applying the supported environment overrides, while the subsequent secret checks use shell-resolved values. For example, with AWS_REGION=eu-west-1 and region: us-east-1 in the manifest, the plan announces us-east-1 but checks secrets in eu-west-1. PROJECT_NAME and ENVIRONMENT overrides similarly make the printed stack and secret names disagree with the names being checked and deployed. This undermines the plan's purpose as a deployment preview. Resolve one effective configuration for both rendering and secret checks, and test overrides explicitly.",
+    "suggestion": ""
+   },
+   {
+    "path": "infra_utils/platform_config.py",
+    "line": 777,
+    "severity": "minor",
+    "category": "correctness",
+    "title": "Use a lossless encoding for migration environment values",
+    "body": "The schema accepts commas in environment values, but this export cannot distinguish {\"A\": \"x,B=y\"} from {\"A\": \"x\", \"B\": \"y\"}: both become A=x,B=y. Comma-containing values are common for host lists and application configuration, so the exported contract already loses information even before runtime consumption is implemented. Serialize the mapping as JSON or another escaped representation and add round-trip tests covering commas, equals signs, and newlines.",
+    "suggestion": ""
+   }
+  ]
+ },
+ {
+  "pr": 64,
+  "fix_pr": 81,
+  "outcome": "reviewed_dry_run",
+  "reason": "bench:replay-64",
+  "cost": 0.4102,
+  "model": [
+   "us.openai.gpt-6-astra"
+  ],
+  "verdict": "changes needed",
+  "hit": true,
+  "hits": [
+   {
+    "path": "migration-adapter/Dockerfile",
+    "line": 20,
+    "severity": "major",
+    "category": "security",
+    "title": "Restore the source image's runtime user after installation",
+    "body": "The final image permanently replaces the customer's configured USER with root, so both the adapter and customer process gain privileges the original image deliberately removed. Documenting this deviation does not preserve the customer's security boundary: an exploited child can now modify root-owned files within the container. Capture Config.User alongside Entrypoint/Cmd and restore it after the root-only installation steps, retaining root only when the source image itself used root.",
+    "suggestion": ""
+   }
+  ],
+  "other_major": [
+   {
+    "path": "stacks/runtime_stack.py",
+    "line": 551,
+    "severity": "major",
+    "category": "correctness",
+    "title": "Unquoted parentheses break every build-from-source migration",
+    "body": "CodeBuild executes this string as a shell command. The unquoted parentheses in `echo Building customer image from source (linux/arm64)...` are shell syntax, so the command fails with a syntax error before the customer image is built. Quote the echo argument and add coverage that checks the generated commands as shell, rather than only inspecting the synthesized buildspec.",
+    "suggestion": "                'echo \"Building customer image from source (linux/arm64)...\"',"
+   },
+   {
+    "path": "migration-adapter/Dockerfile",
+    "line": 39,
+    "severity": "major",
+    "category": "correctness",
+    "title": "Install adapter dependencies separately from customer dependencies",
+    "body": "This installs the adapter SDK and its transitive dependencies into the customer's existing Python environment. Pip can upgrade or replace packages required by the customer's application without preserving compatibility with its already-installed dependencies, causing a previously working container to fail after wrapping. Install the adapter in a dedicated virtual environment and launch it with that environment's absolute interpreter path, without changing the child's PATH or original command.",
+    "suggestion": ""
+   },
+   {
+    "path": "migration-adapter/adapter.py",
+    "line": 212,
+    "severity": "major",
+    "category": "reliability",
+    "title": "Bound forwarding operations when the child stops responding",
+    "body": "`urlopen` uses the default socket timeout, which is normally unlimited, and subsequent body/SSE reads are also unbounded. A child that remains alive but never sends headers or stops producing a response can therefore hold an invocation indefinitely; the supervisor only detects process exit and cannot recover this case. Repeated stalled requests can exhaust serving capacity. Add a configurable upstream timeout appropriate for long-running agents, handle timeouts during response reads as well as connection setup, and close the response on failure.",
+    "suggestion": ""
+   }
+  ],
+  "findings": [
+   {
+    "path": "stacks/runtime_stack.py",
+    "line": 551,
+    "severity": "major",
+    "category": "correctness",
+    "title": "Unquoted parentheses break every build-from-source migration",
+    "body": "CodeBuild executes this string as a shell command. The unquoted parentheses in `echo Building customer image from source (linux/arm64)...` are shell syntax, so the command fails with a syntax error before the customer image is built. Quote the echo argument and add coverage that checks the generated commands as shell, rather than only inspecting the synthesized buildspec.",
+    "suggestion": "                'echo \"Building customer image from source (linux/arm64)...\"',"
+   },
+   {
+    "path": "migration-adapter/Dockerfile",
+    "line": 20,
+    "severity": "major",
+    "category": "security",
+    "title": "Restore the source image's runtime user after installation",
+    "body": "The final image permanently replaces the customer's configured USER with root, so both the adapter and customer process gain privileges the original image deliberately removed. Documenting this deviation does not preserve the customer's security boundary: an exploited child can now modify root-owned files within the container. Capture Config.User alongside Entrypoint/Cmd and restore it after the root-only installation steps, retaining root only when the source image itself used root.",
+    "suggestion": ""
+   },
+   {
+    "path": "migration-adapter/Dockerfile",
+    "line": 39,
+    "severity": "major",
+    "category": "correctness",
+    "title": "Install adapter dependencies separately from customer dependencies",
+    "body": "This installs the adapter SDK and its transitive dependencies into the customer's existing Python environment. Pip can upgrade or replace packages required by the customer's application without preserving compatibility with its already-installed dependencies, causing a previously working container to fail after wrapping. Install the adapter in a dedicated virtual environment and launch it with that environment's absolute interpreter path, without changing the child's PATH or original command.",
+    "suggestion": ""
+   },
+   {
+    "path": "migration-adapter/adapter.py",
+    "line": 212,
+    "severity": "major",
+    "category": "reliability",
+    "title": "Bound forwarding operations when the child stops responding",
+    "body": "`urlopen` uses the default socket timeout, which is normally unlimited, and subsequent body/SSE reads are also unbounded. A child that remains alive but never sends headers or stops producing a response can therefore hold an invocation indefinitely; the supervisor only detects process exit and cannot recover this case. Repeated stalled requests can exhaust serving capacity. Add a configurable upstream timeout appropriate for long-running agents, handle timeouts during response reads as well as connection setup, and close the response on failure.",
+    "suggestion": ""
+   }
+  ]
+ },
+ {
+  "pr": 78,
+  "fix_pr": 79,
+  "outcome": "reviewed_dry_run",
+  "reason": "bench:replay-78",
+  "cost": 0.0436,
+  "model": [
+   "us.openai.gpt-6.1-sol"
+  ],
+  "verdict": "changes needed",
+  "hit": false,
+  "hits": [],
+  "other_major": [
+   {
+    "path": "scripts/deploy.sh",
+    "line": 1419,
+    "severity": "major",
+    "category": "reliability",
+    "title": "Targeted retries lose the requirement to rebind Observability",
+    "body": "The rebind depends exclusively on an in-process marker that is reset on every invocation. If the handoff succeeds but Runtime deployment fails, the next preparation finds no Observability import and returns at line 1373 without setting the marker. If Runtime replacement succeeds but rebind fails, preparation instead returns because the deployed generation already equals the requested generation. In either case, retrying a targeted Runtime deployment skips the rebind and can report success while Observability still contains the old literal ARN, whose Runtime has been deleted. A full deployment may recover this, but the supported targeted path is not resumable.",
+    "suggestion": ""
+   },
+   {
+    "path": "scripts/deploy.sh",
+    "line": 1333,
+    "severity": "major",
+    "category": "correctness",
+    "title": "Reject generation decrements instead of treating them as no-ops",
+    "body": "This guard returns successfully for any requested generation below the deployed generation, allowing the subsequent CDK deployment to attempt a backwards Runtime replacement. Requests for generation 1 bypass discovery altogether at line 1307. This contradicts the new operator guidance and the claimed fail-before-mutation behavior; after Observability has released its import, such a request can actually replace the Runtime backwards rather than being blocked by CloudFormation.",
+    "suggestion": ""
+   }
+  ],
+  "findings": [
+   {
+    "path": "scripts/deploy.sh",
+    "line": 1419,
+    "severity": "major",
+    "category": "reliability",
+    "title": "Targeted retries lose the requirement to rebind Observability",
+    "body": "The rebind depends exclusively on an in-process marker that is reset on every invocation. If the handoff succeeds but Runtime deployment fails, the next preparation finds no Observability import and returns at line 1373 without setting the marker. If Runtime replacement succeeds but rebind fails, preparation instead returns because the deployed generation already equals the requested generation. In either case, retrying a targeted Runtime deployment skips the rebind and can report success while Observability still contains the old literal ARN, whose Runtime has been deleted. A full deployment may recover this, but the supported targeted path is not resumable.",
+    "suggestion": ""
+   },
+   {
+    "path": "scripts/deploy.sh",
+    "line": 1333,
+    "severity": "major",
+    "category": "correctness",
+    "title": "Reject generation decrements instead of treating them as no-ops",
+    "body": "This guard returns successfully for any requested generation below the deployed generation, allowing the subsequent CDK deployment to attempt a backwards Runtime replacement. Requests for generation 1 bypass discovery altogether at line 1307. This contradicts the new operator guidance and the claimed fail-before-mutation behavior; after Observability has released its import, such a request can actually replace the Runtime backwards rather than being blocked by CloudFormation.",
+    "suggestion": ""
+   }
+  ]
+ }
+]
