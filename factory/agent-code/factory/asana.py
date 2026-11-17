@@ -169,3 +169,10 @@ class Board:
                 {"task_gid": task_gid, "text": comment},
                 [task_gid, comment, self.run_id],
             )
+
+    def comment(self, task_gid: str, text: str) -> None:
+        self._op(
+            "comment",
+            {"task_gid": task_gid, "text": text},
+            [task_gid, text, self.run_id],
+        )

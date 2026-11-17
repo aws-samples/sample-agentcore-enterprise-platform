@@ -104,6 +104,13 @@ def validate(payload: dict) -> dict:
             raise ValueError("pull_request.number must be positive")
         return {"id": number}
     if payload.get("role") == "product_manager":
+        rulings = payload.get("rulings") or []
+        if (
+            not isinstance(rulings, list)
+            or len(rulings) > 50
+            or not all(isinstance(r, dict) for r in rulings)
+        ):
+            raise ValueError("rulings must be a list of at most 50 objects")
         return {"id": "pm"}
     if payload.get("role") == "developer":
         task = payload.get("task")
@@ -244,7 +251,11 @@ def _safe(fn) -> dict:
 def handle_pm(payload: dict) -> dict:
     work = Path("/tmp/factory") / "pm"
     agent = ProductManager(clone(work), work, REGION, REPO, _github_token())
-    rec = _safe(lambda: agent.execute(initial=payload.get("initial")))
+    rec = _safe(
+        lambda: agent.execute(
+            initial=payload.get("initial"), rulings=payload.get("rulings")
+        )
+    )
     return _finish(
         agent, rec, True, ("board_diff", "proposed_tasks", "reconcile", "dropped")
     )
