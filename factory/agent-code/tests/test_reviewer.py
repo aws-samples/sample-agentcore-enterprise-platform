@@ -194,3 +194,48 @@ def test_astra_only_for_the_named_risk_areas():
     assert (
         choose_model(_files(**{"app/big.py": ["x = 1"]}), 801)[0] == ASTRA
     )  # size alone
+
+
+def test_publish_payload_is_validated():
+    import pytest
+    from factory.server import validate
+
+    ok = {
+        "role": "pr_reviewer",
+        "pull_request": {"number": 117},
+        "publish": True,
+        "from_run_sk": "2026-11-17T17:00:00.000000+00:00#f6d11406eedb",
+        "extra_findings": [
+            {"path": "a.py", "line": 3, "severity": "major", "title": "t", "body": "b"}
+        ],
+    }
+    assert validate(ok) == {"id": 117}
+    for bad in (
+        {**ok, "from_run_sk": "x"},
+        {
+            **ok,
+            "extra_findings": [
+                {
+                    "path": "a.py",
+                    "line": "3",
+                    "severity": "major",
+                    "title": "t",
+                    "body": "b",
+                }
+            ],
+        },
+        {
+            **ok,
+            "extra_findings": [
+                {
+                    "path": "a.py",
+                    "line": 3,
+                    "severity": "approve",
+                    "title": "t",
+                    "body": "b",
+                }
+            ],
+        },
+    ):
+        with pytest.raises(ValueError):
+            validate(bad)
