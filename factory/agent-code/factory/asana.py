@@ -10,7 +10,7 @@ Op item (the contract the Mac sync applies):
   op          ensure_section | create_task | move_task | comment | update_task
   project     Asana project gid
   args        op-specific map (below); sections are referenced by NAME, the sync resolves gids
-  status      pending | applied | failed | superseded (withdrawn; never apply)    created_at  ISO-8601 UTC     run_id, agent
+  status      pending | applied | failed | superseded | dry_run (never apply the last two)    created_at  ISO-8601 UTC     run_id, agent
 """
 
 import hashlib
@@ -28,8 +28,7 @@ SECTIONS = (
     "Needs scoping",
     "Done",
 )
-TAG = "factory:pm"
-MARKER = "[factory:pm]"  # also in notes, so humans and dedupe see it without the tag
+MARKER = "[factory:pm]"  # in the notes: the sync cannot create tags, so dedupe and humans use this
 MAX_SNAPSHOT_AGE = timedelta(hours=24)
 
 
@@ -53,6 +52,9 @@ class Board:
         self.agent, self.run_id, self.project = agent, run_id, project
         self.snapshot_key = snapshot_key or project
         self.dry_run = True  # the cloud never writes Asana; the sync applies the ops
+        self.op_status = (
+            "pending"  # "dry_run": recorded for review only, the sync ignores it
+        )
         self.ops: list[dict] = []
         ddb = session.resource("dynamodb") if session else None
         self.ops_table = (
@@ -103,7 +105,7 @@ class Board:
             "op": op,
             "project": self.project,
             "args": args,
-            "status": "pending",
+            "status": self.op_status,
             "created_at": now(),
             "run_id": self.run_id,
             "agent": self.agent,
@@ -146,7 +148,6 @@ class Board:
                 "section": section,
                 "name": name,
                 "notes": f"{notes}\n\n{MARKER}",
-                "tags": [TAG],
             },
             [json.dumps(key)],
         )

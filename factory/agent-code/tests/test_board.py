@@ -60,9 +60,16 @@ def test_create_task_is_idempotent_across_runs_and_marked():
     assert (
         item["status"] == "pending"
         and "[factory:pm]" in item["args"]["notes"]
-        and item["args"]["tags"] == ["factory:pm"]
+        and "tags" not in item["args"]
     )
     assert b.ops[-1].get("duplicate")
+
+
+def test_dry_run_ops_are_marked_for_the_sync_to_ignore():
+    b = board()
+    b.op_status = "dry_run"
+    b.move("123", "In review", "would open PR")
+    assert {i["status"] for i in b.ops_table.items.values()} == {"dry_run"}
 
 
 def test_move_to_done_also_completes_and_comments():
