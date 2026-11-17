@@ -468,7 +468,7 @@ def test_cloud_sync_applies_only_pending_real_ops_with_any_client():
 
 
 def test_cloud_sync_claims_first_and_refuses_tasks_outside_the_project():
-    from factory.asana_sync import _token, apply_pending
+    from factory.asana_sync import apply_pending
 
     moved = []
 
@@ -500,25 +500,3 @@ def test_cloud_sync_claims_first_and_refuses_tasks_outside_the_project():
         ("b", "failed"),
     ]
     assert "not in project" in out[1]["error"] and moved == ["1"]
-
-    class SM:
-        class exceptions:
-            ResourceNotFoundException = KeyError
-
-        def __init__(self, value):
-            self.value = value
-
-        def get_secret_value(self, SecretId):
-            if self.value is None:
-                raise KeyError(SecretId)
-            return {"SecretString": self.value}
-
-    assert (
-        _token(SM(None), "s") == ""
-        and _token(SM("{}"), "s") == ""
-        and _token(SM("  "), "s") == ""
-    )
-    assert (
-        _token(SM("2/abc"), "s") == "2/abc"
-        and _token(SM('{"token": "2/xyz"}'), "s") == "2/xyz"
-    )

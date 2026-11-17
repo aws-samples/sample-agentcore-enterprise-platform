@@ -226,10 +226,9 @@ class SoftwareFactoryStack(cdk.Stack):
         api = self._ingress(data, runtime_arn)
         self._cost_alarms(self._budget())
         self._readonly_role(data, coordinator_role_name)
-        self._asana_sync_role(data, coordinator_role_name)  # Mac sync: the fallback
-        # Cloud sync: deployed only with -c asana_sync=true, once the user's PAT secret exists.
-        if (self.node.try_get_context("asana_sync") or "false") == "true":
-            self._asana_sync_cloud(data)
+        self._asana_sync_role(
+            data, coordinator_role_name
+        )  # Mac sync (the only Asana path today)
         cdk.CfnOutput(self, "WebhookUrl", value=f"{api.api_endpoint}/github")
         cdk.CfnOutput(self, "RuntimeArn", value=runtime_arn)
 
@@ -935,59 +934,3 @@ class SoftwareFactoryStack(cdk.Stack):
                 resources=[data.asana_snapshot.table_arn],
             )
         )
-
-    def _asana_sync_cloud(self, data: SoftwareFactoryDataStack) -> None:
-        """Every 30 min: apply pending outbox ops and refresh the snapshot for ASANA_PROJECT via the Asana REST
-        API. Its own role is the only one that can read the PAT (created by the user, not by this stack)."""
-        token = sm.Secret.from_secret_name_v2(
-            self, "AsanaToken", "software-factory/asana-token"
-        )
-        fn = _lambda.Function(
-            self,
-            "AsanaSyncCloud",
-            function_name="software-factory-asana-sync-cloud",
-            runtime=_lambda.Runtime.PYTHON_3_13,
-            handler="factory.asana_sync.handler",
-            code=_lambda.Code.from_asset(
-                os.path.join(HERE, "..", "agent-code"),
-                exclude=["tests", "**/__pycache__", "requirements.txt"],
-            ),
-            timeout=cdk.Duration.minutes(5),
-            memory_size=256,
-            reserved_concurrent_executions=1,  # one sync at a time
-            log_group=self._log_group(
-                "AsanaSyncCloudLogs", "/aws/lambda/software-factory-asana-sync-cloud"
-            ),
-            environment={
-                "ASANA_TOKEN_SECRET": token.secret_name,  # a name, not a value
-                "FACTORY_ASANA_PROJECT": ASANA_PROJECT,
-                "FACTORY_ASANA_OPS_TABLE": data.asana_ops.table_name,
-                "FACTORY_ASANA_SNAPSHOT_TABLE": data.asana_snapshot.table_name,
-                "FACTORY_RUNS_TABLE": data.runs.table_name,
-            },
-        )
-        token.grant_read(fn)
-        for stmt in [
-            iam.PolicyStatement(
-                actions=["dynamodb:Query", "dynamodb:UpdateItem"],
-                resources=[
-                    data.asana_ops.table_arn,
-                    f"{data.asana_ops.table_arn}/index/by_status",
-                ],
-            ),
-            iam.PolicyStatement(
-                actions=["dynamodb:PutItem"], resources=[data.asana_snapshot.table_arn]
-            ),
-            iam.PolicyStatement(
-                actions=["dynamodb:PutItem"], resources=[data.runs.table_arn]
-            ),
-        ]:
-            fn.add_to_role_policy(stmt)
-        rule = events.Rule(
-            self,
-            "AsanaSyncEvery30m",
-            rule_name="software-factory-asana-sync-30m",
-            schedule=events.Schedule.rate(cdk.Duration.minutes(30)),
-            targets=[targets.LambdaFunction(fn)],
-        )
-        cdk.CfnOutput(self, "AsanaSyncRuleArn", value=rule.rule_arn)
