@@ -239,3 +239,57 @@ def test_publish_payload_is_validated():
     ):
         with pytest.raises(ValueError):
             validate(bad)
+
+
+def test_review_posting_needs_global_switch_or_explicit_publish(monkeypatch, tmp_path):
+    """FACTORY_REVIEW_PUBLISH=false: a normal review never posts; only publish: true posts (one-off)."""
+    from factory import server
+
+    posted, published = [], []
+    pr = {
+        "number": 7,
+        "user": {"login": "someone"},
+        "base": {"repo": {"full_name": server.REPO}},
+    }
+    monkeypatch.setattr(server, "REVIEW_PUBLISH", False)
+    monkeypatch.setattr(server, "load_app_creds", lambda: {"app_id": "1"})
+    monkeypatch.setattr(
+        server.github, "installation_token", lambda creds, repo: ("tok", [])
+    )
+    monkeypatch.setattr(server.github, "get_pull", lambda repo, n, token: pr)
+    monkeypatch.setattr(
+        server.github, "post_review", lambda *a: posted.append(a) or "url"
+    )
+    monkeypatch.setattr(server, "clone", lambda work: tmp_path)
+
+    class FakeReview:
+        def __init__(self, *a, **k):
+            pass
+
+        def execute(self):
+            return {"outcome": "reviewed_dry_run", "review": {"event": "COMMENT"}}
+
+        def record(self, rec, dry_run):
+            return {"outcome": rec["outcome"], "dry_run": dry_run}
+
+    monkeypatch.setattr(server, "Review", FakeReview)
+    monkeypatch.setattr(
+        server,
+        "publish_stored",
+        lambda *a: published.append(a) or {"outcome": "review_posted"},
+    )
+
+    out = server.handle_review({"role": "pr_reviewer", "pull_request": {"number": 7}})
+    assert (
+        out["outcome"] == "reviewed_dry_run"
+        and out["dry_run"]
+        and not posted
+        and not published
+    )
+
+    out = server.handle_review(
+        {"role": "pr_reviewer", "pull_request": {"number": 7}, "publish": True}
+    )
+    assert (
+        out["outcome"] == "review_posted" and not out["dry_run"] and len(published) == 1
+    )
