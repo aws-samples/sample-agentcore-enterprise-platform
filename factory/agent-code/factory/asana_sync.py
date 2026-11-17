@@ -1,8 +1,8 @@
-"""Cloud Asana sync, prepared but NOT wired: no role, schedule, secret or Gateway exists yet.
-
-It does what the Mac sync does today: apply pending outbox ops (asana.py) and rebuild the snapshot.
+"""Cloud Asana sync (Lambda `software-factory-asana-sync-cloud`, every 30 min): apply pending outbox ops
+(asana.py) and rebuild the snapshot, for project asana.PROJECT only. The Mac sync stays as a fallback; both
+claim an op (pending -> applying) before applying it, so neither applies one twice.
 The Asana side is one small client interface, so either backend the user picks plugs in unchanged:
-  - RestClient: Asana REST API with a PAT (would read it from Secrets Manager).
+  - RestClient: Asana REST API with a PAT read from Secrets Manager (the backend in use).
   - an MCP client for Asana's MCP server behind an AgentCore Gateway target (OAuth outbound through
     AgentCore Identity): implement the same six methods by calling the Gateway's tools.
 """
@@ -62,15 +62,29 @@ def apply_op(op: dict, client: AsanaClient, sections: dict[str, str]) -> str:
 
 
 def apply_pending(
-    ops: list[dict], client: AsanaClient, project: str = asana.PROJECT
+    ops: list[dict], client: AsanaClient, project: str = asana.PROJECT, claim=None
 ) -> list[dict]:
     """Apply pending ops for the real project in creation order; one failure does not stop the rest.
-    Returns the status updates to write back (op_id, status, asana_gid | error)."""
+    `claim(op) -> bool` reserves an op first (False: another sync took it). An op naming a task that is not
+    in the project is refused. Returns the status updates to write back (op_id, status, asana_gid | error)."""
     sections = client.sections(project)
+    in_project = {t["gid"] for t in client.tasks(project)}
     out = []
     for op in sorted(ops, key=lambda o: o["created_at"]):
         if op.get("status") != "pending" or op.get("project") != project:
             continue  # dry_run, superseded, test-snapshot ops are never applied
+        if claim and not claim(op):
+            continue
+        gid = (op.get("args") or {}).get("task_gid")
+        if gid is not None and gid not in in_project:
+            out.append(
+                {
+                    "op_id": op["op_id"],
+                    "status": "failed",
+                    "error": f"task {gid} is not in project {project}",
+                }
+            )
+            continue
         try:
             out.append(
                 {
@@ -184,3 +198,116 @@ class RestClient:
 
     def update_task(self, task_gid, fields):
         self._call("PUT", f"/tasks/{task_gid}", fields)
+
+
+# --- Lambda entry point ------------------------------------------------------------------------------
+def _token(sm, name: str) -> str:
+    """The PAT from Secrets Manager: a raw string or {"token": ...}. '' when missing or empty. Never logged."""
+    try:
+        raw = sm.get_secret_value(SecretId=name)["SecretString"].strip()
+    except sm.exceptions.ResourceNotFoundException:
+        return ""
+    try:
+        val = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+    return str(val.get("token") or "") if isinstance(val, dict) else ""
+
+
+def handler(event, context):
+    import os
+    import time
+    import uuid
+
+    import boto3
+    from boto3.dynamodb.conditions import Key
+
+    ddb = boto3.resource("dynamodb")
+    ops_t = ddb.Table(os.environ["FACTORY_ASANA_OPS_TABLE"])
+    snap_t = ddb.Table(os.environ["FACTORY_ASANA_SNAPSHOT_TABLE"])
+    runs_t = ddb.Table(os.environ["FACTORY_RUNS_TABLE"])
+    started = time.time()
+
+    def now() -> str:
+        return datetime.now(UTC).isoformat(timespec="seconds")
+
+    row = {
+        "run_id": uuid.uuid4().hex[:12],
+        "agent": "asana_sync",
+        "started_at": now(),
+        "est_cost_usd": 0,
+    }
+
+    def finish(**fields):
+        row.update(fields, duration_s=str(round(time.time() - started, 1)))
+        runs_t.put_item(
+            Item={
+                **row,
+                "pk": "agent#asana_sync",
+                "sk": f"{row['started_at']}#{row['run_id']}",
+            }
+        )
+        print(json.dumps({"factory_run": row}, default=str))
+        return row
+
+    token = _token(boto3.client("secretsmanager"), os.environ["ASANA_TOKEN_SECRET"])
+    if not token:
+        return finish(
+            outcome="no_credentials", reason="secret missing or empty; nothing done"
+        )
+    client = RestClient(token)
+    pending, kwargs = (
+        [],
+        {
+            "IndexName": "by_status",
+            "KeyConditionExpression": Key("status").eq("pending"),
+        },
+    )
+    while True:
+        page = ops_t.query(**kwargs)
+        pending += page["Items"]
+        if "LastEvaluatedKey" not in page:
+            break
+        kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+
+    def claim(op) -> bool:
+        try:
+            ops_t.update_item(
+                Key={"op_id": op["op_id"]},
+                UpdateExpression="SET #s = :applying",
+                ConditionExpression="#s = :pending",
+                ExpressionAttributeNames={"#s": "status"},
+                ExpressionAttributeValues={
+                    ":applying": "applying",
+                    ":pending": "pending",
+                },
+            )
+            return True
+        except ops_t.meta.client.exceptions.ConditionalCheckFailedException:
+            return False
+
+    try:
+        results = apply_pending(pending, client, asana.PROJECT, claim)
+    except (
+        RuntimeError
+    ) as e:  # Asana refused the token or is down before any op was claimed
+        return finish(outcome="failed", reason=str(e)[:300])
+    for r in results:
+        ops_t.update_item(
+            Key={"op_id": r["op_id"]},
+            UpdateExpression="SET #s = :s, applied_at = :at, asana_gid = :g, #err = :e",
+            ExpressionAttributeNames={"#s": "status", "#err": "error"},
+            ExpressionAttributeValues={
+                ":s": r["status"],
+                ":at": now(),
+                ":g": r.get("asana_gid", ""),
+                ":e": r.get("error", ""),
+            },
+        )
+    snap_t.put_item(Item=snapshot(client, asana.PROJECT))
+    failed = [r for r in results if r["status"] == "failed"]
+    return finish(
+        outcome="synced" if not failed else "synced_with_failures",
+        reason=f"{len(results) - len(failed)} applied, {len(failed)} failed, snapshot refreshed",
+        failed_ops=json.dumps(failed)[:20000],
+    )
