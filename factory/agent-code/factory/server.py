@@ -51,8 +51,35 @@ def load_app_creds() -> dict | None:
     return None
 
 
+def verify_app() -> dict:
+    """Read-only GitHub App check; never returns or logs the secret or the token."""
+    name = os.environ.get("FACTORY_GITHUB_APP_SECRET", "")
+    raw = boto3.client("secretsmanager", region_name=REGION).get_secret_value(
+        SecretId=name
+    )["SecretString"]
+    try:
+        creds = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        return {"ok": False, "error": "secret is not valid JSON"}
+    absent = [
+        k for k in ("app_id", "installation_id", "private_key_pem") if not creds.get(k)
+    ]
+    if absent or not isinstance(creds, dict):
+        return {"ok": False, "error": f"secret JSON lacks {absent}"}
+    try:
+        return {"ok": True, **github.verify_app(creds, REPO)}
+    except (
+        RuntimeError,
+        ValueError,
+        TypeError,
+    ) as e:  # GitHub errors carry status + GitHub's message only
+        return {"ok": False, "error": str(e)[:400]}
+
+
 def validate(payload: dict) -> dict:
     """Trust boundary: the payload comes from the dispatcher or a human invoke."""
+    if payload.get("role") == "verify_app":
+        return {}
     if payload.get("role") != "ci_fixer":
         raise ValueError(f"unsupported role {payload.get('role')!r}")
     run = payload["workflow_run"]
@@ -165,6 +192,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"error": str(e)})
         if not _busy.acquire(blocking=False):
             return self._send(200, {"status": "already running in this session"})
+        if payload.get("role") == "verify_app":
+            try:
+                return self._send(200, verify_app())
+            finally:
+                _busy.release()
         if payload.get("wait"):
             return self._send(200, _run_locked(payload))
         threading.Thread(target=_run_locked, args=(payload,), daemon=True).start()

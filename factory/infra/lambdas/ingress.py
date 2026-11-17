@@ -109,6 +109,11 @@ def handler(event, context):
     if not signature.startswith("sha256=") or not hmac.compare_digest(
         signature.encode(), expected.encode()
     ):
+        print(
+            json.dumps(
+                {"event": headers.get("x-github-event", ""), "signature": "rejected"}
+            )
+        )
         return _resp(401, "bad signature")
 
     payload = json.loads(raw)
@@ -117,6 +122,16 @@ def handler(event, context):
         headers.get("x-github-delivery", ""),
     )
     if event_name == "ping":
+        print(
+            json.dumps(
+                {
+                    "event": "ping",
+                    "delivery": delivery,
+                    "hook_id": payload.get("hook_id"),
+                    "signature": "ok",
+                }
+            )
+        )
         return _resp(200, "pong")
     if payload.get("repository", {}).get("full_name") != REPO:
         return _resp(202, "ignored: repository")

@@ -96,6 +96,40 @@ def installation_token(creds: dict, repo: str) -> tuple[str, list[str]]:
     )
 
 
+def verify_app(creds: dict, repo: str) -> dict:
+    """Read-only check of the App: installation state, what it may reach, what its token can do.
+
+    Returns names and permission levels only; the token stays in this function.
+    """
+    jwt = app_jwt(creds["app_id"], creds["private_key_pem"])
+    inst = request("GET", f"/app/installations/{int(creds['installation_id'])}", jwt)
+    token, missing = installation_token(creds, repo)
+    repos = request("GET", "/installation/repositories?per_page=100", token)
+    deliveries = request("GET", "/app/hook/deliveries?per_page=50", jwt)
+    return {
+        "account": (inst.get("account") or {}).get("login"),
+        "repository_selection": inst.get("repository_selection"),
+        "suspended": bool(inst.get("suspended_at")),
+        "installation_permissions": inst.get("permissions", {}),
+        "events": inst.get("events", []),
+        "repositories": sorted(r["full_name"] for r in repos.get("repositories", [])),
+        "missing_permissions": missing,
+        "deliveries": [
+            {
+                k: d.get(k)
+                for k in (
+                    "event",
+                    "action",
+                    "status_code",
+                    "delivered_at",
+                    "redelivery",
+                )
+            }
+            for d in deliveries
+        ],
+    }
+
+
 def failed_job_logs(repo: str, run_id: int, token: str) -> str:
     jobs = request(
         "GET", f"/repos/{repo}/actions/runs/{int(run_id)}/jobs?filter=latest", token
