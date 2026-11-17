@@ -1,0 +1,274 @@
+{
+ "cases": [
+  {
+   "id": "e1-ecr-pull-star",
+   "difficulty": "easy",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:e1-ecr-pull-star",
+   "cost": 0.0383,
+   "models": {
+    "us.openai.gpt-6-astra": {
+     "input_tokens": 2,
+     "output_tokens": 212,
+     "cache_read": 0,
+     "cache_write": 1937,
+     "calls": 1
+    }
+   },
+   "model_reason": "2 changed lines; sensitive: stacks/runtime_stack.py",
+   "verdict": "changes needed",
+   "findings": [
+    {
+     "path": "stacks/runtime_stack.py",
+     "line": 643,
+     "severity": "major",
+     "category": "security",
+     "title": "Retain repository-scoped ECR image access",
+     "body": "Both ecr:BatchGetImage and ecr:GetDownloadUrlForLayer support repository-level permissions. Using \"*\" allows a compromised runtime to retrieve images and layers from unrelated repositories in the account, absent other restrictions, potentially exposing proprietary code or sensitive image contents. The separate ECRAuth statement already grants the wildcard authorization-token permission; image reads do not need the same scope.",
+     "suggestion": "                resources=[ecr_repo_arn],"
+    }
+   ],
+   "tp": 1,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "e2-jwt-logged",
+   "difficulty": "easy",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:e2-jwt-logged",
+   "cost": 0.0129,
+   "models": {
+    "us.openai.gpt-6-astra": {
+     "input_tokens": 2,
+     "output_tokens": 197,
+     "cache_read": 1835,
+     "cache_write": 0,
+     "calls": 1
+    }
+   },
+   "model_reason": "2 changed lines; sensitive: agent-code/shared/auth.py",
+   "verdict": "changes needed",
+   "findings": [
+    {
+     "path": "agent-code/shared/auth.py",
+     "line": 141,
+     "severity": "major",
+     "category": "security",
+     "title": "Do not log the verified bearer token",
+     "body": "This INFO message writes the complete, valid JWT to runtime logs on successful authentication. Anyone with access to those logs or downstream log exports could replay the token to act as its principal until it expires. It also persists any sensitive claims in the token beyond the authentication request. Log access should not grant access to live authentication credentials.",
+     "suggestion": "    logger.info(\"Verified JWT for user_id: %s\", user_id)"
+    }
+   ],
+   "tp": 1,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "m1-build-status",
+   "difficulty": "medium",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:m1-build-status",
+   "cost": 0.0025,
+   "models": {
+    "us.openai.gpt-6.1-sol": {
+     "input_tokens": 2,
+     "output_tokens": 208,
+     "cache_read": 1811,
+     "cache_write": 0,
+     "calls": 1
+    }
+   },
+   "model_reason": "2 changed lines",
+   "verdict": "changes needed",
+   "findings": [
+    {
+     "path": "infra_utils/build_trigger_lambda.py",
+     "line": 30,
+     "severity": "major",
+     "category": "correctness",
+     "title": "Failed builds now report custom-resource success",
+     "body": "FAILED, FAULT, STOPPED, and TIMED_OUT all satisfy this condition, so the handler sends SUCCESS and returns before reaching the failure handling below. CloudFormation can therefore complete the custom resource and proceed with deployment even though the required build failed. The existing failure branch already stops polling on unsuccessful terminal statuses.",
+     "suggestion": "            if status == \"SUCCEEDED\":"
+    }
+   ],
+   "tp": 1,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "m2-trail-encryption",
+   "difficulty": "medium",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:m2-trail-encryption",
+   "cost": 0.0276,
+   "models": {
+    "us.openai.gpt-6-astra": {
+     "input_tokens": 2,
+     "output_tokens": 468,
+     "cache_read": 1664,
+     "cache_write": 0,
+     "calls": 1
+    }
+   },
+   "model_reason": "8 changed lines; sensitive: stacks/security_stack.py",
+   "verdict": "changes needed",
+   "findings": [
+    {
+     "path": "stacks/security_stack.py",
+     "line": 52,
+     "severity": "major",
+     "category": "security",
+     "title": "Restore TLS enforcement on the audit bucket",
+     "body": "Removing enforce_ssl=True removes the bucket policy denying requests over insecure transport. CloudTrail delivery uses HTTPS, but other authorized readers and writers can now access audit objects over HTTP, exposing their contents in transit. This is an independent security regression unrelated to simplifying encryption.",
+     "suggestion": ""
+    },
+    {
+     "path": "stacks/security_stack.py",
+     "line": 52,
+     "severity": "major",
+     "category": "security",
+     "title": "Preserve customer-managed bucket encryption when KMS is enabled",
+     "body": "With retain_data=True and enable_kms=True, this bucket previously configured default SSE-KMS encryption using self.kms_key. UNENCRYPTED removes that configuration and leaves encryption to S3's default SSE-S3 behavior. Objects relying on bucket-default encryption consequently lose the customer-managed key controls despite KMS remaining enabled in the stack. S3's automatic encryption does not preserve that security property.",
+     "suggestion": "encryption=(s3.BucketEncryption.KMS if retain_data and self.kms_key else s3.BucketEncryption.S3_MANAGED),\nencryption_key=self.kms_key if retain_data else None,\nenforce_ssl=True,"
+    }
+   ],
+   "tp": 2,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "h1-missing-await",
+   "difficulty": "hard",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:h1-missing-await",
+   "cost": 0.0023,
+   "models": {
+    "us.openai.gpt-6.1-sol": {
+     "input_tokens": 2,
+     "output_tokens": 194,
+     "cache_read": 1544,
+     "cache_write": 0,
+     "calls": 1
+    }
+   },
+   "model_reason": "2 changed lines",
+   "verdict": "changes needed",
+   "findings": [
+    {
+     "path": "agent-code/langgraph-agent/tools/gateway.py",
+     "line": 96,
+     "severity": "major",
+     "category": "correctness",
+     "title": "Await the token fetch before constructing the Authorization header",
+     "body": "_fetch_gateway_token() is asynchronous, so calling it without await returns a coroutine and does not execute token retrieval. The header consequently becomes `Bearer <coroutine object ...>` rather than containing an OAuth access token, causing authenticated gateway requests to fail whenever gateway tools are enabled.",
+     "suggestion": "    fresh_token = await _fetch_gateway_token()"
+    }
+   ],
+   "tp": 1,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "h2-test-no-assert",
+   "difficulty": "hard",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:h2-test-no-assert",
+   "cost": 0.0023,
+   "models": {
+    "us.openai.gpt-6.1-sol": {
+     "input_tokens": 2,
+     "output_tokens": 191,
+     "cache_read": 2061,
+     "cache_write": 0,
+     "calls": 1
+    }
+   },
+   "model_reason": "4 changed lines",
+   "verdict": "changes needed",
+   "findings": [
+    {
+     "path": "tests/test_jwt_claims.py",
+     "line": 54,
+     "severity": "major",
+     "category": "tests",
+     "title": "Issuer rejection test now passes when the token is accepted",
+     "body": "The try/except passes both when validate_claims raises TokenRejected and when it returns normally. Consequently, a regression that accepts a foreign issuer with an allowed client would no longer fail this test. Message tolerance should remove only the match constraint, not the assertion that rejection occurs.",
+     "suggestion": "    with pytest.raises(TokenRejected):"
+    }
+   ],
+   "tp": 1,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "c1-clean-status-constant",
+   "difficulty": "clean",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:c1-clean-status-constant",
+   "cost": 0.0009,
+   "models": {
+    "us.openai.gpt-6.1-sol": {
+     "input_tokens": 2,
+     "output_tokens": 62,
+     "cache_read": 1831,
+     "cache_write": 0,
+     "calls": 1
+    }
+   },
+   "model_reason": "3 changed lines",
+   "verdict": "approve-worthy",
+   "findings": [],
+   "tp": 0,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "c2-clean-claims-walrus",
+   "difficulty": "clean",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:c2-clean-claims-walrus",
+   "cost": 0.0008,
+   "models": {
+    "us.openai.gpt-6.1-sol": {
+     "input_tokens": 2,
+     "output_tokens": 54,
+     "cache_read": 1593,
+     "cache_write": 0,
+     "calls": 1
+    }
+   },
+   "model_reason": "3 changed lines",
+   "verdict": "approve-worthy",
+   "findings": [],
+   "tp": 0,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  }
+ ],
+ "totals": {
+  "tp": 7,
+  "fp": 0,
+  "fn": 0,
+  "precision": 1.0,
+  "recall": 1.0,
+  "f1": 1.0
+ },
+ "cost_usd": 0.0876
+}

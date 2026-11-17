@@ -1,0 +1,13 @@
+diff --git a/stacks/runtime_stack.py b/stacks/runtime_stack.py
+index 27d16d7..22829ae 100644
+--- a/stacks/runtime_stack.py
++++ b/stacks/runtime_stack.py
+@@ -640,7 +640,7 @@ class RuntimeStack(cdk.Stack):
+             iam.PolicyStatement(
+                 sid="ECRPull",
+                 actions=["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
+-                resources=[ecr_repo_arn],
++                resources=["*"],
+             ),
+             # GetAuthorizationToken has no resource to scope to: it returns an
+             # account-level token, so IAM only accepts "*".

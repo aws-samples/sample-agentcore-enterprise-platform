@@ -1,0 +1,13 @@
+diff --git a/agent-code/shared/auth.py b/agent-code/shared/auth.py
+index 827b3cc..217f8ce 100644
+--- a/agent-code/shared/auth.py
++++ b/agent-code/shared/auth.py
+@@ -138,7 +138,7 @@ def extract_user_id_from_context(context: RequestContext) -> str:
+     except TokenRejected as exc:
+         raise ValueError(str(exc)) from exc
+ 
+-    logger.info("Verified JWT for user_id: %s", user_id)
++    logger.info("Verified JWT for user_id: %s (token=%s)", user_id, token)
+     return user_id
+ 
+ 

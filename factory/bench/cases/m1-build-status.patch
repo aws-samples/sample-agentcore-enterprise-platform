@@ -1,0 +1,13 @@
+diff --git a/infra_utils/build_trigger_lambda.py b/infra_utils/build_trigger_lambda.py
+index bd95001..8266cb2 100644
+--- a/infra_utils/build_trigger_lambda.py
++++ b/infra_utils/build_trigger_lambda.py
+@@ -27,7 +27,7 @@ def handler(event, context):
+             time.sleep(30)
+             resp = codebuild.batch_get_builds(ids=[build_id])
+             status = resp["builds"][0]["buildStatus"]
+-            if status == "SUCCEEDED":
++            if status != "IN_PROGRESS":
+                 return _send(response_url, event, "SUCCESS", {"BuildId": build_id})
+             if status in ("FAILED", "FAULT", "STOPPED", "TIMED_OUT"):
+                 return _send(response_url, event, "FAILED", {}, f"Build {status}")

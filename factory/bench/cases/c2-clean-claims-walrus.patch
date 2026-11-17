@@ -1,0 +1,14 @@
+diff --git a/agent-code/shared/jwt_claims.py b/agent-code/shared/jwt_claims.py
+index e81222d..11121c0 100644
+--- a/agent-code/shared/jwt_claims.py
++++ b/agent-code/shared/jwt_claims.py
+@@ -82,8 +82,7 @@ def validate_claims(
+ 
+     # token_use tells a Cognito access token from an ID token; both carry sub,
+     # and either is fine for identifying the caller. Refresh tokens are not JWTs.
+-    subject = claims.get("sub")
+-    if not subject:
++    if not (subject := claims.get("sub")):
+         raise TokenRejected(
+             "Token has no 'sub' claim, so there is no identity to act as."
+         )

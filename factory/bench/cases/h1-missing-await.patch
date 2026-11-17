@@ -1,0 +1,13 @@
+diff --git a/agent-code/langgraph-agent/tools/gateway.py b/agent-code/langgraph-agent/tools/gateway.py
+index 639b051..036c8bf 100644
+--- a/agent-code/langgraph-agent/tools/gateway.py
++++ b/agent-code/langgraph-agent/tools/gateway.py
+@@ -93,7 +93,7 @@ async def create_gateway_mcp_client() -> MultiServerMCPClient | None:
+         return None
+     logger.info("[GATEWAY] URL: %s", gateway_url)
+ 
+-    fresh_token = await _fetch_gateway_token()
++    fresh_token = _fetch_gateway_token()
+ 
+     return MultiServerMCPClient(
+         {

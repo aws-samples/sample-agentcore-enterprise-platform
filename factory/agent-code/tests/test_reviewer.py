@@ -92,3 +92,48 @@ def test_only_added_lines_become_inline_comments():
         (3, "**nit: n2**"),
     ]
     assert "`app.py:1`" in review["body"] and "dropped" not in review["body"]
+
+
+def test_doc_only_diffs_use_sol_even_when_they_talk_about_security():
+    from factory.reviewer import ASTRA, SOL, choose_model
+
+    docs = {
+        "docs/SECURITY_CONTROLS.md": {
+            "added": {1: "IAM PolicyStatement with secretsmanager"},
+            "removed": {},
+            "hunks": [(1, 1)],
+        },
+        "README.md": {"added": {2: "x"}, "removed": {}, "hunks": [(2, 1)]},
+    }
+    assert choose_model(docs, 900)[0] == SOL
+    code = dict(
+        docs,
+        **{
+            "stacks/x.py": {
+                "added": {1: "iam.PolicyStatement()"},
+                "removed": {},
+                "hunks": [(1, 1)],
+            }
+        },
+    )
+    model, _reason, sensitive = choose_model(code, 10)
+    assert model == ASTRA and "stacks/x.py" in sensitive
+    assert (
+        choose_model(
+            {"app.py": {"added": {1: "x = 1"}, "removed": {}, "hunks": [(1, 1)]}}, 10
+        )[0]
+        == SOL
+    )
+
+
+def test_widening_an_iam_resource_list_goes_to_astra():
+    from factory.reviewer import ASTRA, choose_model
+
+    files = {
+        "stacks/runtime_stack.py": {
+            "added": {643: '                resources=["*"],'},
+            "removed": {},
+            "hunks": [(643, 1)],
+        }
+    }
+    assert choose_model(files, 2)[0] == ASTRA

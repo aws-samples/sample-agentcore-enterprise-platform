@@ -1,0 +1,130 @@
+[
+ {
+  "id": "e1-ecr-pull-star",
+  "difficulty": "easy",
+  "title": "Simplify runtime ECR permissions",
+  "body": "Drop the per-repo ARN from the image pull statement; every runtime pulls from ECR anyway.",
+  "expected": [
+   {
+    "path": "stacks/runtime_stack.py",
+    "line": 642,
+    "categories": [
+     "security"
+    ],
+    "bug": "ECR pull widened to *"
+   }
+  ],
+  "changed_lines": 2
+ },
+ {
+  "id": "e2-jwt-logged",
+  "difficulty": "easy",
+  "title": "Log more context when a JWT is verified",
+  "body": "Helps debugging auth issues in the runtime logs.",
+  "expected": [
+   {
+    "path": "agent-code/shared/auth.py",
+    "line": 141,
+    "categories": [
+     "security"
+    ],
+    "bug": "raw JWT written to logs"
+   }
+  ],
+  "changed_lines": 2
+ },
+ {
+  "id": "m1-build-status",
+  "difficulty": "medium",
+  "title": "Stop polling CodeBuild as soon as the build leaves IN_PROGRESS",
+  "body": "Finishes the custom resource faster.",
+  "expected": [
+   {
+    "path": "infra_utils/build_trigger_lambda.py",
+    "line": 30,
+    "categories": [
+     "correctness",
+     "reliability"
+    ],
+    "bug": "failed builds reported as SUCCESS"
+   }
+  ],
+  "changed_lines": 2
+ },
+ {
+  "id": "m2-trail-encryption",
+  "difficulty": "medium",
+  "title": "Simplify the CloudTrail bucket config",
+  "body": "One encryption path for both modes; the CMK branch was rarely used.",
+  "expected": [
+   {
+    "path": "stacks/security_stack.py",
+    "line": 52,
+    "categories": [
+     "security"
+    ],
+    "bug": "audit-log bucket encryption dropped"
+   },
+   {
+    "path": "stacks/security_stack.py",
+    "line": 52,
+    "categories": [
+     "security"
+    ],
+    "bug": "audit-log bucket no longer enforces TLS"
+   }
+  ],
+  "changed_lines": 8
+ },
+ {
+  "id": "h1-missing-await",
+  "difficulty": "hard",
+  "title": "Fetch the gateway token eagerly in the LangGraph agent",
+  "body": "Small cleanup of the gateway client setup.",
+  "expected": [
+   {
+    "path": "agent-code/langgraph-agent/tools/gateway.py",
+    "line": 96,
+    "categories": [
+     "correctness",
+     "reliability"
+    ],
+    "bug": "coroutine used as bearer token (missing await)"
+   }
+  ],
+  "changed_lines": 2
+ },
+ {
+  "id": "h2-test-no-assert",
+  "difficulty": "hard",
+  "title": "Make the issuer test tolerant of message changes",
+  "body": "The exact error text is not part of the contract.",
+  "expected": [
+   {
+    "path": "tests/test_jwt_claims.py",
+    "line": 54,
+    "categories": [
+     "tests"
+    ],
+    "bug": "test passes even if a foreign issuer is accepted"
+   }
+  ],
+  "changed_lines": 4
+ },
+ {
+  "id": "c1-clean-status-constant",
+  "difficulty": "clean",
+  "title": "Name the terminal CodeBuild statuses",
+  "body": "Pure refactor: same behaviour.",
+  "expected": [],
+  "changed_lines": 3
+ },
+ {
+  "id": "c2-clean-claims-walrus",
+  "difficulty": "clean",
+  "title": "Tidy validate_claims",
+  "body": "Pure refactor: same checks, same messages.",
+  "expected": [],
+  "changed_lines": 3
+ }
+]

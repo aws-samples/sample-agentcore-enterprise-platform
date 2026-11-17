@@ -1,0 +1,21 @@
+diff --git a/infra_utils/build_trigger_lambda.py b/infra_utils/build_trigger_lambda.py
+index bd95001..1f64171 100644
+--- a/infra_utils/build_trigger_lambda.py
++++ b/infra_utils/build_trigger_lambda.py
+@@ -5,6 +5,7 @@ import urllib.request
+ import boto3
+ 
+ codebuild = boto3.client("codebuild")
++FAILED_STATUSES = ("FAILED", "FAULT", "STOPPED", "TIMED_OUT")
+ 
+ 
+ def handler(event, context):
+@@ -29,7 +30,7 @@ def handler(event, context):
+             status = resp["builds"][0]["buildStatus"]
+             if status == "SUCCEEDED":
+                 return _send(response_url, event, "SUCCESS", {"BuildId": build_id})
+-            if status in ("FAILED", "FAULT", "STOPPED", "TIMED_OUT"):
++            if status in FAILED_STATUSES:
+                 return _send(response_url, event, "FAILED", {}, f"Build {status}")
+ 
+         return _send(response_url, event, "FAILED", {}, "Build timed out")

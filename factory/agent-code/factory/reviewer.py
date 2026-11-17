@@ -24,13 +24,15 @@ SENSITIVE_PATH = re.compile(
 )
 SENSITIVE_TEXT = re.compile(
     r"PolicyStatement|iam\.|secretsmanager|SecretValue|Authorization|0\.0\.0\.0/0|ingress|SecurityGroup|"
-    r"security_group|assume_role|sts:|kms:|permissions:",
+    r"security_group|assume_role|sts:|kms:|permissions:|\bresources\s*=|\bprincipals\s*=|\bactions\s*=\s*\[",
     re.IGNORECASE,
 )
 SKIP_FILES = re.compile(
     r"(\.lock|lock\.json|\.min\.js|\.svg|\.png|\.jpe?g|\.gif|\.ico|\.pdf|\.zip)$",
     re.IGNORECASE,
 )
+CATEGORIES = ("security", "correctness", "reliability", "tests", "docs", "performance")
+DOC_FILE = re.compile(r"(^docs/|\.md$)")
 _HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
@@ -100,6 +102,26 @@ def render(path: str, content: str, info: dict, context: int = CONTEXT) -> str:
     return "\n".join(out)
 
 
+def choose_model(files: dict[str, dict], changed: int) -> tuple[str, str, list[str]]:
+    """Astra for large or sensitive diffs; Sol otherwise. Doc-only diffs always get Sol, even about security."""
+    if files and all(DOC_FILE.search(p) for p in files):
+        return SOL, f"doc-only, {changed} changed lines", []
+    sensitive = [
+        p
+        for p, i in files.items()
+        if SENSITIVE_PATH.search(p)
+        or SENSITIVE_TEXT.search(
+            "\n".join(
+                [*i["added"].values(), *(r for rs in i["removed"].values() for r in rs)]
+            )
+        )
+    ]
+    reason = f"{changed} changed lines" + (
+        f"; sensitive: {', '.join(sensitive[:5])}" if sensitive else ""
+    )
+    return (ASTRA if changed > LARGE_DIFF or sensitive else SOL), reason, sensitive
+
+
 def build_review(
     result: dict, files: dict[str, dict], head_sha: str, model: str, skipped: list[str]
 ) -> dict:
@@ -162,9 +184,12 @@ class Review(Run):
         "files_skipped",
         "pr_url",
         "findings_count",
+        "findings",
     )
 
-    def __init__(self, pr: dict, repo: Path, work: Path, region: str):
+    def __init__(
+        self, pr: dict, repo: Path, work: Path, region: str, patch: str | None = None
+    ):
         number = int(pr["number"])
         run_obj = {
             "id": number,
@@ -175,8 +200,13 @@ class Review(Run):
         super().__init__(run_obj, repo, work, None, region)
         self.pr = pr
         self.branch = pr["head"]["ref"]
+        self.patch = (
+            patch  # benchmark input: review base + patch instead of a GitHub PR
+        )
 
     def fetch(self) -> str:
+        if self.patch is not None:
+            return self.apply_patch()
         head, base = self.pr["head"]["sha"], self.pr["base"]["sha"]
         for ref in (f"pull/{int(self.pr['number'])}/head", base):
             subprocess.run(
@@ -187,6 +217,49 @@ class Review(Run):
                 timeout=600,
             )
         return self.git("merge-base", base, head, cwd=self.repo).strip()
+
+    def apply_patch(self) -> str:
+        """Commit the patch on top of base in a scratch worktree; the commit stands in for the PR head."""
+        base = self.pr["base"]["sha"]
+        subprocess.run(
+            ["git", "fetch", "-q", "--filter=blob:none", "origin", base],
+            cwd=self.repo,
+            check=True,
+            capture_output=True,
+            timeout=600,
+        )
+        wt = self.work / "bench-wt"
+        subprocess.run(
+            ["git", "worktree", "remove", "--force", str(wt)],
+            cwd=self.repo,
+            check=False,
+            capture_output=True,
+        )
+        self.git(
+            "worktree", "add", "-q", "-f", "--detach", str(wt), base, cwd=self.repo
+        )
+        subprocess.run(
+            ["git", "apply", "--whitespace=nowarn", "-"],
+            input=self.patch,
+            text=True,
+            cwd=wt,
+            check=True,
+            capture_output=True,
+        )
+        self.git("add", "-A", cwd=wt)
+        self.git(
+            "-c",
+            "user.name=bench",
+            "-c",
+            "user.email=bench@invalid",
+            "commit",
+            "-q",
+            "-m",
+            self.pr.get("title") or "bench case",
+            cwd=wt,
+        )
+        self.pr["head"]["sha"] = self.git("rev-parse", "HEAD", cwd=wt).strip()
+        return base
 
     def conventions(self, head: str) -> str:
         def show(path: str) -> str:
@@ -210,8 +283,8 @@ class Review(Run):
 
     def execute(self) -> dict:
         try:
-            head = self.pr["head"]["sha"]
             base = self.fetch()
+            head = self.pr["head"]["sha"]
             numstat = self.git("diff", "--numstat", base, head, cwd=self.repo)
             changed = sum(
                 int(a) + int(d)
@@ -229,23 +302,7 @@ class Review(Run):
                     cwd=self.repo,
                 )
             )
-            sensitive = [
-                p
-                for p, i in files.items()
-                if SENSITIVE_PATH.search(p)
-                or SENSITIVE_TEXT.search(
-                    "\n".join(
-                        [
-                            *i["added"].values(),
-                            *(r for rs in i["removed"].values() for r in rs),
-                        ]
-                    )
-                )
-            ]
-            model = ASTRA if changed > LARGE_DIFF or sensitive else SOL
-            reason = f"{changed} changed lines" + (
-                f"; sensitive: {', '.join(sensitive[:5])}" if sensitive else ""
-            )
+            model, reason, sensitive = choose_model(files, changed)
             excerpts, used, skipped = [], 0, []
             for path in sorted(
                 files, key=lambda p: (not sensitive.count(p), p)
@@ -281,6 +338,11 @@ class Review(Run):
                 "files_skipped": skipped,
                 "findings_count": len(review["comments"])
                 + review["body"].count("\n- `"),
+                "findings": [
+                    f
+                    for f in result.get("findings", [])
+                    if f.get("severity") in SEVERITIES
+                ],
             }
         except BudgetExceeded as e:
             return {"outcome": "failed", "reason": f"budget: {e}"}
@@ -297,6 +359,7 @@ Each finding's "line" must be a '+' line number from the excerpt of that file.
 Reply with ONLY a JSON object:
 {"summary": "2-4 sentences: what the PR does and the overall risk",
  "verdict": "approve-worthy" | "changes needed",
- "findings": [{"path": str, "line": int, "severity": "blocker"|"major"|"minor"|"nit", "title": str,
+ "findings": [{"path": str, "line": int, "severity": "blocker"|"major"|"minor"|"nit",
+               "category": "security"|"correctness"|"reliability"|"tests"|"docs"|"performance", "title": str,
                "body": "why it is a problem", "suggestion": "replacement code for that line, or empty"}]}
 At most 10 findings and at most 2 nits."""

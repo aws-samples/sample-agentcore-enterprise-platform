@@ -83,6 +83,17 @@ def validate(payload: dict) -> dict:
     """Trust boundary: the payload comes from the dispatcher or a human invoke."""
     if payload.get("role") == "verify_app":
         return {}
+    if payload.get("role") == "pr_reviewer" and "bench" in payload:
+        b = payload["bench"]
+        if not re.fullmatch(r"[0-9a-f]{40}", str(b.get("base", ""))) or not isinstance(
+            b.get("patch"), str
+        ):
+            raise ValueError("bench needs a 40-hex base sha and a patch string")
+        if len(b["patch"]) > 300_000 or not re.fullmatch(
+            r"[\w.-]{1,64}", str(b.get("id", ""))
+        ):
+            raise ValueError("bench patch too large or bad id")
+        return {"id": str(b["id"])}
     if payload.get("role") == "pr_reviewer":
         number = int(payload["pull_request"]["number"])
         if number <= 0:
@@ -123,8 +134,34 @@ def clone(work: Path) -> Path:
     return repo
 
 
+def handle_bench(payload: dict) -> dict:
+    """Benchmark: review base + a local patch. Never touches GitHub beyond cloning the public repo."""
+    b = payload["bench"]
+    work = Path("/tmp/factory") / f"bench-{b['id']}"
+    pr = {
+        "number": 0,
+        "title": f"BENCH {b['id']}: {b.get('title', '')}"[:200],
+        "body": b.get("body", ""),
+        "user": {"login": "bench-author"},
+        "head": {"sha": "", "ref": f"bench/{b['id']}"},
+        "base": {"sha": b["base"], "repo": {"full_name": REPO}},
+    }
+    agent = Review(pr, clone(work), work, REGION, patch=b["patch"])
+    try:
+        rec = agent.execute()
+    except Exception as e:  # noqa: BLE001 - every failure must still produce a run row
+        traceback.print_exc()
+        rec = {"outcome": "failed", "reason": f"{type(e).__name__}: {e}"[:500]}
+    rec["reason"] = (rec.get("reason", "") + f" bench:{b['id']}").strip()
+    line = agent.record(rec, dry_run=True)
+    keys = ("review", "verdict", "summary", "model_reason", "files_skipped", "findings")
+    return {**line, **{k: rec[k] for k in keys if rec.get(k)}}
+
+
 def handle_review(payload: dict) -> dict:
     """Review a PR from its diff only. Dry run unless FACTORY_REVIEW_PUBLISH=true."""
+    if "bench" in payload:
+        return handle_bench(payload)
     number = int(payload["pull_request"]["number"])
     creds = load_app_creds()
     token = github.installation_token(creds, REPO)[0] if creds else ""

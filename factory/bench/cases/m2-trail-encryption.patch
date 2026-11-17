@@ -1,0 +1,19 @@
+diff --git a/stacks/security_stack.py b/stacks/security_stack.py
+index 16dd99e..33d68a6 100644
+--- a/stacks/security_stack.py
++++ b/stacks/security_stack.py
+@@ -49,13 +49,7 @@ class SecurityStack(cdk.Stack):
+                 bucket_name=f"{prefix}-cloudtrail-{self.account}",
+                 removal_policy=lifecycle_policy,
+                 auto_delete_objects=not retain_data,
+-                encryption=(
+-                    s3.BucketEncryption.KMS
+-                    if retain_data and self.kms_key
+-                    else s3.BucketEncryption.S3_MANAGED
+-                ),
+-                encryption_key=self.kms_key if retain_data else None,
+-                enforce_ssl=True,
++                encryption=s3.BucketEncryption.UNENCRYPTED,
+                 versioned=retain_data,
+             )
+             cloudtrail.Trail(
