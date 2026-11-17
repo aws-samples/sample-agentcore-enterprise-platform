@@ -22,7 +22,14 @@ import boto3
 from factory import asana, github
 from factory.ci_fixer import Run
 from factory.consult import Consult
-from factory.developer import Developer, MergeHandler, next_task, open_agent_prs
+from factory.developer import (
+    Developer,
+    MergeHandler,
+    attempted_tasks,
+    next_task,
+    taken_tasks,
+)
+from factory.digest import Digest
 from factory.pm import ProductManager
 from factory.reviewer import Review, build_review
 
@@ -167,6 +174,11 @@ def validate(payload: dict) -> dict:
         ):
             raise ValueError("snapshot_key must be [A-Za-z0-9_-]{1,64}")
         return {"id": f"task-{(task or {}).get('gid', 'next')}"}
+    if payload.get("role") == "digest":
+        day = payload.get("day")
+        if day is not None and not re.fullmatch(r"\d{4}-\d\d-\d\d", str(day)):
+            raise ValueError("day must be YYYY-MM-DD")
+        return {"id": f"digest-{day or 'yesterday'}"}
     if payload.get("role") == "merge_handler":
         number = int(payload["pull_request"]["number"])
         if number <= 0:
@@ -387,19 +399,39 @@ def handle_developer(payload: dict) -> dict:
         # A test snapshot's ops carry the test key as project, so the Mac sync never applies them.
         project=payload.get("snapshot_key") or asana.PROJECT,
     )
+    open_prs = github.open_factory_prs(REPO, token)
+    taken = taken_tasks(open_prs, github.factory_task_branches(REPO, token))
+    duplicate = None
     if task is None:
         try:
-            task = next_task(board)
+            task = next_task(board, taken, attempted_tasks(session))
         except asana.StaleSnapshot as e:
             return {"outcome": "skipped", "reason": str(e)}
+    elif str(task["gid"]) in taken:
+        duplicate = next(
+            (
+                p["number"]
+                for p in open_prs
+                if p["branch"] == f"factory/task/{task['gid']}"
+            ),
+            None,
+        )
     if task is None:
-        return {"outcome": "skipped", "reason": "no task in Ready for agent"}
+        return {"outcome": "skipped", "reason": "no new task in Ready for agent"}
     work = Path("/tmp/factory") / f"task-{task['gid']}"
     agent = Developer(task, clone(work), work, REGION, REPO, board)
     board.run_id = agent.id
     publish = bool(DEV_PUBLISH and token and not payload.get("dry_run"))
     board.op_status = "pending" if publish else "dry_run"
-    if publish and open_agent_prs(REPO, token) >= 2:
+    if str(task["gid"]) in taken:
+        rec = {
+            "outcome": "skipped_duplicate",
+            "reason": f"task already has an open factory PR (#{duplicate}) or a factory/task branch",
+            "duplicate_of": duplicate,
+        }
+    elif (
+        publish and sum(p["branch"].startswith("factory/task/") for p in open_prs) >= 2
+    ):
         rec = {"outcome": "skipped", "reason": "2 agent PRs already open"}
     else:
         rec = _safe(agent.execute)
@@ -458,6 +490,11 @@ def handle(payload: dict) -> dict:
         return handle_developer(payload)
     if role == "merge_handler":
         return handle_merge(payload)
+    if role == "digest":
+        work = Path("/tmp/factory") / "digest"
+        work.mkdir(parents=True, exist_ok=True)
+        agent = Digest(work, REGION, REPO, payload.get("day"))
+        return _finish(agent, _safe(agent.execute), False, ("summary",))
     run = validate(payload)
     work = Path("/tmp/factory") / str(run["id"])
     repo = clone(work)
@@ -469,6 +506,9 @@ def handle(payload: dict) -> dict:
         log_text = payload.get("log_text") or ""
         if not log_text and token:
             log_text = github.failed_job_logs(REPO, run["id"], token)
+        agent.open_prs = github.open_factory_prs(
+            REPO, token
+        )  # dedupe guard (public repo: works anonymously)
         # Without a token the agent re-runs the workflow's check to get the failure text.
         rec = agent.execute(log_text)
         if missing:

@@ -110,6 +110,7 @@ class Run:
         "proposals",
         "ruff_version",
         "fixed_by",
+        "duplicate_of",
     )
 
     def __init__(
@@ -135,6 +136,9 @@ class Run:
             set()
         )  # repo paths the failure names; edits elsewhere are refused
         self.branch = f"factory/ci-fix/{self.id}"
+        self.open_prs: list[
+            dict
+        ] = []  # open factory PRs, set by the caller for the dedupe guard
 
     # --- model calls -------------------------------------------------------
     def ask(self, model: str, system: str, prompt: str, max_tokens: int) -> dict:
@@ -593,6 +597,18 @@ class Run:
             self.allowed = set(tri["files"])
             if tri["category"] == "cdk_cli_schema":
                 self.allowed.add(self.run["path"])
+            if pr := covering_pr(
+                self.open_prs,
+                self.run.get("name", ""),
+                self.run.get("path", ""),
+                self.allowed,
+            ):
+                rec.update(
+                    outcome="skipped_duplicate",
+                    reason=f"already covered by open factory PR #{pr['number']}",
+                    duplicate_of=pr["number"],
+                )
+                return rec
             if tri["category"] == "unknown":
                 rec.update(
                     outcome="no_fix",
@@ -792,6 +808,24 @@ class Run:
         self.session.client("cloudwatch").put_metric_data(
             Namespace="SoftwareFactory", MetricData=data
         )
+
+
+def covering_pr(
+    open_prs: list[dict], check: str, workflow_path: str, files: set[str]
+) -> dict | None:
+    """The open factory PR that already covers this failure: it touches a failing file or the failing
+    workflow, or it is a CI fix whose title names the failing check."""
+    want = set(files) | ({workflow_path} if workflow_path else set())
+    for pr in open_prs:
+        if want & set(pr.get("files") or []):
+            return pr
+        if (
+            check
+            and pr.get("branch", "").startswith("factory/ci-fix/")
+            and check.lower() in pr["title"].lower()
+        ):
+            return pr
+    return None
 
 
 def latest_before(package: str, when: str) -> str:

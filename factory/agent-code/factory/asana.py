@@ -18,7 +18,10 @@ import json
 import os
 from datetime import UTC, datetime, timedelta
 
-PROJECT = os.environ.get("FACTORY_ASANA_PROJECT", "1216896369638424")  # gitleaks:allow (an Asana project gid, not a credential)
+_DEFAULT_PROJECT = (
+    "1216896369638424"  # gitleaks:allow (an Asana project gid, not a credential)
+)
+PROJECT = os.environ.get("FACTORY_ASANA_PROJECT", _DEFAULT_PROJECT)
 WORKSPACE = os.environ.get("FACTORY_ASANA_WORKSPACE", "8442528107068")
 SECTIONS = (
     "Backlog",

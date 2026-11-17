@@ -176,3 +176,28 @@ def post_review(repo: str, number: int, token: str, review: dict) -> str:
     """Publish a review payload built by the reviewer (one call). Gated by FACTORY_REVIEW_PUBLISH."""
     resp = request("POST", f"/repos/{repo}/pulls/{int(number)}/reviews", token, review)
     return resp.get("html_url", "")
+
+
+def open_factory_prs(repo: str, token: str) -> list[dict]:
+    """Open PRs from factory/* branches with their changed files (the dedupe guard's input)."""
+    prs = []
+    for p in request("GET", f"/repos/{repo}/pulls?state=open&per_page=100", token):
+        if p["head"]["ref"].startswith("factory/"):
+            files = request(
+                "GET", f"/repos/{repo}/pulls/{p['number']}/files?per_page=100", token
+            )
+            prs.append(
+                {
+                    "number": p["number"],
+                    "title": p["title"],
+                    "branch": p["head"]["ref"],
+                    "files": [f["filename"] for f in files],
+                }
+            )
+    return prs
+
+
+def factory_task_branches(repo: str, token: str) -> set[str]:
+    """Names of factory/task/* branches on the remote, open PR or not."""
+    refs = request("GET", f"/repos/{repo}/git/matching-refs/heads/factory/task/", token)
+    return {r["ref"].removeprefix("refs/heads/") for r in refs}

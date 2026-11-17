@@ -15,7 +15,7 @@ from pathlib import Path
 
 from boto3.dynamodb.conditions import Attr, Key
 
-from factory import asana, github
+from factory import asana
 from factory.ci_fixer import BudgetExceeded, Run, sh, tool
 from factory.pm import parse_notes
 
@@ -76,6 +76,7 @@ class Developer(Run):
         "asana_ops",
         "refused",
         "proposals",
+        "duplicate_of",
     )
 
     def __init__(
@@ -385,28 +386,58 @@ class Developer(Run):
         return out
 
 
-def open_agent_prs(repo: str, token: str) -> int:
-    return sum(
-        1
-        for p in github.request(
-            "GET", f"/repos/{repo}/pulls?state=open&per_page=100", token
-        )
-        if p["head"]["ref"].startswith("factory/task/")
-    )
+def taken_tasks(open_prs: list[dict], branches: set[str]) -> set[str]:
+    """Task gids already in flight: an open factory PR or any factory/task/<gid> branch."""
+    names = branches | {p["branch"] for p in open_prs}
+    return {n.rsplit("/", 1)[1] for n in names if re.fullmatch(r"factory/task/\d+", n)}
 
 
-def next_task(board: asana.Board) -> dict | None:
-    """Top open task of 'Ready for agent' in the Mac-synced snapshot; refuses a snapshot older than 24h."""
+def next_task(
+    board: asana.Board, taken: set[str] = frozenset(), tried: dict | None = None
+) -> dict | None:
+    """Top open 'Ready for agent' task in the snapshot (refused if older than 24h) that is not already in
+    flight (`taken`) and was not already attempted since it last changed (`tried`: gid -> last run start)."""
+    tried = tried or {}
     for t in board.tasks(require_fresh=True):
-        if t.get("section") == "Ready for agent" and not t.get("completed"):
-            return {
-                "gid": str(t["gid"]),
-                "title": t["name"],
-                "notes": t.get("notes", ""),
-                "url": t.get("permalink_url"),
-                **parse_notes(t.get("notes", "")),
-            }
+        gid = str(t["gid"])
+        if t.get("section") != "Ready for agent" or t.get("completed") or gid in taken:
+            continue
+        if gid in tried and tried[gid] >= str(t.get("modified_at") or ""):
+            continue  # the scheduled dry run would only repeat itself; wait for the task to change
+        return {
+            "gid": gid,
+            "title": t["name"],
+            "notes": t.get("notes", ""),
+            "url": t.get("permalink_url"),
+            **parse_notes(t.get("notes", "")),
+        }
     return None
+
+
+def attempted_tasks(session) -> dict[str, str]:
+    """gid -> start time of the latest developer run that finished its attempt (not skipped or failed)."""
+    table = os.environ.get("FACTORY_RUNS_TABLE")
+    if not table:
+        return {}
+    done = {
+        "branch_ready_dry_run",
+        "checks_failed",
+        "needs_scoping",
+        "pr_opened",
+        "no_change",
+    }
+    out: dict[str, str] = {}
+    kwargs = {"KeyConditionExpression": Key("pk").eq("agent#developer")}
+    tbl = session.resource("dynamodb").Table(table)
+    while True:
+        page = tbl.query(**kwargs)
+        for i in page["Items"]:
+            gid = str(i.get("trigger", "")).removeprefix("task-")
+            if i.get("outcome") in done and i.get("started_at", "") > out.get(gid, ""):
+                out[gid] = i["started_at"]
+        if "LastEvaluatedKey" not in page:
+            return out
+        kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
 
 
 class MergeHandler(Run):

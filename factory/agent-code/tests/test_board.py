@@ -253,3 +253,212 @@ def test_ruling_still_needs_merged_prs():
         {"reconcile": rulings}, [], {"1", "2"}, {"https://x/pull/82"}, set()
     )
     assert [r["task"] for r in rec] == ["1"] and len(dropped) == 1
+
+
+def test_ci_fixer_skips_a_failure_an_open_factory_pr_covers():
+    from factory.ci_fixer import covering_pr
+
+    prs = [
+        {
+            "number": 118,
+            "title": "style: fix ruff I001 in 1 file(s)",
+            "branch": "factory/ci-fix/1",
+            "files": ["migration/simulation/existing-ec2-agent/agent.py"],
+        },
+        {
+            "number": 119,
+            "title": "ci: bump pinned aws-cdk CLI to 2.1148.1 in Secret Boundary workflow",
+            "branch": "factory/ci-fix/2",
+            "files": [".github/workflows/secret-boundary.yml"],
+        },
+    ]
+    wf = ".github/workflows/secret-boundary.yml"
+    assert (
+        covering_pr(prs, "Secret Boundary", wf, {wf})["number"] == 119
+    )  # same workflow file
+    assert (
+        covering_pr(prs, "Secret Boundary", "", set())["number"] == 119
+    )  # same check, by title
+    lint = ".github/workflows/python-lint.yml"
+    assert (
+        covering_pr(
+            prs,
+            "Python Code Quality",
+            lint,
+            {"migration/simulation/existing-ec2-agent/agent.py"},
+        )["number"]
+        == 118
+    )  # same failing file
+    assert covering_pr(prs, "Python Code Quality", lint, {"scripts/other.py"}) is None
+
+
+def test_developer_skips_tasks_with_an_open_pr_branch_or_unchanged_attempt():
+    from factory.developer import next_task, taken_tasks
+
+    now = datetime.now(UTC).isoformat()
+    tasks = [
+        {
+            "gid": "1",
+            "name": "has PR",
+            "section": "Ready for agent",
+            "modified_at": "2026-11-01T00:00:00Z",
+        },
+        {
+            "gid": "2",
+            "name": "has branch",
+            "section": "Ready for agent",
+            "modified_at": "2026-11-01T00:00:00Z",
+        },
+        {
+            "gid": "3",
+            "name": "tried",
+            "section": "Ready for agent",
+            "modified_at": "2026-11-01T00:00:00Z",
+        },
+        {
+            "gid": "4",
+            "name": "free",
+            "section": "Ready for agent",
+            "modified_at": "2026-11-01T00:00:00Z",
+        },
+    ]
+    b = board({"project": "p", "snapshot_at": now, "tasks": tasks})
+    taken = taken_tasks(
+        [{"branch": "factory/task/1"}, {"branch": "factory/ci-fix/9"}],
+        {"factory/task/2"},
+    )
+    assert taken == {"1", "2"}
+    assert next_task(b, taken, {"3": "2026-11-17T10:00:00Z"})["gid"] == "4"
+    # a task edited after the last attempt is eligible again
+    assert next_task(b, taken, {"3": "2026-10-01T00:00:00Z"})["gid"] == "3"
+
+
+def test_digest_sums_cost_by_role_and_lists_prs_and_failures():
+    from factory.digest import summarize
+
+    rows = {
+        "ci_fixer": [
+            {"outcome": "fix_pr_opened", "pr_url": "u1", "est_cost_usd": "0.05"},
+            {"outcome": "skipped_duplicate", "est_cost_usd": 0},
+        ],
+        "pr_reviewer": [
+            {
+                "outcome": "failed",
+                "trigger": "117",
+                "reason": "boom",
+                "est_cost_usd": 0.2,
+            }
+        ],
+        "merge_handler": [
+            {"outcome": "merged_recorded", "pr_url": "u0", "est_cost_usd": 0}
+        ],
+    }
+    s = summarize(rows, "2026-11-17")
+    assert (
+        s["runs"] == 4
+        and s["cost_usd_total"] == 0.25
+        and s["cost_usd_by_role"]["ci_fixer"] == 0.05
+    )
+    assert (
+        s["prs_opened"] == ["u1"]
+        and s["prs_merged"] == ["u0"]
+        and s["failures"][0]["trigger"] == "117"
+    )
+    assert s["outcomes_by_role"]["ci_fixer"] == {
+        "fix_pr_opened": 1,
+        "skipped_duplicate": 1,
+    }
+
+
+def test_cloud_sync_applies_only_pending_real_ops_with_any_client():
+    from factory.asana_sync import apply_pending
+
+    class Client:
+        def __init__(self):
+            self.calls, self.n = [], 0
+
+        def sections(self, project):
+            return {"Backlog": "s1"}
+
+        def create_section(self, project, name):
+            self.n += 1
+            self.calls.append(("section", name))
+            return f"new{self.n}"
+
+        def create_task(self, project, section_gid, name, notes):
+            self.calls.append(("task", section_gid, name))
+            return "t9"
+
+        def move_task(self, task_gid, section_gid):
+            self.calls.append(("move", task_gid, section_gid))
+
+        def comment(self, task_gid, text):
+            raise RuntimeError("Asana 403")
+
+        def update_task(self, task_gid, fields):
+            self.calls.append(("update", task_gid, fields))
+
+    P = asana.PROJECT
+    ops = [
+        {
+            "op_id": "a",
+            "op": "ensure_section",
+            "project": P,
+            "status": "pending",
+            "created_at": "1",
+            "args": {"section": "Done"},
+        },
+        {
+            "op_id": "b",
+            "op": "create_task",
+            "project": P,
+            "status": "pending",
+            "created_at": "2",
+            "args": {"section": "Backlog", "name": "T", "notes": "n"},
+        },
+        {
+            "op_id": "c",
+            "op": "move_task",
+            "project": P,
+            "status": "dry_run",
+            "created_at": "3",
+            "args": {"task_gid": "1", "section": "Done"},
+        },
+        {
+            "op_id": "d",
+            "op": "comment",
+            "project": P,
+            "status": "pending",
+            "created_at": "4",
+            "args": {"task_gid": "1", "text": "x"},
+        },
+        {
+            "op_id": "e",
+            "op": "update_task",
+            "project": "test-x",
+            "status": "pending",
+            "created_at": "5",
+            "args": {"task_gid": "1", "fields": {"completed": True}},
+        },
+        {
+            "op_id": "f",
+            "op": "update_task",
+            "project": P,
+            "status": "pending",
+            "created_at": "6",
+            "args": {"task_gid": "1", "fields": {"completed": True, "assignee": "me"}},
+        },
+    ]
+    c = Client()
+    out = apply_pending(ops, c)
+    assert [(o["op_id"], o["status"]) for o in out] == [
+        ("a", "applied"),
+        ("b", "applied"),
+        ("d", "failed"),
+        ("f", "applied"),
+    ]
+    assert ("task", "s1", "T") in c.calls and (
+        "update",
+        "1",
+        {"completed": True},
+    ) in c.calls

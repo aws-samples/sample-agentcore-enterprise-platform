@@ -93,7 +93,9 @@ ALLOWED_MODELS = [
     "us.openai.gpt-6-astra",
 ]
 METRIC_NAMESPACE = "SoftwareFactory"
-ASANA_PROJECT = "1216896369638424"  # gitleaks:allow (an Asana project gid, not a credential)
+ASANA_PROJECT = (
+    "1216896369638424"  # gitleaks:allow (an Asana project gid, not a credential)
+)
 LOG_RETENTION = logs.RetentionDays.ONE_MONTH
 LOG_PREFIXES = [
     "/aws/lambda/software-factory-",
@@ -595,6 +597,8 @@ class SoftwareFactoryStack(cdk.Stack):
             enforce_ssl=True,
             visibility_timeout=cdk.Duration.seconds(180),
             dead_letter_queue=sqs.DeadLetterQueue(queue=dlq, max_receive_count=3),
+            # EventBridge rule targets cannot set a deduplication id; the ingress still sets its own.
+            content_based_deduplication=True,
         )
         code = _lambda.Code.from_asset(os.path.join(HERE, "lambdas"))
 
@@ -638,7 +642,12 @@ class SoftwareFactoryStack(cdk.Stack):
             code=code,
             timeout=cdk.Duration.seconds(60),
             memory_size=256,
-            environment={"RUNTIME_ARN": runtime_arn},
+            environment={
+                "RUNTIME_ARN": runtime_arn,
+                "DLQ_URL": dlq.queue_url,
+                # Hard stop: above this day's summed RunCostUSD, new runs are parked in the DLQ until 00:00 UTC.
+                "DAILY_COST_STOP_USD": "10",
+            },
             log_group=self._log_group(
                 "DispatcherLogs", "/aws/lambda/software-factory-dispatcher"
             ),
@@ -648,6 +657,11 @@ class SoftwareFactoryStack(cdk.Stack):
                 actions=["bedrock-agentcore:InvokeAgentRuntime"],
                 resources=[runtime_arn, f"{runtime_arn}/runtime-endpoint/*"],
             )
+        )
+        dlq.grant_send_messages(dispatcher)
+        # GetMetricData accepts no resource ARN.
+        dispatcher.add_to_role_policy(
+            iam.PolicyStatement(actions=["cloudwatch:GetMetricData"], resources=["*"])
         )
         dispatcher.add_event_source(
             sources.SqsEventSource(
@@ -660,24 +674,46 @@ class SoftwareFactoryStack(cdk.Stack):
             )
         )
 
-        # Daily product-manager run. Disabled until the user enables it; it only queues a message, and
-        # the queue drains only while factory_dispatch is on.
-        events.Rule(
-            self,
-            "PmDaily",
-            rule_name="software-factory-pm-daily",
-            enabled=False,
-            schedule=events.Schedule.cron(minute="0", hour="6"),
-            targets=[
-                targets.SqsQueue(
-                    queue,
-                    message_group_id="product-manager",
-                    message=events.RuleTargetInput.from_object(
-                        {"role": "product_manager"}
-                    ),
-                )
-            ],
-        )
+        # Scheduled runs. Each only queues a message; the dispatcher (cost stop included) starts the run,
+        # and the queue drains only while factory_dispatch is on.
+        self.schedules = []
+        for cid, name, schedule, message in [
+            (
+                "PmDaily",
+                "software-factory-pm-daily",
+                events.Schedule.cron(minute="0", hour="6"),
+                {"role": "product_manager"},
+            ),
+            # Dry run while FACTORY_DEV_PUBLISH is off; it skips tasks already in flight or already tried.
+            (
+                "DevEvery2h",
+                "software-factory-developer-2h",
+                events.Schedule.cron(minute="0", hour="*/2"),
+                {"role": "developer"},
+            ),
+            # Yesterday's summary row in the runs table (no model calls).
+            (
+                "DigestDaily",
+                "software-factory-digest-daily",
+                events.Schedule.cron(minute="15", hour="0"),
+                {"role": "digest"},
+            ),
+        ]:
+            rule = events.Rule(
+                self,
+                cid,
+                rule_name=name,
+                schedule=schedule,
+                targets=[
+                    targets.SqsQueue(
+                        queue,
+                        message_group_id=message["role"],
+                        message=events.RuleTargetInput.from_object(message),
+                    )
+                ],
+            )
+            self.schedules.append(rule)
+            cdk.CfnOutput(self, f"{cid}RuleArn", value=rule.rule_arn)
 
         api = apigw.HttpApi(
             self,
