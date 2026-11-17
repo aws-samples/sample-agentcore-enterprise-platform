@@ -18,7 +18,7 @@ SOL = "us.openai.gpt-6.1-sol"
 ASTRA = "us.openai.gpt-6-astra"
 LARGE_DIFF = 800  # changed lines; above this the two-pass path runs (Sol on all hunks, Astra on the riskiest)
 LARGE_REVIEW_USD = (
-    0.12  # target cost of a large review; the Astra pass gets what the Sol pass leaves
+    0.20  # target cost of a large review; the Astra pass gets what the Sol pass leaves
 )
 SOL_GROUP_CHARS = 120_000  # ~34k tokens of hunks per first-pass call
 LARGE_PACK_TOKENS = (
@@ -530,6 +530,8 @@ Report only real problems: correctness bugs, security (IAM scope, secrets, auth,
 broken or missing tests for new logic, CI breakage, misleading docs. Do NOT report formatting, import order,
 naming style or anything ruff or a formatter catches. Prefer few, high-confidence findings; no findings is fine.
 Each finding's "line" must be a '+' line number from the excerpt of that file.
+When a finding is about runtime or deploy behaviour, anchor it to the code file that implements that behaviour
+(stack, handler, script), not to a doc that describes it; report a doc only when the doc itself is wrong.
 Reply with ONLY a JSON object:
 {"summary": "2-4 sentences: what the PR does and the overall risk",
  "verdict": "approve-worthy" | "changes needed",

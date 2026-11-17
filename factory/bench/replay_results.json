@@ -4,7 +4,7 @@
   "fix_pr": 15,
   "outcome": "reviewed_dry_run",
   "reason": "bench:replay-9",
-  "cost": 0.2741,
+  "cost": 0.2721,
   "model": [
    "us.openai.gpt-6-astra"
   ],
@@ -18,8 +18,8 @@
     "line": 40,
     "severity": "minor",
     "category": "docs",
-    "title": "Correct the claim that IAM runtimes forward Authorization",
-    "body": "AgentCore permits Authorization in requestHeaderAllowlist only when a custom JWT authorizer is configured. An A2A or issuer-less runtime using IAM with this unconditional allowlist is rejected during create/update; it does not deploy and forward an unchecked header. This explanation, also added to runtime_stack.py, misrepresents a deployment failure as supported behavior. Document the restriction and the need to condition Authorization forwarding on the JWT authorizer; successful synth does not validate this control-plane constraint.",
+    "title": "Correct the claimed Authorization forwarding under IAM auth",
+    "body": "AgentCore permits Authorization in requestHeaderAllowlist only when a custom JWT authorizer is configured. Without that authorizer, the control plane rejects the runtime create/update; it does not deploy an IAM-authenticated runtime that forwards unchecked Authorization headers. The new explanation therefore describes an impossible deployment state and incorrectly presents it as the rationale for verification inside the agent.",
     "suggestion": ""
    },
    {
@@ -27,8 +27,8 @@
     "line": 60,
     "severity": "minor",
     "category": "tests",
-    "title": "Check verifier execution rather than its presence in source",
-    "body": "This assertion passes whenever the verifier name appears anywhere, including an unused import or comment. For example, leaving the new import while replacing the identity assignment with user_id = context.identity.sub passes this test and the placeholder test, despite restoring unverified identity access. The new security regression guard therefore does not enforce the behavior its name and failure message promise.",
+    "title": "Check that the verifier is called, not merely mentioned",
+    "body": "VERIFIER is already present in the import statement, so this assertion passes if the entrypoint stops calling it. For example, replacing the new assignment with user_id = context.identity.sub leaves both this test and the placeholder-assignment test green while restoring unverified identity handling. The new guard consequently does not enforce its stated authentication invariant.",
     "suggestion": ""
    }
   ]
@@ -38,7 +38,7 @@
   "fix_pr": 28,
   "outcome": "reviewed_dry_run",
   "reason": "bench:replay-14",
-  "cost": 0.2049,
+  "cost": 0.2068,
   "model": [
    "us.openai.gpt-6-astra"
   ],
@@ -51,8 +51,8 @@
     "line": 40,
     "severity": "major",
     "category": "reliability",
-    "title": "Catch failures when the MCP client actually starts",
-    "body": "The try block only constructs an MCPClient; its transport factory, including _fetch_gateway_token(), runs later when Strands starts the client and discovers tools. Agent construction is outside the try block, and invocation is also unguarded, so an unreachable gateway or failed token request fails the research request instead of continuing without tools. Initialize and discover gateway tools within the guarded lifecycle, preserving the client context during successful invocations, and fall back to a tool-free agent on setup failure. Add a test where transport startup or token retrieval raises rather than only mocking create_gateway_mcp_client() to raise.",
+    "title": "Catch failures when MCP tools are loaded, not just when the client is constructed",
+    "body": "The try block only constructs and appends an MCPClient. Its transport factory is lazy: token retrieval, connection establishment, and tool discovery occur when Strands loads the client, outside this try block. Consequently, an unreachable Gateway or a token-vault failure fails the request instead of continuing without Gateway tools as intended. The existing catch covers configuration-time failures but not the principal outage scenarios it claims to handle.",
     "suggestion": ""
    }
   ],
@@ -62,8 +62,8 @@
     "line": 40,
     "severity": "major",
     "category": "reliability",
-    "title": "Catch failures when the MCP client actually starts",
-    "body": "The try block only constructs an MCPClient; its transport factory, including _fetch_gateway_token(), runs later when Strands starts the client and discovers tools. Agent construction is outside the try block, and invocation is also unguarded, so an unreachable gateway or failed token request fails the research request instead of continuing without tools. Initialize and discover gateway tools within the guarded lifecycle, preserving the client context during successful invocations, and fall back to a tool-free agent on setup failure. Add a test where transport startup or token retrieval raises rather than only mocking create_gateway_mcp_client() to raise.",
+    "title": "Catch failures when MCP tools are loaded, not just when the client is constructed",
+    "body": "The try block only constructs and appends an MCPClient. Its transport factory is lazy: token retrieval, connection establishment, and tool discovery occur when Strands loads the client, outside this try block. Consequently, an unreachable Gateway or a token-vault failure fails the request instead of continuing without Gateway tools as intended. The existing catch covers configuration-time failures but not the principal outage scenarios it claims to handle.",
     "suggestion": ""
    }
   ]
@@ -73,7 +73,7 @@
   "fix_pr": 58,
   "outcome": "reviewed_dry_run",
   "reason": "bench:replay-51",
-  "cost": 0.6426,
+  "cost": 0.6434,
   "model": [
    "us.openai.gpt-6-astra"
   ],
@@ -83,10 +83,10 @@
    {
     "path": "scripts/check_guardrail_enforcement.py",
     "line": 49,
-    "severity": "major",
+    "severity": "minor",
     "category": "correctness",
-    "title": "Simulate an actual allowed model rather than a fabricated ARN",
-    "body": "When agents.allowed_models is configured, the runtime role permits only the specified model and inference-profile ARNs. The fabricated foundation-model/anthropic.claude ARN will not match those permissions, so the guarded simulation returns implicitDeny even when enforcement and real invocations work correctly. Consequently, deploy.sh verify fails when these two security controls are enabled together and incorrectly reports that every agent is broken. Resolve the effective model configuration and simulate the exact model/profile resources the agent invokes.",
+    "title": "Simulate the configured model resources instead of a generic ARN",
+    "body": "When agents.allowed_models is configured, the role permits exact model and inference-profile ARNs rather than every foundation model. The fabricated anthropic.claude ARN therefore returns implicitDeny even with the guardrail context, making deploy.sh verify fail on a correctly hardened deployment and incorrectly report that inference is bricked. Resolve the configured model and simulate its actual resource ARNs, including the inference profile and destination foundation-model resources where applicable.",
     "suggestion": ""
    }
   ],
@@ -97,27 +97,27 @@
     "severity": "major",
     "category": "correctness",
     "title": "Validate guardrail compatibility after resolving configuration overrides",
-    "body": "The compatibility validator checks only the platform.yaml values, but app.py subsequently resolves agent_pattern and require_guardrails independently from environment variables and CDK context. For example, AGENT_PATTERN=claude-sdk-agent with the security-focused preset passes YAML validation and deploys a Claude SDK runtime with the inference deny but no guardrail attachment. Every inference then fails. This also affects documented environment-variable deployments, not just raw CDK context users. Reject the incompatible combination using the resolved values before constructing the runtime, and cover override combinations in tests.",
+    "body": "The compatibility validator only checks the manifest, while this call uses the effective environment/context settings. For example, a valid security-focused manifest combined with AGENT_PATTERN=claude-sdk-agent passes validation but deploys the inference deny onto an agent that cannot attach a guardrail, causing every inference to fail. This affects the documented environment-variable customization path, not just raw CDK context users. Reject the incompatible combination after resolving both require_guardrails and agent_pattern, or enforce it in RuntimeStack, and test the override case.",
     "suggestion": ""
    }
   ],
   "findings": [
-   {
-    "path": "scripts/check_guardrail_enforcement.py",
-    "line": 49,
-    "severity": "major",
-    "category": "correctness",
-    "title": "Simulate an actual allowed model rather than a fabricated ARN",
-    "body": "When agents.allowed_models is configured, the runtime role permits only the specified model and inference-profile ARNs. The fabricated foundation-model/anthropic.claude ARN will not match those permissions, so the guarded simulation returns implicitDeny even when enforcement and real invocations work correctly. Consequently, deploy.sh verify fails when these two security controls are enabled together and incorrectly reports that every agent is broken. Resolve the effective model configuration and simulate the exact model/profile resources the agent invokes.",
-    "suggestion": ""
-   },
    {
     "path": "app.py",
     "line": 433,
     "severity": "major",
     "category": "correctness",
     "title": "Validate guardrail compatibility after resolving configuration overrides",
-    "body": "The compatibility validator checks only the platform.yaml values, but app.py subsequently resolves agent_pattern and require_guardrails independently from environment variables and CDK context. For example, AGENT_PATTERN=claude-sdk-agent with the security-focused preset passes YAML validation and deploys a Claude SDK runtime with the inference deny but no guardrail attachment. Every inference then fails. This also affects documented environment-variable deployments, not just raw CDK context users. Reject the incompatible combination using the resolved values before constructing the runtime, and cover override combinations in tests.",
+    "body": "The compatibility validator only checks the manifest, while this call uses the effective environment/context settings. For example, a valid security-focused manifest combined with AGENT_PATTERN=claude-sdk-agent passes validation but deploys the inference deny onto an agent that cannot attach a guardrail, causing every inference to fail. This affects the documented environment-variable customization path, not just raw CDK context users. Reject the incompatible combination after resolving both require_guardrails and agent_pattern, or enforce it in RuntimeStack, and test the override case.",
+    "suggestion": ""
+   },
+   {
+    "path": "scripts/check_guardrail_enforcement.py",
+    "line": 49,
+    "severity": "minor",
+    "category": "correctness",
+    "title": "Simulate the configured model resources instead of a generic ARN",
+    "body": "When agents.allowed_models is configured, the role permits exact model and inference-profile ARNs rather than every foundation model. The fabricated anthropic.claude ARN therefore returns implicitDeny even with the guardrail context, making deploy.sh verify fail on a correctly hardened deployment and incorrectly report that inference is bricked. Resolve the configured model and simulate its actual resource ARNs, including the inference profile and destination foundation-model resources where applicable.",
     "suggestion": ""
    },
    {
@@ -125,8 +125,8 @@
     "line": 73,
     "severity": "minor",
     "category": "correctness",
-    "title": "Only check runtime guardrails when the footprint contains a runtime",
-    "body": "A federated platform account intentionally has no runtime stacks, even when require_guardrails is enabled for the deployment. This unconditional flag check still launches check_guardrail_enforcement.py, which looks up the orchestrator runtime role and fails because that role correctly does not exist in the platform account. Gate this check on the runtime footprint, as the invoke checks already do.",
+    "title": "Gate the guardrail check on the runtime footprint",
+    "body": "A federated platform account deliberately has no runtime stacks, but enabling require_guardrails still schedules this check. check_guardrail_enforcement.py unconditionally looks up the orchestrator runtime role, so verification fails with a missing-role error for a valid platform-account deployment. Only schedule this orchestrator-specific check when runtime-orchestrator is in suffixes, and add a federated-platform test with the flag enabled.",
     "suggestion": "    if require_guardrails and \"runtime-orchestrator\" in suffixes:"
    }
   ]
@@ -136,29 +136,21 @@
   "fix_pr": 80,
   "outcome": "reviewed_dry_run",
   "reason": "bench:replay-63",
-  "cost": 0.0651,
+  "cost": 0.1809,
   "model": [
-   "us.openai.gpt-6.1-sol"
+   "us.openai.gpt-6.1-sol",
+   "us.openai.gpt-6-astra"
   ],
   "verdict": "changes needed",
   "hit": true,
   "hits": [
    {
-    "path": "infra_utils/platform_config.py",
-    "line": 777,
-    "severity": "minor",
-    "category": "correctness",
-    "title": "Environment export cannot preserve valid values containing commas",
-    "body": "MigrationSource.env accepts arbitrary string values, but MIGRATION_ENV uses commas both as data and as pair separators without escaping. For example, {'OPTIONS': 'a,b', 'LOG_LEVEL': 'info'} exports as OPTIONS=a,b,LOG_LEVEL=info, which cannot be unambiguously decoded. This makes the new exported contract lossy for ordinary configuration such as lists of endpoints or options.",
-    "suggestion": ""
-   },
-   {
     "path": "scripts/deploy.sh",
     "line": 924,
     "severity": "minor",
     "category": "reliability",
-    "title": "Secret checks report authorization and service failures as missing secrets",
-    "body": "Every unsuccessful describe-secret call is reported as a missing secret, with stderr discarded and a create-secret command recommended. Valid STS credentials do not imply permission to describe secrets, so AccessDenied, expired credentials, or connectivity failures produce a successful plan with incorrect prerequisite information. Only ResourceNotFoundException should be classified as missing; other failures should be surfaced as failed or inconclusive checks.",
+    "title": "Distinguish missing secrets from failed secret checks",
+    "body": "Every unsuccessful describe-secret call is reported as a missing secret, while the underlying error is discarded. Successful STS authentication does not imply secretsmanager:DescribeSecret permission, so a valid caller with insufficient permissions will receive an incorrect diagnosis and a create-secret recommendation even when the secret exists. Throttling and connectivity failures produce the same result. Capture the AWS error, report 'missing' only for ResourceNotFoundException, and report other failures as an unsuccessful or inconclusive check.",
     "suggestion": ""
    }
   ],
@@ -167,38 +159,29 @@
     "path": "infra_utils/platform_config.py",
     "line": 818,
     "severity": "major",
-    "category": "docs",
-    "title": "Plan claims migration source selects an image before runtime support exists",
-    "body": "The plan says agents.pattern is ignored and the runtime image comes from migration.source, but this PR leaves app.py and the runtime stacks unchanged. Deploying the modified migration preset therefore still deploys the selected framework image, not the declared source container; selecting target.runtime: ec2 likewise does not change compute. The operator-facing plan gives a false account of what the current deployment will do.",
+    "category": "correctness",
+    "title": "Distinguish the proposed migration from current deployment behavior",
+    "body": "The plan says agents.pattern is ignored and the runtime image comes from migration.source, but this PR deliberately leaves app.py and the runtime stacks unchanged and defers consumption of MIGRATION_* to M2. Consequently, deploying the newly updated migration preset still deploys the framework-selected runtime rather than the declared customer container. The plan gives operators a false assurance about what a subsequent deployment will run.",
     "suggestion": ""
    }
   ],
   "findings": [
    {
-    "path": "infra_utils/platform_config.py",
-    "line": 818,
-    "severity": "major",
-    "category": "docs",
-    "title": "Plan claims migration source selects an image before runtime support exists",
-    "body": "The plan says agents.pattern is ignored and the runtime image comes from migration.source, but this PR leaves app.py and the runtime stacks unchanged. Deploying the modified migration preset therefore still deploys the selected framework image, not the declared source container; selecting target.runtime: ec2 likewise does not change compute. The operator-facing plan gives a false account of what the current deployment will do.",
-    "suggestion": ""
-   },
-   {
-    "path": "infra_utils/platform_config.py",
-    "line": 777,
-    "severity": "minor",
-    "category": "correctness",
-    "title": "Environment export cannot preserve valid values containing commas",
-    "body": "MigrationSource.env accepts arbitrary string values, but MIGRATION_ENV uses commas both as data and as pair separators without escaping. For example, {'OPTIONS': 'a,b', 'LOG_LEVEL': 'info'} exports as OPTIONS=a,b,LOG_LEVEL=info, which cannot be unambiguously decoded. This makes the new exported contract lossy for ordinary configuration such as lists of endpoints or options.",
-    "suggestion": ""
-   },
-   {
     "path": "scripts/deploy.sh",
     "line": 924,
     "severity": "minor",
     "category": "reliability",
-    "title": "Secret checks report authorization and service failures as missing secrets",
-    "body": "Every unsuccessful describe-secret call is reported as a missing secret, with stderr discarded and a create-secret command recommended. Valid STS credentials do not imply permission to describe secrets, so AccessDenied, expired credentials, or connectivity failures produce a successful plan with incorrect prerequisite information. Only ResourceNotFoundException should be classified as missing; other failures should be surfaced as failed or inconclusive checks.",
+    "title": "Distinguish missing secrets from failed secret checks",
+    "body": "Every unsuccessful describe-secret call is reported as a missing secret, while the underlying error is discarded. Successful STS authentication does not imply secretsmanager:DescribeSecret permission, so a valid caller with insufficient permissions will receive an incorrect diagnosis and a create-secret recommendation even when the secret exists. Throttling and connectivity failures produce the same result. Capture the AWS error, report 'missing' only for ResourceNotFoundException, and report other failures as an unsuccessful or inconclusive check.",
+    "suggestion": ""
+   },
+   {
+    "path": "infra_utils/platform_config.py",
+    "line": 818,
+    "severity": "major",
+    "category": "correctness",
+    "title": "Distinguish the proposed migration from current deployment behavior",
+    "body": "The plan says agents.pattern is ignored and the runtime image comes from migration.source, but this PR deliberately leaves app.py and the runtime stacks unchanged and defers consumption of MIGRATION_* to M2. Consequently, deploying the newly updated migration preset still deploys the framework-selected runtime rather than the declared customer container. The plan gives operators a false assurance about what a subsequent deployment will run.",
     "suggestion": ""
    }
   ]
@@ -208,9 +191,10 @@
   "fix_pr": 81,
   "outcome": "reviewed_dry_run",
   "reason": "bench:replay-64",
-  "cost": 0.078,
+  "cost": 0.1459,
   "model": [
-   "us.openai.gpt-6.1-sol"
+   "us.openai.gpt-6.1-sol",
+   "us.openai.gpt-6-astra"
   ],
   "verdict": "changes needed",
   "hit": true,
@@ -220,8 +204,8 @@
     "line": 20,
     "severity": "major",
     "category": "security",
-    "title": "The adapter permanently elevates the customer service to root",
-    "body": "The Dockerfile switches to root for installation and never switches back, so both the adapter and the original customer command execute as root\u2014even when the source image deliberately uses a non-root user. This violates the platform's non-root container constraint and removes an existing security boundary from migrated services. Capture the source image's configured user during inspection and restore an appropriate non-root runtime user after installation, with a writable HOME.",
+    "title": "Restore the source image's runtime user after installation",
+    "body": "The Dockerfile switches to root to install dependencies but never switches back. Consequently, both the adapter and the customer's original command run as root even when the source image explicitly configured an unprivileged user. This silently removes an existing security control and gives compromised customer code greater privileges inside the container; documenting the deviation does not preserve that control.",
     "suggestion": ""
    }
   ],
@@ -231,46 +215,46 @@
     "line": 551,
     "severity": "major",
     "category": "correctness",
-    "title": "Unquoted parentheses break the source-build branch",
-    "body": "CodeBuild executes this command through a shell, where the unquoted parentheses in `echo Building customer image from source (linux/arm64)...` are syntax rather than ordinary argument text. The build-from-source migration path therefore fails before running the customer image build. Quote the entire echo message.",
+    "title": "Quote the source-build status message to avoid a shell syntax error",
+    "body": "The unquoted parentheses in `echo Building customer image from source (linux/arm64)...` are shell syntax in both sh and bash. CodeBuild fails on this command before building the customer image, so the build-from-source migration path cannot deploy.",
     "suggestion": "\"echo 'Building customer image from source (linux/arm64)...'\","
    },
    {
     "path": "migration-adapter/adapter.py",
-    "line": 212,
+    "line": 242,
     "severity": "major",
-    "category": "reliability",
-    "title": "Forwarding can block indefinitely on a live but stalled child",
-    "body": "`urlopen` is called without a timeout, and subsequent response reads use that same unbounded socket. A customer process that accepts a connection but stops responding can therefore hold an invocation indefinitely. The supervisor only detects process exit, so it cannot recover from this state; even if the external caller times out, the adapter's outstanding request remains blocked. Configure bounded connect/read inactivity timeouts suitable for agent execution and streaming, map timeouts to a structured error, and close the response on failures.",
+    "category": "correctness",
+    "title": "Parse complete SSE events rather than yielding each data line",
+    "body": "SSE permits multiple `data:` lines in one event; those lines must be joined with newlines and dispatched only at the blank-line event boundary. This implementation yields each line independently, turning a valid multiline event into multiple events and potentially splitting a JSON payload into invalid fragments. The current test covers only single-line events, so it does not catch the corruption.",
     "suggestion": ""
    }
   ],
   "findings": [
    {
-    "path": "stacks/runtime_stack.py",
-    "line": 551,
-    "severity": "major",
-    "category": "correctness",
-    "title": "Unquoted parentheses break the source-build branch",
-    "body": "CodeBuild executes this command through a shell, where the unquoted parentheses in `echo Building customer image from source (linux/arm64)...` are syntax rather than ordinary argument text. The build-from-source migration path therefore fails before running the customer image build. Quote the entire echo message.",
-    "suggestion": "\"echo 'Building customer image from source (linux/arm64)...'\","
-   },
-   {
     "path": "migration-adapter/Dockerfile",
     "line": 20,
     "severity": "major",
     "category": "security",
-    "title": "The adapter permanently elevates the customer service to root",
-    "body": "The Dockerfile switches to root for installation and never switches back, so both the adapter and the original customer command execute as root\u2014even when the source image deliberately uses a non-root user. This violates the platform's non-root container constraint and removes an existing security boundary from migrated services. Capture the source image's configured user during inspection and restore an appropriate non-root runtime user after installation, with a writable HOME.",
+    "title": "Restore the source image's runtime user after installation",
+    "body": "The Dockerfile switches to root to install dependencies but never switches back. Consequently, both the adapter and the customer's original command run as root even when the source image explicitly configured an unprivileged user. This silently removes an existing security control and gives compromised customer code greater privileges inside the container; documenting the deviation does not preserve that control.",
     "suggestion": ""
    },
    {
-    "path": "migration-adapter/adapter.py",
-    "line": 212,
+    "path": "stacks/runtime_stack.py",
+    "line": 551,
     "severity": "major",
-    "category": "reliability",
-    "title": "Forwarding can block indefinitely on a live but stalled child",
-    "body": "`urlopen` is called without a timeout, and subsequent response reads use that same unbounded socket. A customer process that accepts a connection but stops responding can therefore hold an invocation indefinitely. The supervisor only detects process exit, so it cannot recover from this state; even if the external caller times out, the adapter's outstanding request remains blocked. Configure bounded connect/read inactivity timeouts suitable for agent execution and streaming, map timeouts to a structured error, and close the response on failures.",
+    "category": "correctness",
+    "title": "Quote the source-build status message to avoid a shell syntax error",
+    "body": "The unquoted parentheses in `echo Building customer image from source (linux/arm64)...` are shell syntax in both sh and bash. CodeBuild fails on this command before building the customer image, so the build-from-source migration path cannot deploy.",
+    "suggestion": "\"echo 'Building customer image from source (linux/arm64)...'\","
+   },
+   {
+    "path": "migration-adapter/adapter.py",
+    "line": 242,
+    "severity": "major",
+    "category": "correctness",
+    "title": "Parse complete SSE events rather than yielding each data line",
+    "body": "SSE permits multiple `data:` lines in one event; those lines must be joined with newlines and dispatched only at the blank-line event boundary. This implementation yields each line independently, turning a valid multiline event into multiple events and potentially splitting a JSON payload into invalid fragments. The current test covers only single-line events, so it does not catch the corruption.",
     "suggestion": ""
    }
   ]
@@ -280,7 +264,7 @@
   "fix_pr": 79,
   "outcome": "reviewed_dry_run",
   "reason": "bench:replay-78",
-  "cost": 0.0821,
+  "cost": 0.0778,
   "model": [
    "us.openai.gpt-6.1-sol"
   ],
@@ -291,9 +275,9 @@
     "path": "scripts/deploy.sh",
     "line": 1401,
     "severity": "major",
-    "category": "correctness",
-    "title": "Successful handoff aborts when the export has no remaining importers",
-    "body": "When Observability is the export's only consumer, removing its import makes CloudFormation list-imports fail with ValidationError stating that the export is not imported by any stack; it does not return an empty list or 'None'. This verification therefore exits after a successful handoff, before replacing the Runtime. The same problem affects discovery on a retry at line 1363. The regression mock returns 'None' and consequently misses the real AWS behavior.",
+    "category": "reliability",
+    "title": "Treat the no-importers ValidationError as a successful handoff",
+    "body": "When Observability is the last consumer, the successful literal-ARN deployment leaves the export with no importers. CloudFormation list-imports then fails with ValidationError stating that the export is not imported by any stack; it does not return an empty list. This branch treats that expected result as fatal, so the normal handoff exits before replacing the Runtime. The earlier discovery call has the same problem on retries. The regression mock returns 'None' instead of the actual service error and therefore misses this failure.",
     "suggestion": ""
    }
   ],
@@ -303,17 +287,8 @@
     "line": 1419,
     "severity": "major",
     "category": "reliability",
-    "title": "Targeted retries cannot recover a pending Observability rebind",
-    "body": "The rebind depends exclusively on an in-process marker initialized to zero. If a targeted Runtime deployment replaces the Runtime but the subsequent Observability deployment fails or the process terminates, the instructed retry reads the already-updated generation and returns from preparation at line 1333 without setting the marker. Rebinding is then skipped, leaving Observability pinned to the old, deleted Runtime ARN even though the retry reports success. Recovery needs to detect or persist a pending rebind across processes, rather than relying only on this marker.",
-    "suggestion": ""
-   },
-   {
-    "path": "scripts/deploy.sh",
-    "line": 1333,
-    "severity": "major",
-    "category": "correctness",
-    "title": "Lower generations are accepted instead of rejected",
-    "body": "This condition returns successfully for both an unchanged generation and a lower requested generation, allowing the subsequent CDK deployment to replace the Runtime with an older generation. Requesting generation 1 bypasses discovery altogether at line 1307. This contradicts the documented prohibition on removing or decrementing generations and the promised fail-before-mutation behavior; with an existing Observability import it can also recreate the export-deletion failure this change is intended to prevent. Discover the deployed generation before the generation-1 shortcut, reject lower values explicitly, and treat equality separately.",
+    "title": "Recover pending Observability rebinds on targeted retries",
+    "body": "The rebind is gated solely by an in-process marker that resets to zero on every invocation. If Runtime replacement succeeds but the rebind fails or the process is interrupted, retrying the same targeted Runtime deployment discovers that current_generation equals target_generation and returns without setting this marker. The rebind is consequently skipped and the command can report success while Observability remains pinned to the deleted Runtime ARN. An interruption after the literal handoff but before replacement similarly loses the marker once discovery finds no Observability importer. This contradicts the advertised resumable targeted deployment flow.",
     "suggestion": ""
    }
   ],
@@ -322,9 +297,9 @@
     "path": "scripts/deploy.sh",
     "line": 1401,
     "severity": "major",
-    "category": "correctness",
-    "title": "Successful handoff aborts when the export has no remaining importers",
-    "body": "When Observability is the export's only consumer, removing its import makes CloudFormation list-imports fail with ValidationError stating that the export is not imported by any stack; it does not return an empty list or 'None'. This verification therefore exits after a successful handoff, before replacing the Runtime. The same problem affects discovery on a retry at line 1363. The regression mock returns 'None' and consequently misses the real AWS behavior.",
+    "category": "reliability",
+    "title": "Treat the no-importers ValidationError as a successful handoff",
+    "body": "When Observability is the last consumer, the successful literal-ARN deployment leaves the export with no importers. CloudFormation list-imports then fails with ValidationError stating that the export is not imported by any stack; it does not return an empty list. This branch treats that expected result as fatal, so the normal handoff exits before replacing the Runtime. The earlier discovery call has the same problem on retries. The regression mock returns 'None' instead of the actual service error and therefore misses this failure.",
     "suggestion": ""
    },
    {
@@ -332,17 +307,8 @@
     "line": 1419,
     "severity": "major",
     "category": "reliability",
-    "title": "Targeted retries cannot recover a pending Observability rebind",
-    "body": "The rebind depends exclusively on an in-process marker initialized to zero. If a targeted Runtime deployment replaces the Runtime but the subsequent Observability deployment fails or the process terminates, the instructed retry reads the already-updated generation and returns from preparation at line 1333 without setting the marker. Rebinding is then skipped, leaving Observability pinned to the old, deleted Runtime ARN even though the retry reports success. Recovery needs to detect or persist a pending rebind across processes, rather than relying only on this marker.",
-    "suggestion": ""
-   },
-   {
-    "path": "scripts/deploy.sh",
-    "line": 1333,
-    "severity": "major",
-    "category": "correctness",
-    "title": "Lower generations are accepted instead of rejected",
-    "body": "This condition returns successfully for both an unchanged generation and a lower requested generation, allowing the subsequent CDK deployment to replace the Runtime with an older generation. Requesting generation 1 bypasses discovery altogether at line 1307. This contradicts the documented prohibition on removing or decrementing generations and the promised fail-before-mutation behavior; with an existing Observability import it can also recreate the export-deletion failure this change is intended to prevent. Discover the deployed generation before the generation-1 shortcut, reject lower values explicitly, and treat equality separately.",
+    "title": "Recover pending Observability rebinds on targeted retries",
+    "body": "The rebind is gated solely by an in-process marker that resets to zero on every invocation. If Runtime replacement succeeds but the rebind fails or the process is interrupted, retrying the same targeted Runtime deployment discovers that current_generation equals target_generation and returns without setting this marker. The rebind is consequently skipped and the command can report success while Observability remains pinned to the deleted Runtime ARN. An interruption after the literal handoff but before replacement similarly loses the marker once discovery finds no Observability importer. This contradicts the advertised resumable targeted deployment flow.",
     "suggestion": ""
    }
   ]
