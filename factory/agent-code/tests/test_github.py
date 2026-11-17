@@ -53,7 +53,9 @@ def test_installation_token_is_down_scoped_to_the_repo(monkeypatch):
 
     def fake_urlopen(req, timeout):
         seen.append(req)
-        if req.get_method() == "GET":  # this installation lacks workflows:write
+        if (
+            req.get_method() == "GET"
+        ):  # this installation lacks workflows:write and issues:write
             granted = {
                 "contents": "write",
                 "pull_requests": "write",
@@ -68,7 +70,7 @@ def test_installation_token_is_down_scoped_to_the_repo(monkeypatch):
     token, missing = github.installation_token(
         creds, "aws-samples/sample-agentcore-enterprise-platform"
     )
-    assert token == "ghs_fake" and missing == ["workflows:write"]
+    assert token == "ghs_fake" and missing == ["issues:write", "workflows:write"]
     get, post = seen
     assert get.full_url == "https://api.github.com/app/installations/678"
     assert post.full_url == "https://api.github.com/app/installations/678/access_tokens"

@@ -93,9 +93,6 @@ ALLOWED_MODELS = [
     "us.openai.gpt-6-astra",
 ]
 METRIC_NAMESPACE = "SoftwareFactory"
-ASANA_PROJECT = (
-    "1216896369638424"  # gitleaks:allow (an Asana project gid, not a credential)
-)
 LOG_RETENTION = logs.RetentionDays.ONE_MONTH
 LOG_PREFIXES = [
     "/aws/lambda/software-factory-",
@@ -131,42 +128,6 @@ class SoftwareFactoryDataStack(cdk.Stack):
             ),
             billing=dynamodb.Billing.on_demand(),
             time_to_live_attribute="expires_at",
-            removal_policy=cdk.RemovalPolicy.DESTROY,
-        )
-        # Asana outbox: agents queue board changes here; the Mac-side sync applies them (no Asana creds in AWS).
-        self.asana_ops = dynamodb.TableV2(
-            self,
-            "AsanaOps",
-            table_name="software-factory-asana-ops",
-            partition_key=dynamodb.Attribute(
-                name="op_id", type=dynamodb.AttributeType.STRING
-            ),
-            billing=dynamodb.Billing.on_demand(),
-            point_in_time_recovery_specification=dynamodb.PointInTimeRecoverySpecification(
-                point_in_time_recovery_enabled=True
-            ),
-            global_secondary_indexes=[
-                dynamodb.GlobalSecondaryIndexPropsV2(
-                    index_name="by_status",
-                    partition_key=dynamodb.Attribute(
-                        name="status", type=dynamodb.AttributeType.STRING
-                    ),
-                    sort_key=dynamodb.Attribute(
-                        name="created_at", type=dynamodb.AttributeType.STRING
-                    ),
-                )
-            ],
-            removal_policy=cdk.RemovalPolicy.RETAIN,
-        )
-        # Asana inbox: one item per project, the whole board, written by the Mac-side sync.
-        self.asana_snapshot = dynamodb.TableV2(
-            self,
-            "AsanaSnapshot",
-            table_name="software-factory-asana-snapshot",
-            partition_key=dynamodb.Attribute(
-                name="project", type=dynamodb.AttributeType.STRING
-            ),
-            billing=dynamodb.Billing.on_demand(),
             removal_policy=cdk.RemovalPolicy.DESTROY,
         )
         # PM consult conversations: grounding + turns per conversation_id, expired after 7 days.
@@ -226,9 +187,6 @@ class SoftwareFactoryStack(cdk.Stack):
         api = self._ingress(data, runtime_arn)
         self._cost_alarms(self._budget())
         self._readonly_role(data, coordinator_role_name)
-        self._asana_sync_role(data, coordinator_role_name)  # Mac sync: the fallback
-        if (self.node.try_get_context("asana_sync") or "false") == "true":
-            self._asana_sync_cloud(data)
         cdk.CfnOutput(self, "WebhookUrl", value=f"{api.api_endpoint}/github")
         cdk.CfnOutput(self, "RuntimeArn", value=runtime_arn)
 
@@ -519,21 +477,10 @@ class SoftwareFactoryStack(cdk.Stack):
                 actions=["dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Query"],
                 resources=[data.runs.table_arn],
             ),
-            # Outbox: queue ops only (conditional put); the sync, not the runtime, changes their status.
-            iam.PolicyStatement(
-                sid="AsanaOutbox",
-                actions=["dynamodb:PutItem"],
-                resources=[data.asana_ops.table_arn],
-            ),
             iam.PolicyStatement(
                 sid="Conversations",
                 actions=["dynamodb:Query", "dynamodb:PutItem"],
                 resources=[data.conversations.table_arn],
-            ),
-            iam.PolicyStatement(
-                sid="AsanaSnapshot",
-                actions=["dynamodb:GetItem"],
-                resources=[data.asana_snapshot.table_arn],
             ),
         ]:
             role.add_to_policy(stmt)
@@ -556,9 +503,9 @@ class SoftwareFactoryStack(cdk.Stack):
                 "FACTORY_RUNS_TABLE": data.runs.table_name,
                 "FACTORY_GITHUB_APP_SECRET": data.github_app.secret_name,  # a name, not a value
                 "FACTORY_REPO": GITHUB_REPO,
-                "FACTORY_ASANA_OPS_TABLE": data.asana_ops.table_name,
-                "FACTORY_ASANA_SNAPSHOT_TABLE": data.asana_snapshot.table_name,
-                "FACTORY_ASANA_PROJECT": ASANA_PROJECT,
+                # PM issue writes (open, label, comment, close): off = the run lists what it would do.
+                "FACTORY_PM_PUBLISH": self.node.try_get_context("factory_pm_publish")
+                or "false",
                 "FACTORY_CONVERSATIONS_TABLE": data.conversations.table_name,
                 # Developer PRs: off until the user says; while off, branches stay in the runtime.
                 "FACTORY_DEV_PUBLISH": self.node.try_get_context("factory_dev_publish")
@@ -848,20 +795,6 @@ class SoftwareFactoryStack(cdk.Stack):
                 resources=[data.runs.table_arn],
             )
         )
-        role.add_to_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "dynamodb:GetItem",
-                    "dynamodb:Query",
-                    "dynamodb:Scan",
-                    "dynamodb:DescribeTable",
-                ],
-                resources=[
-                    data.asana_ops.table_arn,
-                    f"{data.asana_ops.table_arn}/index/*",
-                ],
-            )
-        )
         # Metric reads accept no resource ARN.
         role.add_to_policy(
             iam.PolicyStatement(
@@ -881,140 +814,3 @@ class SoftwareFactoryStack(cdk.Stack):
         role.add_to_policy(
             iam.PolicyStatement(actions=["logs:GetQueryResults"], resources=["*"])
         )
-
-    def _asana_sync_role(
-        self, data: SoftwareFactoryDataStack, coordinator_role_name: str
-    ) -> None:
-        """Mac-side Asana sync: read ops and set their status; replace the board snapshot. Nothing else."""
-        role = iam.Role(
-            self,
-            "AsanaSync",
-            role_name="software-factory-asana-sync",
-            assumed_by=iam.ArnPrincipal(
-                f"arn:aws:iam::{self.account}:role/{coordinator_role_name}"
-            ),
-            description="Mac-side Asana sync: apply outbox ops, write the board snapshot",
-        )
-        role.add_to_policy(
-            iam.PolicyStatement(
-                sid="ReadOps",
-                actions=["dynamodb:GetItem", "dynamodb:Query", "dynamodb:Scan"],
-                resources=[
-                    data.asana_ops.table_arn,
-                    f"{data.asana_ops.table_arn}/index/*",
-                ],
-            )
-        )
-        # UpdateItem may touch only the status fields (plus the key, which DynamoDB always lists).
-        role.add_to_policy(
-            iam.PolicyStatement(
-                sid="UpdateOpStatus",
-                actions=["dynamodb:UpdateItem"],
-                resources=[data.asana_ops.table_arn],
-                conditions={
-                    "ForAllValues:StringEquals": {
-                        "dynamodb:Attributes": [
-                            "op_id",
-                            "status",
-                            "applied_at",
-                            "error",
-                            "asana_gid",
-                        ]
-                    },
-                    "StringEqualsIfExists": {
-                        "dynamodb:ReturnValues": ["NONE", "UPDATED_NEW"]
-                    },
-                },
-            )
-        )
-        role.add_to_policy(
-            iam.PolicyStatement(
-                sid="PutSnapshot",
-                actions=["dynamodb:PutItem"],
-                resources=[data.asana_snapshot.table_arn],
-            )
-        )
-
-    def _asana_sync_cloud(self, data: SoftwareFactoryDataStack) -> None:
-        """Every 30 min: apply pending outbox ops and refresh the snapshot for ASANA_PROJECT via the Asana REST
-        API, with the consenting user's token from the AgentCore Identity provider software-factory-asana
-        (created by the user, not by this stack). Only this function's role can fetch that token."""
-        return_url = f"https://github.com/{GITHUB_REPO}"
-        workload = agentcore.CfnWorkloadIdentity(
-            self,
-            "AsanaSyncWorkload",
-            name="software-factory-asana-sync",
-            # Where AgentCore sends the browser after consent; the session is completed separately.
-            allowed_resource_oauth2_return_urls=[return_url],
-        )
-        fn = _lambda.Function(
-            self,
-            "AsanaSyncCloud",
-            function_name="software-factory-asana-sync-cloud",
-            runtime=_lambda.Runtime.PYTHON_3_13,
-            handler="factory.asana_sync.handler",
-            code=_lambda.Code.from_asset(
-                os.path.join(HERE, "..", "agent-code"),
-                exclude=["tests", "**/__pycache__", "requirements.txt"],
-            ),
-            timeout=cdk.Duration.minutes(5),
-            memory_size=256,
-            reserved_concurrent_executions=1,  # one sync at a time
-            log_group=self._log_group(
-                "AsanaSyncCloudLogs", "/aws/lambda/software-factory-asana-sync-cloud"
-            ),
-            environment={
-                "WORKLOAD_NAME": workload.name,
-                "RETURN_URL": return_url,
-                "FACTORY_ASANA_PROJECT": ASANA_PROJECT,
-                "FACTORY_ASANA_OPS_TABLE": data.asana_ops.table_name,
-                "FACTORY_ASANA_SNAPSHOT_TABLE": data.asana_snapshot.table_name,
-                "FACTORY_RUNS_TABLE": data.runs.table_name,
-            },
-        )
-        fn.node.add_dependency(workload)
-        ac = f"arn:aws:bedrock-agentcore:{self.region}:{self.account}"
-        wl = f"{ac}:workload-identity-directory/default/workload-identity/{workload.name}"
-        for stmt in [
-            iam.PolicyStatement(
-                actions=["bedrock-agentcore:GetWorkloadAccessTokenForUserId"],
-                resources=[f"{ac}:workload-identity-directory/default", wl],
-            ),
-            iam.PolicyStatement(
-                actions=["bedrock-agentcore:GetResourceOauth2Token"],
-                resources=[
-                    f"{ac}:token-vault/default",
-                    f"{ac}:token-vault/default/oauth2credentialprovider/software-factory-asana",
-                    f"{ac}:workload-identity-directory/default",
-                    wl,
-                ],
-            ),
-            # The provider's client secret is stored by AgentCore Identity and read on this role's behalf.
-            iam.PolicyStatement(
-                actions=["secretsmanager:GetSecretValue"],
-                resources=[
-                    f"arn:aws:secretsmanager:{self.region}:{self.account}:secret:"
-                    + "bedrock-agentcore-identity!default/oauth2/software-factory-asana-*"
-                ],
-            ),
-            iam.PolicyStatement(
-                actions=["dynamodb:Query", "dynamodb:UpdateItem"],
-                resources=[
-                    data.asana_ops.table_arn,
-                    f"{data.asana_ops.table_arn}/index/by_status",
-                ],
-            ),
-            iam.PolicyStatement(
-                actions=["dynamodb:PutItem"],
-                resources=[data.asana_snapshot.table_arn, data.runs.table_arn],
-            ),
-        ]:
-            fn.add_to_role_policy(stmt)
-        rule = events.Rule(
-            self,
-            "AsanaSyncEvery30m",
-            rule_name="software-factory-asana-sync-30m",
-            schedule=events.Schedule.rate(cdk.Duration.minutes(30)),
-            targets=[targets.LambdaFunction(fn)],
-        )
-        cdk.CfnOutput(self, "AsanaSyncRuleArn", value=rule.rule_arn)

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from factory.consult import Consult
 
-from factory import asana
+from factory import issues
 
 
 class Table:
@@ -27,14 +27,10 @@ def consult(message, table, replies):
         "pm-1",
         Path("/nonexistent"),
     )
-    c.board = asana.Board(None, "product_manager", "pm-1")
+    c.tracker = issues.Tracker("o/r", "", publish=False)
     c.calls = []
     c.gather_with_wt = lambda: (
-        {
-            "asana_tasks": [
-                {"gid": "7", "title": "Old", "files": [], "completed": False}
-            ]
-        },
+        {"issues": [{"gid": "7", "title": "Old", "files": [], "completed": False}]},
         {"https://x/pull/2"},
         set(),
     )
@@ -64,12 +60,15 @@ def test_second_turn_replays_history_and_reuses_grounding():
         "And next?",
     ]
     assert system[-1] == {"cachePoint": {"type": "default"}}
-    assert "queued" not in second and not c.board.ops
+    assert "queued" not in second and not c.tracker.ops
 
 
-def test_queue_these_queues_only_listed_changes_as_pending():
+def test_queue_these_plans_only_listed_changes_and_dry_runs_them():
     reply = '{"reconcile": [{"task_gid": "7", "action": "done", "pr_urls": ["https://x/pull/2"]}], "tasks": []}'
     c = consult("queue these: mark Old done (#2)", Table(), ["Sure.", reply])
     rec = c.execute()
-    assert [o["op"] for o in c.board.ops] == ["move_task", "update_task", "comment"]
-    assert {o["status"] for o in c.board.ops} == {"pending"} and len(rec["queued"]) == 3
+    assert [(o["op"], o["issue"]) for o in c.tracker.ops] == [
+        ("comment", 7),
+        ("close", 7),
+    ]
+    assert not any(o["applied"] for o in c.tracker.ops) and rec["queued"] == 2

@@ -1,102 +1,9 @@
-"""Asana outbox/inbox, PM board rules and developer path limits (no AWS, no model)."""
+"""Issue tracking, PM plan rules, developer path limits and the dedupe guards (no AWS, no model)."""
 
-from datetime import UTC, datetime, timedelta
-
-import pytest
 from factory.developer import allowed_paths, new_failures
 from factory.pm import plan_board
 
-from factory import asana
-
-
-class FakeTable:
-    class _Err(Exception):
-        pass
-
-    def __init__(self, item=None):
-        self.items, self.item = {}, item
-        self.meta = type(
-            "M",
-            (),
-            {
-                "client": type(
-                    "C",
-                    (),
-                    {
-                        "exceptions": type(
-                            "E", (), {"ConditionalCheckFailedException": self._Err}
-                        )
-                    },
-                )
-            },
-        )
-
-    def put_item(self, Item, **condition):
-        if (
-            Item["op_id"] in self.items
-            and self.items[Item["op_id"]]["status"] != "superseded"
-        ):
-            raise self._Err()
-        self.items[Item["op_id"]] = Item
-
-    def get_item(self, Key):
-        return {"Item": self.item} if self.item else {}
-
-
-def board(snapshot=None):
-    b = asana.Board(None, "product_manager", "run-1")
-    b.ops_table, b.snap_table = FakeTable(), FakeTable(snapshot)
-    return b
-
-
-def test_create_task_is_idempotent_across_runs_and_marked():
-    a, b = board(), board()
-    b.run_id = "run-2"
-    b.ops_table = a.ops_table
-    k1 = a.create_task("Ready for agent", "Add  X test", "why", ["tests/x.py"])
-    k2 = b.create_task("Ready for agent", "add x test", "why", ["tests/x.py"])
-    assert k1 == k2 and k1.startswith("factory:pm:") and len(a.ops_table.items) == 1
-    item = a.ops_table.items[k1]
-    assert (
-        item["status"] == "pending"
-        and "[factory:pm]" in item["args"]["notes"]
-        and "tags" not in item["args"]
-    )
-    assert b.ops[-1].get("duplicate")
-
-
-def test_dry_run_ops_are_marked_for_the_sync_to_ignore():
-    b = board()
-    b.op_status = "dry_run"
-    b.move("123", "In review", "would open PR")
-    assert {i["status"] for i in b.ops_table.items.values()} == {"dry_run"}
-
-
-def test_move_to_done_also_completes_and_comments():
-    b = board()
-    b.move("123", "Done", "Merged: url")
-    assert [o["op"] for o in b.ops] == ["move_task", "update_task", "comment"]
-
-
-def test_stale_or_missing_snapshot_is_refused():
-    old = (datetime.now(UTC) - timedelta(hours=25)).isoformat()
-    with pytest.raises(asana.StaleSnapshot):
-        board().tasks(require_fresh=True)
-    with pytest.raises(asana.StaleSnapshot):
-        board({"project": "p", "snapshot_at": old, "tasks": []}).tasks(
-            require_fresh=True
-        )
-    fresh = {
-        "project": "p",
-        "snapshot_at": datetime.now(UTC).isoformat(),
-        "sections": ["Backlog"],
-        "tasks": [{"gid": "1", "name": "t", "section": "Ready for agent"}],
-    }
-    b = board(fresh)
-    assert b.tasks(require_fresh=True)[0]["gid"] == "1"
-    assert b.ensure_sections() == [
-        s for s in asana.SECTIONS if s not in ("Backlog", "Ready for agent")
-    ]
+from factory import issues
 
 
 def test_plan_board_caps_ready_dedupes_and_validates_reconcile():
@@ -172,18 +79,6 @@ def test_acceptance_commands_are_allowlisted_and_shell_free():
         "`ruff check --fix .` mutates",
     ]
     assert acceptance_commands(crit) == ["ruff check --select I001 .", "pytest tests/"]
-
-
-def test_superseded_op_can_be_queued_again():
-    a = board()
-    k = a.create_task("Backlog", "T", "why")
-    a.ops_table.items[k]["status"] = "superseded"
-    b = board()
-    b.ops_table = a.ops_table
-    b.create_task("Backlog", "T", "why")
-    assert a.ops_table.items[k]["status"] == "pending" and not b.ops[-1].get(
-        "duplicate"
-    )
 
 
 def test_open_pr_coverage_comment_action_and_multi_pr_done():
@@ -292,47 +187,6 @@ def test_ci_fixer_skips_a_failure_an_open_factory_pr_covers():
     assert covering_pr(prs, "Python Code Quality", lint, {"scripts/other.py"}) is None
 
 
-def test_developer_skips_tasks_with_an_open_pr_branch_or_unchanged_attempt():
-    from factory.developer import next_task, taken_tasks
-
-    now = datetime.now(UTC).isoformat()
-    tasks = [
-        {
-            "gid": "1",
-            "name": "has PR",
-            "section": "Ready for agent",
-            "modified_at": "2026-11-01T00:00:00Z",
-        },
-        {
-            "gid": "2",
-            "name": "has branch",
-            "section": "Ready for agent",
-            "modified_at": "2026-11-01T00:00:00Z",
-        },
-        {
-            "gid": "3",
-            "name": "tried",
-            "section": "Ready for agent",
-            "modified_at": "2026-11-01T00:00:00Z",
-        },
-        {
-            "gid": "4",
-            "name": "free",
-            "section": "Ready for agent",
-            "modified_at": "2026-11-01T00:00:00Z",
-        },
-    ]
-    b = board({"project": "p", "snapshot_at": now, "tasks": tasks})
-    taken = taken_tasks(
-        [{"branch": "factory/task/1"}, {"branch": "factory/ci-fix/9"}],
-        {"factory/task/2"},
-    )
-    assert taken == {"1", "2"}
-    assert next_task(b, taken, {"3": "2026-11-17T10:00:00Z"})["gid"] == "4"
-    # a task edited after the last attempt is eligible again
-    assert next_task(b, taken, {"3": "2026-10-01T00:00:00Z"})["gid"] == "3"
-
-
 def test_digest_sums_cost_by_role_and_lists_prs_and_failures():
     from factory.digest import summarize
 
@@ -370,165 +224,82 @@ def test_digest_sums_cost_by_role_and_lists_prs_and_failures():
     }
 
 
-def test_cloud_sync_applies_only_pending_real_ops_with_any_client():
-    from factory.asana_sync import apply_pending
-
-    class Client:
-        def __init__(self):
-            self.calls, self.n = [], 0
-
-        def sections(self, project):
-            return {"Backlog": "s1"}
-
-        def tasks(self, project):
-            return [{"gid": "1"}]
-
-        def create_section(self, project, name):
-            self.n += 1
-            self.calls.append(("section", name))
-            return f"new{self.n}"
-
-        def create_task(self, project, section_gid, name, notes):
-            self.calls.append(("task", section_gid, name))
-            return "t9"
-
-        def move_task(self, task_gid, section_gid):
-            self.calls.append(("move", task_gid, section_gid))
-
-        def comment(self, task_gid, text):
-            raise RuntimeError("Asana 403")
-
-        def update_task(self, task_gid, fields):
-            self.calls.append(("update", task_gid, fields))
-
-    P = asana.PROJECT
-    ops = [
-        {
-            "op_id": "a",
-            "op": "ensure_section",
-            "project": P,
-            "status": "pending",
-            "created_at": "1",
-            "args": {"section": "Done"},
-        },
-        {
-            "op_id": "b",
-            "op": "create_task",
-            "project": P,
-            "status": "pending",
-            "created_at": "2",
-            "args": {"section": "Backlog", "name": "T", "notes": "n"},
-        },
-        {
-            "op_id": "c",
-            "op": "move_task",
-            "project": P,
-            "status": "dry_run",
-            "created_at": "3",
-            "args": {"task_gid": "1", "section": "Done"},
-        },
-        {
-            "op_id": "d",
-            "op": "comment",
-            "project": P,
-            "status": "pending",
-            "created_at": "4",
-            "args": {"task_gid": "1", "text": "x"},
-        },
-        {
-            "op_id": "e",
-            "op": "update_task",
-            "project": "test-x",
-            "status": "pending",
-            "created_at": "5",
-            "args": {"task_gid": "1", "fields": {"completed": True}},
-        },
-        {
-            "op_id": "f",
-            "op": "update_task",
-            "project": P,
-            "status": "pending",
-            "created_at": "6",
-            "args": {"task_gid": "1", "fields": {"completed": True, "assignee": "me"}},
-        },
-    ]
-    c = Client()
-    out = apply_pending(ops, c)
-    assert [(o["op_id"], o["status"]) for o in out] == [
-        ("a", "applied"),
-        ("b", "applied"),
-        ("d", "failed"),
-        ("f", "applied"),
-    ]
-    assert ("task", "s1", "T") in c.calls and (
-        "update",
-        "1",
-        {"completed": True},
-    ) in c.calls
-
-
-def test_cloud_sync_claims_first_and_refuses_tasks_outside_the_project():
-    from factory.asana_sync import apply_pending
-
-    moved = []
-
-    class Client:
-        def sections(self, project):
-            return {"Done": "s9"}
-
-        def tasks(self, project):
-            return [{"gid": "1"}]
-
-        def move_task(self, task_gid, section_gid):
-            moved.append(task_gid)
-
-    P = asana.PROJECT
-    mk = lambda i, gid: {
-        "op_id": i,
-        "op": "move_task",
-        "project": P,
-        "status": "pending",
-        "created_at": i,
-        "args": {"task_gid": gid, "section": "Done"},
+def issue(n, labels, created="2026-11-01T00:00:00Z", updated="2026-11-01T00:00:00Z"):
+    return {
+        "number": n,
+        "title": f"t{n}",
+        "body": "Files likely touched: a.py\n- `pytest tests/` passes",
+        "labels": labels,
+        "url": f"https://x/issues/{n}",
+        "created_at": created,
+        "updated_at": updated,
     }
-    ops = [mk("a", "1"), mk("b", "999"), mk("c", "1")]
-    out = apply_pending(
-        ops, Client(), claim=lambda op: op["op_id"] != "c"
-    )  # c: the Mac sync took it
-    assert [(o["op_id"], o["status"]) for o in out] == [
-        ("a", "applied"),
-        ("b", "failed"),
+
+
+def test_developer_takes_the_oldest_ready_issue_not_in_flight_or_tried():
+    from factory.developer import next_task, taken_tasks
+
+    ready = [
+        issue(5, [issues.READY], created="2026-11-05T00:00:00Z"),
+        issue(
+            1, [issues.READY], created="2026-11-01T00:00:00Z"
+        ),  # oldest, but has an open PR
+        issue(2, [issues.READY, issues.IN_PROGRESS], created="2026-11-02T00:00:00Z"),
+        issue(
+            3, [issues.READY], created="2026-11-03T00:00:00Z"
+        ),  # tried, unchanged since
+        issue(4, [issues.READY], created="2026-11-04T00:00:00Z"),
     ]
-    assert "not in project" in out[1]["error"] and moved == ["1"]
-
-
-def test_user_token_asks_for_consent_until_the_user_has_authorized():
-    from factory.asana_sync import SCOPES, user_token
-
-    class AC:
-        def __init__(self, resp):
-            self.resp, self.req = resp, None
-
-        def get_workload_access_token_for_user_id(self, workloadName, userId):
-            assert (workloadName, userId) == ("wl", "robcata")
-            return {"workloadAccessToken": "wat"}
-
-        def get_resource_oauth2_token(self, **kw):
-            self.req = kw
-            return self.resp
-
-    ac = AC(
-        {
-            "authorizationUrl": "https://app.asana.com/-/oauth_authorize?x",
-            "sessionUri": "urn:s",
-        }
+    taken = taken_tasks(
+        [{"branch": "factory/task/1"}, {"branch": "factory/ci-fix/9"}], set()
     )
-    assert user_token(ac, "wl", "https://r") == {
-        "authorization_url": "https://app.asana.com/-/oauth_authorize?x",
-        "session_uri": "urn:s",
-    }
-    assert ac.req["oauth2Flow"] == "USER_FEDERATION" and ac.req["scopes"] == SCOPES
+    assert taken == {"1"}
+    task = next_task(ready, taken, {"3": "2026-11-17T10:00:00Z"})
     assert (
-        "projects:write" not in SCOPES
-    )  # sections already exist; no project-level write
-    assert user_token(AC({"accessToken": "t"}), "wl", "https://r") == {"token": "t"}
+        task["gid"] == "4"
+        and task["files"] == ["a.py"]
+        and task["acceptance"] == ["`pytest tests/` passes"]
+    )
+    assert (
+        next_task(ready, taken, {"3": "2026-10-01T00:00:00Z"})["gid"] == "3"
+    )  # edited after the last try
+
+
+def test_tracker_dry_run_records_and_never_calls_github(monkeypatch):
+    from factory import github
+
+    calls = []
+    monkeypatch.setattr(
+        github, "request", lambda *a, **k: calls.append(a) or {"number": 99}
+    )
+    dry = issues.Tracker("o/r", "tok", publish=False)
+    reconcile = [
+        {"task": "7", "section": "Done", "comment": "Implemented by https://x/pull/2"},
+        {"task": "8", "section": "Needs scoping", "comment": "target unsupported"},
+        {"task": "9", "section": None, "comment": "see #12"},
+    ]
+    new = [
+        {"title": "T", "body": "b", "section": "Ready for agent"},
+        {"title": "U", "body": "b", "section": "Backlog"},
+    ]
+    issues.apply_plan(dry, reconcile, new)
+    assert not calls and all(not o["applied"] for o in dry.ops)
+    assert [o["op"] for o in dry.ops] == [
+        "comment",
+        "close",
+        "add_labels",
+        "remove_label",
+        "comment",
+        "comment",
+        "create",
+        "create",
+    ]
+    assert dry.ops[-2]["labels"] == [issues.PM, issues.READY] and dry.ops[-1][
+        "labels"
+    ] == [issues.PM, issues.BACKLOG]
+    live = issues.Tracker("o/r", "tok", publish=True)
+    assert live.create("T", "b", [issues.PM]) == 99
+    method, path, _tok, body = calls[-1]
+    assert (method, path) == ("POST", "/repos/o/r/issues") and issues.MARKER in body[
+        "body"
+    ]

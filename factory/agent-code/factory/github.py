@@ -21,6 +21,7 @@ PERMISSIONS = {
     "checks": "read",
     "actions": "read",
     "workflows": "write",
+    "issues": "write",  # factory task source: labels, comments, close, create (PM and developer)
 }
 
 
