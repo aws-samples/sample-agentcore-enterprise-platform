@@ -88,6 +88,35 @@ def _enqueue(message: dict, group: str, dedupe_id: str) -> None:
     )
 
 
+REVIEW_ACTIONS = {"opened", "synchronize", "reopened", "ready_for_review"}
+
+
+def _pull_request(payload: dict, delivery: str) -> dict:
+    """Queue a review. factory/* PRs are reviewed too (agent-written code gets an agent review); Dependabot is not."""
+    pr = payload.get("pull_request") or {}
+    if (
+        payload.get("action") not in REVIEW_ACTIONS
+        or pr.get("draft")
+        or (pr.get("user") or {}).get("login") == "dependabot[bot]"
+        or ((pr.get("base") or {}).get("repo") or {}).get("full_name") != REPO
+    ):
+        return _resp(202, "ignored: pull_request")
+    if not delivery or not _first_delivery(delivery):
+        return _resp(202, "duplicate")
+    head_sha = str((pr.get("head") or {}).get("sha", ""))
+    message = {
+        "role": "pr_reviewer",
+        "delivery_id": delivery,
+        "pull_request": {"number": int(pr["number"]), "head_sha": head_sha},
+    }
+    try:
+        _enqueue(message, group=f"pr-{int(pr['number'])}", dedupe_id=delivery)
+    except Exception:
+        _forget(delivery)
+        raise
+    return _resp(202, "queued")
+
+
 def _resp(code: int, message: str) -> dict:
     return {
         "statusCode": code,
@@ -148,6 +177,8 @@ def handler(event, context):
         and str((payload.get("installation") or {}).get("id")) != installation
     ):
         return _resp(202, "ignored: installation")
+    if event_name == "pull_request":
+        return _pull_request(payload, delivery)
     if event_name != "workflow_run" or payload.get("action") != "completed":
         return _resp(202, "ignored: event")
     run = payload["workflow_run"]

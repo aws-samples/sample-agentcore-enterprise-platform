@@ -54,7 +54,8 @@ def request(
         },
     )
     # Not forwarded on redirects: job-log downloads redirect to blob storage, which must never see the token.
-    req.add_unredirected_header("Authorization", f"Bearer {token}")
+    if token:  # empty token = anonymous read of a public repo (local tests)
+        req.add_unredirected_header("Authorization", f"Bearer {token}")
     try:
         with urllib.request.urlopen(
             req, timeout=60
@@ -165,3 +166,13 @@ def open_pull_request(
         {"title": title, "body": body, "head": head, "base": base},
     )
     return pr["html_url"]
+
+
+def get_pull(repo: str, number: int, token: str) -> dict:
+    return request("GET", f"/repos/{repo}/pulls/{int(number)}", token)
+
+
+def post_review(repo: str, number: int, token: str, review: dict) -> str:
+    """Publish a review payload built by the reviewer (one call). Gated by FACTORY_REVIEW_PUBLISH."""
+    resp = request("POST", f"/repos/{repo}/pulls/{int(number)}/reviews", token, review)
+    return resp.get("html_url", "")

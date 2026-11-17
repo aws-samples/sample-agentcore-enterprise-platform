@@ -482,6 +482,11 @@ class SoftwareFactoryStack(cdk.Stack):
                 # Off until the user approves GitHub writes; while off, runs record the would-be PR.
                 "FACTORY_PUBLISH": self.node.try_get_context("factory_publish")
                 or "false",
+                # Posting reviews to GitHub has its own switch; off = reviews go to the runs table only.
+                "FACTORY_REVIEW_PUBLISH": self.node.try_get_context(
+                    "factory_review_publish"
+                )
+                or "false",
             },
         )
         runtime.node.add_dependency(built, role)

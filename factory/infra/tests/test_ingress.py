@@ -109,3 +109,42 @@ def test_unreadable_app_secret_fails_closed(sent, monkeypatch):
     monkeypatch.setattr(ingress, "_installation_id", boom)
     assert ingress.handler(event(BODY, sign(BODY)), None)["statusCode"] == 500
     assert not sent
+
+
+def pr_body(login="robobc", draft=False, action="opened", branch="feature/x") -> bytes:
+    return json.dumps(
+        {
+            "action": action,
+            "repository": {"full_name": REPO},
+            "pull_request": {
+                "number": 7,
+                "draft": draft,
+                "user": {"login": login},
+                "head": {"sha": "a" * 40, "ref": branch},
+                "base": {"repo": {"full_name": REPO}},
+            },
+        }
+    ).encode()
+
+
+def pr_event(body: bytes) -> dict:
+    e = event(body, sign(body))
+    e["headers"]["X-GitHub-Event"] = "pull_request"
+    return e
+
+
+def test_pull_request_is_queued_for_review_including_factory_branches(sent):
+    for body in (pr_body(), pr_body(branch="factory/ci-fix/1")):
+        assert ingress.handler(pr_event(body), None)["statusCode"] == 202
+    assert [m["role"] for m in sent] == ["pr_reviewer", "pr_reviewer"]
+    assert sent[0]["pull_request"] == {"number": 7, "head_sha": "a" * 40}
+
+
+def test_dependabot_drafts_and_closed_prs_are_not_reviewed(sent):
+    for body in (
+        pr_body(login="dependabot[bot]"),
+        pr_body(draft=True),
+        pr_body(action="closed"),
+    ):
+        assert ingress.handler(pr_event(body), None)["statusCode"] == 202
+    assert not sent

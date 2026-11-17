@@ -21,6 +21,7 @@ import boto3
 
 from factory import github
 from factory.ci_fixer import Run
+from factory.reviewer import Review
 
 REPO = os.environ.get(
     "FACTORY_REPO", "aws-samples/sample-agentcore-enterprise-platform"
@@ -29,6 +30,8 @@ REGION = os.environ.get("AWS_REGION", "us-east-1")
 MAX_BODY = 5 * 1024 * 1024
 # Pushing branches and opening PRs needs an explicit switch on top of the App secret.
 PUBLISH = os.environ.get("FACTORY_PUBLISH", "false") == "true"
+# Reviews are posted only with their own switch, separate from CI-fix PRs.
+REVIEW_PUBLISH = os.environ.get("FACTORY_REVIEW_PUBLISH", "false") == "true"
 _busy = threading.Lock()  # one run per session; each session is its own microVM
 _state = {"last_update": int(time.time())}
 
@@ -80,6 +83,11 @@ def validate(payload: dict) -> dict:
     """Trust boundary: the payload comes from the dispatcher or a human invoke."""
     if payload.get("role") == "verify_app":
         return {}
+    if payload.get("role") == "pr_reviewer":
+        number = int(payload["pull_request"]["number"])
+        if number <= 0:
+            raise ValueError("pull_request.number must be positive")
+        return {"id": number}
     if payload.get("role") != "ci_fixer":
         raise ValueError(f"unsupported role {payload.get('role')!r}")
     run = payload["workflow_run"]
@@ -96,9 +104,7 @@ def validate(payload: dict) -> dict:
     return run
 
 
-def handle(payload: dict) -> dict:
-    run = validate(payload)
-    work = Path("/tmp/factory") / str(run["id"])
+def clone(work: Path) -> Path:
     repo = work / "repo"
     if not repo.exists():
         subprocess.run(
@@ -114,6 +120,54 @@ def handle(payload: dict) -> dict:
             capture_output=True,
             timeout=600,
         )
+    return repo
+
+
+def handle_review(payload: dict) -> dict:
+    """Review a PR from its diff only. Dry run unless FACTORY_REVIEW_PUBLISH=true."""
+    number = int(payload["pull_request"]["number"])
+    creds = load_app_creds()
+    token = github.installation_token(creds, REPO)[0] if creds else ""
+    pr = github.get_pull(REPO, number, token)
+    if pr["base"]["repo"]["full_name"] != REPO:
+        raise ValueError("PR is not against the configured repository")
+    agent = Review(
+        pr,
+        clone(Path("/tmp/factory") / f"pr-{number}"),
+        Path("/tmp/factory") / f"pr-{number}",
+        REGION,
+    )
+    if pr["user"]["login"] == "dependabot[bot]":
+        rec = {"outcome": "skipped", "reason": "dependabot PR"}
+    else:
+        try:
+            rec = agent.execute()
+            if token and REVIEW_PUBLISH and rec["outcome"] == "reviewed_dry_run":
+                rec.update(
+                    outcome="review_posted",
+                    pr_url=github.post_review(REPO, number, token, rec["review"]),
+                )
+        except Exception as e:  # noqa: BLE001 - every failure must still produce a run row
+            traceback.print_exc()
+            rec = {"outcome": "failed", "reason": f"{type(e).__name__}: {e}"[:500]}
+    line = agent.record(rec, dry_run=not (token and REVIEW_PUBLISH))
+    print(json.dumps({"factory_run": line}), flush=True)
+    return {
+        **line,
+        **{
+            k: rec[k]
+            for k in ("review", "verdict", "summary", "model_reason", "files_skipped")
+            if rec.get(k)
+        },
+    }
+
+
+def handle(payload: dict) -> dict:
+    if payload.get("role") == "pr_reviewer":
+        return handle_review(payload)
+    run = validate(payload)
+    work = Path("/tmp/factory") / str(run["id"])
+    repo = clone(work)
     agent = Run(run, repo, work, None, REGION)
     creds = None
     try:
@@ -200,7 +254,14 @@ class Handler(BaseHTTPRequestHandler):
         if payload.get("wait"):
             return self._send(200, _run_locked(payload))
         threading.Thread(target=_run_locked, args=(payload,), daemon=True).start()
-        return self._send(200, {"accepted": payload["workflow_run"]["id"]})
+        return self._send(
+            200,
+            {
+                "accepted": validate(
+                    dict(payload, workflow_run=dict(payload.get("workflow_run") or {}))
+                )["id"]
+            },
+        )
 
 
 def main() -> None:

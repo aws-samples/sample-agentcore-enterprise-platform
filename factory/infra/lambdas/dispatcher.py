@@ -15,11 +15,17 @@ def handler(event, context):
     for record in event["Records"]:
         try:
             message = json.loads(record["body"])
-            run = message["workflow_run"]
             # Deterministic id: a retry reattaches to the same session instead of starting a second run.
-            session_id = f"factory-ci-{int(run['id'])}-attempt-{int(run.get('run_attempt') or 1)}".ljust(
-                33, "-"
-            )
+            if message.get("role") == "pr_reviewer":
+                pr = message["pull_request"]
+                session_id = f"factory-rev-{int(pr['number'])}-{str(pr.get('head_sha', ''))[:12]}".ljust(
+                    33, "-"
+                )
+            else:
+                run = message["workflow_run"]
+                session_id = f"factory-ci-{int(run['id'])}-attempt-{int(run.get('run_attempt') or 1)}".ljust(
+                    33, "-"
+                )
             resp = _client.invoke_agent_runtime(
                 agentRuntimeArn=os.environ["RUNTIME_ARN"],
                 qualifier="DEFAULT",

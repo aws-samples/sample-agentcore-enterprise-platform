@@ -29,12 +29,12 @@ INPUT_TOKEN_CAP = int(os.environ.get("FACTORY_INPUT_TOKEN_CAP", "200000"))
 MAX_ATTEMPTS = 2
 # USD per 1M tokens (input, output): AWS Pricing API, service AmazonBedrockFoundationModels, us-east-1,
 # "standard" on-demand rates (geographic us.* profiles; global profiles are 10% cheaper), read 2026-11-17.
-PRICES = {
-    "us.anthropic.claude-sonnet-5-5": (2.2, 11.0),
-    "us.anthropic.claude-opus-5-5": (4.4, 22.0),
-    "us.anthropic.claude-fable-5-2": (8.8, 44.0),
-    "us.openai.gpt-6.1-sol": (2.2, 11.0),
-    "us.openai.gpt-6-astra": (11.0, 55.0),
+PRICES = {  # (input, output, cache read, cache write); cache write = the default 5 min (Claude) / 30 min (OpenAI) tier
+    "us.anthropic.claude-sonnet-5-5": (2.2, 11.0, 0.11, 2.75),
+    "us.anthropic.claude-opus-5-5": (4.4, 22.0, 0.22, 5.5),
+    "us.anthropic.claude-fable-5-2": (8.8, 44.0, 0.22, 11.0),
+    "us.openai.gpt-6.1-sol": (2.2, 11.0, 0.11, 2.75),
+    "us.openai.gpt-6-astra": (11.0, 55.0, 1.1, 13.75),
 }
 BASE_BRANCH = os.environ.get("FACTORY_BASE_BRANCH", "main")
 
@@ -94,6 +94,23 @@ def classify(log: str) -> dict:
 
 
 class Run:
+    AGENT = "ci_fixer"
+    TOKEN_CAP = INPUT_TOKEN_CAP
+    EXTRA_KEYS = (
+        "diff",
+        "pr_title",
+        "pr_body",
+        "pr_url",
+        "github_missing_permissions",
+        "triage",
+        "check_output",
+        "log_source",
+        "category",
+        "proposals",
+        "ruff_version",
+        "fixed_by",
+    )
+
     def __init__(
         self, run_obj: dict, repo: Path, work: Path, profile: str | None, region: str
     ):
@@ -119,9 +136,9 @@ class Run:
 
     # --- model calls -------------------------------------------------------
     def ask(self, model: str, system: str, prompt: str, max_tokens: int) -> dict:
-        if self.used_input + len(system + prompt) // 3 > INPUT_TOKEN_CAP:
+        if self.used_input + len(system + prompt) // 3 > self.TOKEN_CAP:
             raise BudgetExceeded(
-                f"next call would exceed {INPUT_TOKEN_CAP} input tokens"
+                f"next call would exceed {self.TOKEN_CAP} input tokens"
             )
         resp = self.bedrock.converse(
             modelId=model,
@@ -145,22 +162,28 @@ class Run:
         m["cache_read"] += u.get("cacheReadInputTokens", 0)
         m["cache_write"] += u.get("cacheWriteInputTokens", 0)
         m["calls"] += 1
-        self.used_input += u["inputTokens"]
+        # Cached prompt tokens are input too (OpenAI models cache automatically); count them against the cap.
+        self.used_input += (
+            u["inputTokens"]
+            + u.get("cacheReadInputTokens", 0)
+            + u.get("cacheWriteInputTokens", 0)
+        )
         text = "".join(c.get("text", "") for c in resp["output"]["message"]["content"])
         return parse_json(text)
 
     def cost(self) -> float:
-        price = lambda k: PRICES.get(
-            k, (11.0, 55.0)
-        )  # unknown model: priciest allowed rate
-        return round(
-            sum(
-                m["input_tokens"] * price(k)[0] / 1e6
-                + m["output_tokens"] * price(k)[1] / 1e6
-                for k, m in self.models.items()
-            ),
-            4,
-        )
+        total = 0.0
+        for k, m in self.models.items():
+            p_in, p_out, p_read, p_write = PRICES.get(
+                k, (11.0, 55.0, 1.1, 13.75)
+            )  # unknown: priciest allowed
+            total += (
+                m["input_tokens"] * p_in
+                + m["output_tokens"] * p_out
+                + m["cache_read"] * p_read
+                + m["cache_write"] * p_write
+            ) / 1e6
+        return round(total, 4)
 
     # --- workspace ---------------------------------------------------------
     def git(self, *args, cwd=None) -> str:
@@ -670,7 +693,7 @@ class Run:
     def record(self, rec: dict, dry_run: bool = True) -> dict:
         line = {
             "run_id": uuid.uuid4().hex[:12],
-            "agent": "ci_fixer",
+            "agent": self.AGENT,
             "trigger": self.id,
             "repo": self.run.get("repository", {}).get("full_name", ""),
             "ref": self.run.get("head_sha", ""),
@@ -678,7 +701,7 @@ class Run:
             "branch": self.branch,
             "outcome": rec["outcome"],
             "reason": rec.get("reason", ""),
-            "check_passed": rec["check_passed"],
+            "check_passed": rec.get("check_passed", False),
             "models": self.models,
             "input_tokens_total": self.used_input,
             "duration_s": round(time.time() - self.started, 1),
@@ -692,32 +715,19 @@ class Run:
             # Dry run: the would-be PR lives in the item instead of on GitHub. Item cap is 400 KB.
             extra = {
                 k: (rec[k] if isinstance(rec[k], str) else json.dumps(rec[k]))[:100_000]
-                for k in (
-                    "diff",
-                    "pr_title",
-                    "pr_body",
-                    "pr_url",
-                    "github_missing_permissions",
-                    "triage",
-                    "check_output",
-                    "log_source",
-                    "category",
-                    "proposals",
-                    "ruff_version",
-                    "fixed_by",
-                )
+                for k in self.EXTRA_KEYS
                 if rec.get(k)
             }
             item = json.loads(json.dumps({**line, **extra}), parse_float=Decimal)
             item.update(
-                pk="agent#ci_fixer", sk=f"{line['started_at']}#{line['run_id']}"
+                pk=f"agent#{self.AGENT}", sk=f"{line['started_at']}#{line['run_id']}"
             )
             self.session.resource("dynamodb").Table(table).put_item(Item=item)
             self.put_metrics(line)
         return line
 
     def put_metrics(self, line: dict) -> None:
-        dims = [{"Name": "Agent", "Value": "ci_fixer"}]
+        dims = [{"Name": "Agent", "Value": self.AGENT}]
         tokens = lambda k: sum(m[k] for m in self.models.values())
         data = [
             {
