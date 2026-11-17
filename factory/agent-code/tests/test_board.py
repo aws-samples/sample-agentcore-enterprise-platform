@@ -31,8 +31,11 @@ class FakeTable:
             },
         )
 
-    def put_item(self, Item, ConditionExpression=None):
-        if Item["op_id"] in self.items:
+    def put_item(self, Item, **condition):
+        if (
+            Item["op_id"] in self.items
+            and self.items[Item["op_id"]]["status"] != "superseded"
+        ):
             raise self._Err()
         self.items[Item["op_id"]] = Item
 
@@ -162,3 +165,15 @@ def test_acceptance_commands_are_allowlisted_and_shell_free():
         "`ruff check --fix .` mutates",
     ]
     assert acceptance_commands(crit) == ["ruff check --select I001 .", "pytest tests/"]
+
+
+def test_superseded_op_can_be_queued_again():
+    a = board()
+    k = a.create_task("Backlog", "T", "why")
+    a.ops_table.items[k]["status"] = "superseded"
+    b = board()
+    b.ops_table = a.ops_table
+    b.create_task("Backlog", "T", "why")
+    assert a.ops_table.items[k]["status"] == "pending" and not b.ops[-1].get(
+        "duplicate"
+    )

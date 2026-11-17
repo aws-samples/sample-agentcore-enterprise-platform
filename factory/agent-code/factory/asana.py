@@ -10,7 +10,7 @@ Op item (the contract the Mac sync applies):
   op          ensure_section | create_task | move_task | comment | update_task
   project     Asana project gid
   args        op-specific map (below); sections are referenced by NAME, the sync resolves gids
-  status      pending | applied | failed     created_at  ISO-8601 UTC     run_id, agent
+  status      pending | applied | failed | superseded (withdrawn; never apply)    created_at  ISO-8601 UTC     run_id, agent
 """
 
 import hashlib
@@ -111,8 +111,12 @@ class Board:
         self.ops.append(item)
         if self.ops_table:
             try:
+                # A superseded op (withdrawn before the sync applied it) may be queued again.
                 self.ops_table.put_item(
-                    Item=item, ConditionExpression="attribute_not_exists(op_id)"
+                    Item=item,
+                    ConditionExpression="attribute_not_exists(op_id) OR #s = :superseded",
+                    ExpressionAttributeNames={"#s": "status"},
+                    ExpressionAttributeValues={":superseded": "superseded"},
                 )
             except (
                 self.ops_table.meta.client.exceptions.ConditionalCheckFailedException
