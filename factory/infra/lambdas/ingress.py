@@ -135,6 +135,7 @@ def handler(event, context):
         "head_sha",
         "conclusion",
         "run_attempt",
+        "run_started_at",
         "html_url",
     )
     message = {
