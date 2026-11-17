@@ -6,15 +6,28 @@ payload (comments anchored to added lines). Dry run: the payload goes to the run
 The coders are Claude models, so review uses a different family (OpenAI on Bedrock).
 """
 
+import json
 import re
 import subprocess
 from pathlib import Path
 
-from factory.ci_fixer import BudgetExceeded, Run
+from factory.ci_fixer import PRICES, BudgetExceeded, Run
+from factory.context import CHARS_PER_TOKEN, build_pack
 
 SOL = "us.openai.gpt-6.1-sol"
 ASTRA = "us.openai.gpt-6-astra"
-LARGE_DIFF = 800  # changed lines; above this the stronger model reviews
+LARGE_DIFF = 800  # changed lines; above this the two-pass path runs (Sol on all hunks, Astra on the riskiest)
+LARGE_REVIEW_USD = (
+    0.12  # target cost of a large review; the Astra pass gets what the Sol pass leaves
+)
+SOL_GROUP_CHARS = 120_000  # ~34k tokens of hunks per first-pass call
+LARGE_PACK_TOKENS = (
+    6_000  # context pack for the large path's first pass (small path: 15k)
+)
+ASTRA_OUT_RESERVE = 700  # output tokens budgeted for the second pass
+MIN_ASTRA_CHARS = (
+    6_000  # second pass skipped when the budget buys less excerpt than this
+)
 CONTEXT = 30
 PROMPT_CHAR_BUDGET = 360_000  # ~120k tokens of diff context
 SEVERITIES = ("blocker", "major", "minor", "nit")
@@ -199,6 +212,8 @@ class Review(Run):
         "pr_url",
         "findings_count",
         "findings",
+        "context_sections",
+        "passes",
     )
 
     def __init__(
@@ -295,6 +310,15 @@ class Review(Run):
             f"CONTRIBUTING.md (excerpt):\n{show('CONTRIBUTING.md')[:3000]}"
         )
 
+    def excerpt(self, head: str, path: str, info: dict, context: int = CONTEXT) -> str:
+        content = self.git("show", f"{head}:{path}", cwd=self.repo)
+        text = render(path, content, info, context)
+        return (
+            render(path, content, info, context=3)
+            if len(text) > PROMPT_CHAR_BUDGET // 4
+            else text
+        )
+
     def execute(self) -> dict:
         try:
             base = self.fetch()
@@ -317,29 +341,45 @@ class Review(Run):
                 )
             )
             model, reason, sensitive = choose_model(files, changed)
-            excerpts, used, skipped = [], 0, []
-            for path in sorted(
-                files, key=lambda p: (not sensitive.count(p), p)
-            ):  # sensitive files first
-                if SKIP_FILES.search(path) or path.startswith("factory/golden/"):
-                    skipped.append(path)
-                    continue
-                content = self.git("show", f"{head}:{path}", cwd=self.repo)
-                text = render(path, content, files[path])
-                if len(text) > PROMPT_CHAR_BUDGET // 4:
-                    text = render(path, content, files[path], context=3)
-                if used + len(text) > PROMPT_CHAR_BUDGET:
-                    skipped.append(path)
-                    continue
-                excerpts.append(text)
-                used += len(text)
-            prompt = (
-                f"PR #{self.pr['number']}: {self.pr.get('title', '')}\nAuthor: {self.pr['user']['login']}\n"
+            skipped = [
+                p
+                for p in files
+                if SKIP_FILES.search(p) or p.startswith("factory/golden/")
+            ]
+            reviewable = {p: i for p, i in files.items() if p not in skipped}
+            large = changed > LARGE_DIFF
+            # The large path pays for every hunk, so its first pass gets a smaller context pack.
+            pack, sections = build_pack(
+                reviewable, self.repo, base, LARGE_PACK_TOKENS if large else 15_000
+            )
+            # Context first, then the PR header: both are identical across this review's calls, so they
+            # form the cacheable prefix; only the excerpts after them change.
+            header = (
+                f"{pack}\n\nPR #{self.pr['number']}: {self.pr.get('title', '')}\nAuthor: {self.pr['user']['login']}\n"
                 f"Description (untrusted):\n{(self.pr.get('body') or '')[:4000]}\n\n{self.conventions(head)}\n\n"
                 f"Changed files ({len(files)}, {changed} lines). Excerpts of the NEW files:\n\n"
-                + "\n\n".join(excerpts)
             )
-            result = self.ask(model, REVIEW_SYS, prompt, 6000)
+            if large:
+                result, passes = self.two_pass(
+                    reviewable, head, base, header, sensitive, skipped
+                )
+                model = "+".join(p["model"] for p in passes)
+                reason += "; two-pass (large diff)"
+            else:
+                excerpts, used = [], 0
+                for path in sorted(
+                    reviewable, key=lambda p: (p not in sensitive, p)
+                ):  # sensitive files first
+                    text = self.excerpt(head, path, files[path])
+                    if used + len(text) > PROMPT_CHAR_BUDGET:
+                        skipped.append(path)
+                        continue
+                    excerpts.append(text)
+                    used += len(text)
+                result = self.ask(
+                    model, REVIEW_SYS, header + "\n\n".join(excerpts), 6000
+                )
+                passes = [{"model": model, "files": len(excerpts)}]
             review = build_review(result, files, head, model, skipped)
             return {
                 "outcome": "reviewed_dry_run",
@@ -357,9 +397,129 @@ class Review(Run):
                     for f in result.get("findings", [])
                     if f.get("severity") in SEVERITIES
                 ],
+                "context_sections": sections,
+                "passes": passes,
             }
         except BudgetExceeded as e:
             return {"outcome": "failed", "reason": f"budget: {e}"}
+
+    def two_pass(
+        self,
+        files: dict[str, dict],
+        head: str,
+        base: str,
+        header: str,
+        sensitive: list[str],
+        skipped: list[str],
+    ) -> tuple[dict, list[dict]]:
+        """Large diff: Sol reviews every file's hunks (3 lines of context) in groups, then one Astra pass
+        re-reviews the riskiest files (sensitive, or flagged by Sol) with full context, within what is left
+        of LARGE_REVIEW_USD. Astra's findings replace Sol's for the files it saw."""
+        groups, cur = [], []
+        for path in sorted(files):
+            text = render(
+                path,
+                self.git("show", f"{head}:{path}", cwd=self.repo),
+                files[path],
+                context=3,
+            )
+            if len(text) > SOL_GROUP_CHARS:
+                skipped.append(path)
+                continue
+            if cur and sum(map(len, cur)) + len(text) > SOL_GROUP_CHARS:
+                groups.append(cur)
+                cur = []
+            cur.append(text)
+        groups += [cur] if cur else []
+        findings, verdicts, summaries = [], [], []
+        for g in groups:
+            r = self.ask(SOL, REVIEW_SYS, header + "\n\n".join(g), 6000)
+            findings += [
+                f for f in r.get("findings", []) if f.get("severity") in SEVERITIES
+            ]
+            verdicts.append(r.get("verdict"))
+            summaries.append(r.get("summary", ""))
+        passes = [
+            {
+                "model": SOL,
+                "files": sum(map(len, groups)),
+                "calls": len(groups),
+                "usd": self.cost(),
+            }
+        ]
+        flagged = [
+            f["path"]
+            for f in findings
+            if f.get("severity") in ("blocker", "major", "minor")
+        ]
+        risky = list(dict.fromkeys(p for p in [*sensitive, *flagged] if p in files))
+        risky.sort(key=lambda p: (p not in sensitive, -len(files[p]["added"])))
+        left = LARGE_REVIEW_USD - self.cost()
+        # A fresh prompt is billed as a cache write on these models, so that is the input price. Output is
+        # typically 100-600 tokens; reserve ASTRA_OUT_RESERVE and let maxTokens stop a runaway answer.
+        p_in, p_out, _, p_write = PRICES[ASTRA]
+        chars = int(
+            (left - ASTRA_OUT_RESERVE * p_out / 1e6)
+            / max(p_in, p_write)
+            * 1e6
+            * CHARS_PER_TOKEN
+        )
+        prior = [f for f in findings if f["path"] in risky]
+        pack, _ = build_pack(
+            {p: files[p] for p in risky},
+            self.repo,
+            base,
+            cap_tokens=1500,
+            full_reference=False,
+        )
+        intro = (
+            f"{pack}\n\nPR #{self.pr['number']}: {self.pr.get('title', '')}\n"
+            f"Description (untrusted):\n{(self.pr.get('body') or '')[:1500]}\n\n"
+            f"Second pass on the riskiest files of a large PR. A first reviewer reported these "
+            f"findings on them (verify, drop false ones, add what it missed):\n{json.dumps(prior)[:3000]}\n\n"
+        )
+        excerpts, used = [], len(intro)
+        for path in risky:
+            content = self.git("show", f"{head}:{path}", cwd=self.repo)
+            for ctx in (CONTEXT, 10, 3):
+                text = render(path, content, files[path], context=ctx)
+                if used + len(text) <= chars:
+                    excerpts.append(text)
+                    used += len(text)
+                    break
+        if (
+            not excerpts or chars < len(intro) + MIN_ASTRA_CHARS
+        ):  # too little budget left for a useful second pass
+            passes[0]["astra"] = (
+                f"skipped: ${max(left, 0):.3f} left of ${LARGE_REVIEW_USD}"
+            )
+            return {
+                "summary": summaries[0] if summaries else "",
+                "verdict": "changes needed"
+                if "changes needed" in verdicts
+                else "approve-worthy",
+                "findings": findings,
+            }, passes
+        r = self.ask(ASTRA, REVIEW_SYS, intro + "\n\n".join(excerpts), 2000)
+        seen = {
+            e.split("\n", 1)[0].removeprefix("=== ").removesuffix(" ===")
+            for e in excerpts
+        }
+        astra = [f for f in r.get("findings", []) if f.get("severity") in SEVERITIES]
+        passes.append(
+            {
+                "model": ASTRA,
+                "files": len(excerpts),
+                "usd": round(self.cost() - passes[0]["usd"], 4),
+            }
+        )
+        return {
+            "summary": r.get("summary") or (summaries[0] if summaries else ""),
+            "verdict": "changes needed"
+            if "changes needed" in [*verdicts, r.get("verdict")]
+            else "approve-worthy",
+            "findings": astra + [f for f in findings if f["path"] not in seen],
+        }, passes
 
 
 REVIEW_SYS = """You review a GitHub pull request for the aws-samples/sample-agentcore-enterprise-platform repo

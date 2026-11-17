@@ -1,0 +1,584 @@
+{
+ "cases": [
+  {
+   "id": "e1-ecr-pull-star",
+   "difficulty": "easy",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:e1-ecr-pull-star",
+   "cost": 0.0143,
+   "models": {
+    "us.openai.gpt-6-astra": {
+     "input_tokens": 2,
+     "output_tokens": 220,
+     "cache_read": 1937,
+     "cache_write": 0,
+     "calls": 1
+    }
+   },
+   "model_reason": "2 changed lines; sensitive: stacks/runtime_stack.py",
+   "verdict": "changes needed",
+   "findings": [
+    {
+     "path": "stacks/runtime_stack.py",
+     "line": 643,
+     "severity": "major",
+     "category": "security",
+     "title": "Keep ECR image reads scoped to the runtime's repository",
+     "body": "Both ecr:BatchGetImage and ecr:GetDownloadUrlForLayer support repository-level permissions. Using \"*\" allows a compromised runtime to retrieve images and layers from unrelated repositories in the account, absent other policy restrictions, potentially exposing proprietary code or sensitive image contents. Only the separate ecr:GetAuthorizationToken statement requires a wildcard; the repository ARN already supplied to this function is sufficient for the intended image pull.",
+     "suggestion": "                resources=[ecr_repo_arn],"
+    }
+   ],
+   "tp": 1,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "e2-jwt-logged",
+   "difficulty": "easy",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:e2-jwt-logged",
+   "cost": 0.0127,
+   "models": {
+    "us.openai.gpt-6-astra": {
+     "input_tokens": 2,
+     "output_tokens": 194,
+     "cache_read": 1835,
+     "cache_write": 0,
+     "calls": 1
+    }
+   },
+   "model_reason": "2 changed lines; sensitive: agent-code/shared/auth.py",
+   "verdict": "changes needed",
+   "findings": [
+    {
+     "path": "agent-code/shared/auth.py",
+     "line": 141,
+     "severity": "major",
+     "category": "security",
+     "title": "Do not log verified bearer tokens",
+     "body": "This logs the complete JWT after signature, expiry, and claims validation, exposing a usable bearer credential to anyone who can read the runtime logs or downstream log exports. A reader could replay the token to impersonate its principal until it expires. Logging also persists any sensitive claims contained in the token beyond its lifetime.",
+     "suggestion": "logger.info(\"Verified JWT for user_id: %s\", user_id)"
+    }
+   ],
+   "tp": 1,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "m1-build-status",
+   "difficulty": "medium",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:m1-build-status",
+   "cost": 0.0025,
+   "models": {
+    "us.openai.gpt-6.1-sol": {
+     "input_tokens": 2,
+     "output_tokens": 207,
+     "cache_read": 1811,
+     "cache_write": 0,
+     "calls": 1
+    }
+   },
+   "model_reason": "2 changed lines",
+   "verdict": "changes needed",
+   "findings": [
+    {
+     "path": "infra_utils/build_trigger_lambda.py",
+     "line": 30,
+     "severity": "major",
+     "category": "correctness",
+     "title": "Failed builds are reported as successful",
+     "body": "FAILED, FAULT, STOPPED, and TIMED_OUT all satisfy this condition, so the handler sends SUCCESS and returns before reaching the failure handling below. CloudFormation therefore treats the custom resource as successfully completed even when CodeBuild fails. The previous code already stopped polling for all listed terminal statuses while correctly distinguishing success from failure.",
+     "suggestion": "            if status == \"SUCCEEDED\":"
+    }
+   ],
+   "tp": 1,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "m2-trail-encryption",
+   "difficulty": "medium",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:m2-trail-encryption",
+   "cost": 0.0302,
+   "models": {
+    "us.openai.gpt-6-astra": {
+     "input_tokens": 2,
+     "output_tokens": 515,
+     "cache_read": 1664,
+     "cache_write": 0,
+     "calls": 1
+    }
+   },
+   "model_reason": "8 changed lines; sensitive: stacks/security_stack.py",
+   "verdict": "changes needed",
+   "findings": [
+    {
+     "path": "stacks/security_stack.py",
+     "line": 52,
+     "severity": "major",
+     "category": "security",
+     "title": "Preserve the customer-managed encryption option",
+     "body": "When retain_data and enable_kms are both true, the bucket previously configured the provisioned CMK as its default encryption key. UNENCRYPTED removes that configuration, silently falling back to S3's baseline SSE-S3 encryption rather than the selected customer-managed key. S3's automatic encryption does not preserve customer control over key permissions and lifecycle.",
+     "suggestion": "encryption=(s3.BucketEncryption.KMS if retain_data and self.kms_key else s3.BucketEncryption.S3_MANAGED),\n                encryption_key=self.kms_key if retain_data else None,\n                enforce_ssl=True,"
+    },
+    {
+     "path": "stacks/security_stack.py",
+     "line": 52,
+     "severity": "major",
+     "category": "security",
+     "title": "Restore HTTPS enforcement for the audit bucket",
+     "body": "Removing enforce_ssl=True removes the bucket-policy denial of requests made over insecure transport. An otherwise authorized caller can consequently access audit objects over HTTP, exposing sensitive audit data in transit. Simplifying encryption at rest should not remove this independent transport-security control.",
+     "suggestion": ""
+    }
+   ],
+   "tp": 2,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "h1-missing-await",
+   "difficulty": "hard",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:h1-missing-await",
+   "cost": 0.0023,
+   "models": {
+    "us.openai.gpt-6.1-sol": {
+     "input_tokens": 2,
+     "output_tokens": 193,
+     "cache_read": 1544,
+     "cache_write": 0,
+     "calls": 1
+    }
+   },
+   "model_reason": "2 changed lines",
+   "verdict": "changes needed",
+   "findings": [
+    {
+     "path": "agent-code/langgraph-agent/tools/gateway.py",
+     "line": 96,
+     "severity": "major",
+     "category": "correctness",
+     "title": "Await the asynchronous token fetch before constructing the client",
+     "body": "_fetch_gateway_token() is asynchronous, so calling it without await returns a coroutine and does not execute token acquisition. The Authorization header then contains the coroutine's string representation rather than an access token, causing authenticated gateway requests to fail whenever gateway tools are enabled.",
+     "suggestion": "    fresh_token = await _fetch_gateway_token()"
+    }
+   ],
+   "tp": 1,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "h2-test-no-assert",
+   "difficulty": "hard",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:h2-test-no-assert",
+   "cost": 0.0391,
+   "models": {
+    "us.openai.gpt-6-astra": {
+     "input_tokens": 2,
+     "output_tokens": 196,
+     "cache_read": 0,
+     "cache_write": 2061,
+     "calls": 1
+    }
+   },
+   "model_reason": "4 changed lines; sensitive: tests/test_jwt_claims.py",
+   "verdict": "changes needed",
+   "findings": [
+    {
+     "path": "tests/test_jwt_claims.py",
+     "line": 54,
+     "severity": "major",
+     "category": "tests",
+     "title": "Keep asserting that a foreign issuer is rejected",
+     "body": "The test now passes both when validate_claims raises TokenRejected and when it returns normally. A regression that accepts a foreign-issuer token with an allowed client would therefore go undetected by this test. To tolerate message changes without losing the security assertion, use `with pytest.raises(TokenRejected):` and remove the except/pass block.",
+     "suggestion": ""
+    }
+   ],
+   "tp": 1,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "c1-clean-status-constant",
+   "difficulty": "clean",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:c1-clean-status-constant",
+   "cost": 0.0009,
+   "models": {
+    "us.openai.gpt-6.1-sol": {
+     "input_tokens": 2,
+     "output_tokens": 64,
+     "cache_read": 1831,
+     "cache_write": 0,
+     "calls": 1
+    }
+   },
+   "model_reason": "3 changed lines",
+   "verdict": "approve-worthy",
+   "findings": [],
+   "tp": 0,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "c2-clean-claims-walrus",
+   "difficulty": "clean",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:c2-clean-claims-walrus",
+   "cost": 0.025,
+   "models": {
+    "us.openai.gpt-6-astra": {
+     "input_tokens": 2,
+     "output_tokens": 56,
+     "cache_read": 0,
+     "cache_write": 1593,
+     "calls": 1
+    }
+   },
+   "model_reason": "3 changed lines; sensitive: agent-code/shared/jwt_claims.py",
+   "verdict": "approve-worthy",
+   "findings": [],
+   "tp": 0,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "x1-env-layer-order",
+   "difficulty": "large",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:x1-env-layer-order",
+   "cost": 0.0037,
+   "models": {
+    "us.openai.gpt-6.1-sol": {
+     "input_tokens": 2,
+     "output_tokens": 281,
+     "cache_read": 5108,
+     "cache_write": 0,
+     "calls": 1
+    }
+   },
+   "model_reason": "100 changed lines",
+   "verdict": "changes needed",
+   "findings": [
+    {
+     "path": "migration/adapter/adapter.py",
+     "line": 149,
+     "severity": "major",
+     "category": "correctness",
+     "title": "Preserve resolved secrets as the highest-precedence environment layer",
+     "body": "Previously, resolved secrets were applied last. The new order lets MIGRATION_ENV_JSON or legacy MIGRATION_ENV overwrite a resolved secret with a placeholder or stale credential when both define the same key. This can break child authentication despite successfully fetching the correct secret, contradicting the intended behavior-preserving refactor. The modified JSON merge test also removes the JIRA_TOKEN collision that previously checked this contract. Restore secrets-last precedence and retain collision tests for both JSON and legacy inputs.",
+     "suggestion": "    layers = (environ, migration_env(environ), secrets)"
+    }
+   ],
+   "tp": 1,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "x2-role-construct",
+   "difficulty": "large",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:x2-role-construct",
+   "cost": 0.0213,
+   "models": {
+    "us.openai.gpt-6-astra": {
+     "input_tokens": 2,
+     "output_tokens": 258,
+     "cache_read": 6479,
+     "cache_write": 0,
+     "calls": 1
+    }
+   },
+   "model_reason": "186 changed lines; sensitive: infra_utils/agentcore_role.py, stacks/runtime_stack.py",
+   "verdict": "changes needed",
+   "findings": [
+    {
+     "path": "infra_utils/agentcore_role.py",
+     "line": 74,
+     "severity": "major",
+     "category": "security",
+     "title": "Wildcard model grant bypasses the configured allow-list",
+     "body": "BedrockModels now unconditionally allows invocation of all foundation models and inference profiles, even when model_resources is supplied. IAM combines Allow statements, so the additional BedrockAllowList statement does not restrict that wildcard grant. Previously, RuntimeStack replaced the wildcard resources with allowed_model_resources(allowed_models). A runtime can therefore invoke models outside the platform.yaml allow-list after this change. Use the configured resources instead of the wildcard defaults when present, and add a regression test confirming that a configured allow-list leaves no wildcard model grant.",
+     "suggestion": "            resources=model_resources or ["
+    }
+   ],
+   "tp": 1,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "x3-restart-budget",
+   "difficulty": "large",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:x3-restart-budget",
+   "cost": 0.004,
+   "models": {
+    "us.openai.gpt-6.1-sol": {
+     "input_tokens": 2,
+     "output_tokens": 316,
+     "cache_read": 4501,
+     "cache_write": 0,
+     "calls": 1
+    }
+   },
+   "model_reason": "113 changed lines",
+   "verdict": "changes needed",
+   "findings": [
+    {
+     "path": "migration/adapter/adapter.py",
+     "line": 243,
+     "severity": "major",
+     "category": "correctness",
+     "title": "Check the restart budget before starting a replacement",
+     "body": "The preceding self.start() runs before the budget check, allowing restart_limit + 1 actual restarts. A limit of zero still starts a replacement after the first exit; the default limit of one starts another replacement after the second exit. On that final restart, the supervisor marks the child unhealthy and returns without waiting for or stopping the newly launched process. Consequently, a potentially healthy child keeps running unsupervised while alive() reports false. The new tests miss this because they check restarts_used but never assert the number of starts recorded in started.",
+     "suggestion": ""
+    }
+   ],
+   "tp": 1,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "x4-settings-dataclass",
+   "difficulty": "large",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:x4-settings-dataclass",
+   "cost": 0.0219,
+   "models": {
+    "us.openai.gpt-6.1-sol": {
+     "input_tokens": 2,
+     "output_tokens": 532,
+     "cache_read": 0,
+     "cache_write": 5843,
+     "calls": 1
+    }
+   },
+   "model_reason": "110 changed lines",
+   "verdict": "changes needed",
+   "findings": [
+    {
+     "path": "migration/adapter/adapter.py",
+     "line": 120,
+     "severity": "major",
+     "category": "security",
+     "title": "Missing ENVIRONMENT now selects production secrets",
+     "body": "Previously, secret_id_for() defaulted ENVIRONMENT to an empty string. This changes an omitted ENVIRONMENT to \"prod\", so a declared secret without an explicit ARN now requests <project>/prod/migration/<NAME> instead of the previous ID. If the runtime role can access that secret, a deployment with missing environment configuration can silently receive production credentials. A settings refactor should not introduce this change in secret selection, and the added tests do not cover it.",
+     "suggestion": "            environment=environ.get(\"ENVIRONMENT\", \"\"),"
+    }
+   ],
+   "tp": 1,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "x5-clean-rename",
+   "difficulty": "clean-large",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:x5-clean-rename",
+   "cost": 0.0187,
+   "models": {
+    "us.openai.gpt-6.1-sol": {
+     "input_tokens": 2,
+     "output_tokens": 113,
+     "cache_read": 0,
+     "cache_write": 6352,
+     "calls": 1
+    }
+   },
+   "model_reason": "103 changed lines",
+   "verdict": "approve-worthy",
+   "findings": [],
+   "tp": 0,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "x6-clean-claims-helpers",
+   "difficulty": "clean-large",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:x6-clean-claims-helpers",
+   "cost": 0.057,
+   "models": {
+    "us.openai.gpt-6-astra": {
+     "input_tokens": 2,
+     "output_tokens": 106,
+     "cache_read": 0,
+     "cache_write": 3722,
+     "calls": 1
+    }
+   },
+   "model_reason": "105 changed lines; sensitive: agent-code/shared/jwt_claims.py, tests/test_jwt_claims.py",
+   "verdict": "approve-worthy",
+   "findings": [],
+   "tp": 0,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "y1-comments-hide-exp",
+   "difficulty": "misleading",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:y1-comments-hide-exp",
+   "cost": 0.0444,
+   "models": {
+    "us.openai.gpt-6-astra": {
+     "input_tokens": 2,
+     "output_tokens": 219,
+     "cache_read": 0,
+     "cache_write": 2349,
+     "calls": 1
+    }
+   },
+   "model_reason": "11 changed lines; sensitive: agent-code/shared/auth.py",
+   "verdict": "changes needed",
+   "findings": [
+    {
+     "path": "agent-code/shared/auth.py",
+     "line": 130,
+     "severity": "major",
+     "category": "security",
+     "title": "Restore local JWT expiry verification",
+     "body": "Changing verify_exp to False allows jwt.decode to accept expired, correctly signed tokens. The upstream authorizer is not a substitute for this helper's existing expiry check: calls outside that authorizer path, or verification after a token expires downstream, no longer receive the previous protection. This is a security-relevant behavior change, not a comment cleanup. Preserve expiry verification and add a regression test asserting that an expired signed token is rejected.",
+     "suggestion": "                \"verify_exp\": True,"
+    }
+   ],
+   "tp": 1,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "y2-wrong-file-issuer",
+   "difficulty": "misleading",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:y2-wrong-file-issuer",
+   "cost": 0.0568,
+   "models": {
+    "us.openai.gpt-6-astra": {
+     "input_tokens": 2,
+     "output_tokens": 226,
+     "cache_read": 0,
+     "cache_write": 3225,
+     "calls": 1
+    }
+   },
+   "model_reason": "6 changed lines; sensitive: agent-code/shared/jwt_claims.py",
+   "verdict": "changes needed",
+   "findings": [
+    {
+     "path": "agent-code/shared/jwt_claims.py",
+     "line": 73,
+     "severity": "major",
+     "category": "security",
+     "title": "Missing issuer claims now bypass issuer validation",
+     "body": "The added truthiness guard skips validation when `iss` is absent, null, or empty. For example, `validate_claims({'sub': 'caller'}, expected_issuer='https://trusted.example')` now returns `caller` with the default allowed_clients, whereas it previously rejected the claims. This violates the function's expected-issuer trust boundary; checking a client ID when configured does not establish the issuer either.",
+     "suggestion": "    if issuer != expected_issuer:"
+    }
+   ],
+   "tp": 1,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "y3-refactor-drops-https-guard",
+   "difficulty": "misleading",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:y3-refactor-drops-https-guard",
+   "cost": 0.0075,
+   "models": {
+    "us.openai.gpt-6.1-sol": {
+     "input_tokens": 2,
+     "output_tokens": 225,
+     "cache_read": 0,
+     "cache_write": 1828,
+     "calls": 1
+    }
+   },
+   "model_reason": "11 changed lines",
+   "verdict": "changes needed",
+   "findings": [
+    {
+     "path": "infra_utils/build_trigger_lambda.py",
+     "line": 54,
+     "severity": "major",
+     "category": "security",
+     "title": "Restore HTTPS validation before sending the response",
+     "body": "Removing the scheme guard allows an event-supplied HTTP ResponseURL to receive the CloudFormation response over an unencrypted connection. Previously, _send rejected such URLs. The remaining nosec comment also incorrectly claims the URL is validated above.",
+     "suggestion": "    if not url.startswith(\"https://\"):\n        raise ValueError(f\"Response URL must use HTTPS scheme, got: {url[:20]}\")\n    body = _response_body(event, status, data, reason)"
+    }
+   ],
+   "tp": 1,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  },
+  {
+   "id": "y4-scary-but-clean",
+   "difficulty": "misleading",
+   "outcome": "reviewed_dry_run",
+   "reason": "bench:y4-scary-but-clean",
+   "cost": 0.0303,
+   "models": {
+    "us.openai.gpt-6-astra": {
+     "input_tokens": 2,
+     "output_tokens": 80,
+     "cache_read": 0,
+     "cache_write": 1881,
+     "calls": 1
+    }
+   },
+   "model_reason": "4 changed lines; sensitive: agent-code/shared/jwt_claims.py",
+   "verdict": "approve-worthy",
+   "findings": [],
+   "tp": 0,
+   "fn": 0,
+   "fp": 0,
+   "missed": [],
+   "false_positives": []
+  }
+ ],
+ "totals": {
+  "tp": 14,
+  "fp": 0,
+  "fn": 0,
+  "precision": 1.0,
+  "recall": 1.0,
+  "f1": 1.0
+ },
+ "cost_usd": 0.3926
+}

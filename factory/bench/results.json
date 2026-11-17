@@ -5,13 +5,13 @@
    "difficulty": "easy",
    "outcome": "reviewed_dry_run",
    "reason": "bench:e1-ecr-pull-star",
-   "cost": 0.0143,
+   "cost": 0.2108,
    "models": {
     "us.openai.gpt-6-astra": {
      "input_tokens": 2,
-     "output_tokens": 220,
-     "cache_read": 1937,
-     "cache_write": 0,
+     "output_tokens": 224,
+     "cache_read": 0,
+     "cache_write": 14434,
      "calls": 1
     }
    },
@@ -23,8 +23,8 @@
      "line": 643,
      "severity": "major",
      "category": "security",
-     "title": "Keep ECR image reads scoped to the runtime's repository",
-     "body": "Both ecr:BatchGetImage and ecr:GetDownloadUrlForLayer support repository-level permissions. Using \"*\" allows a compromised runtime to retrieve images and layers from unrelated repositories in the account, absent other policy restrictions, potentially exposing proprietary code or sensitive image contents. Only the separate ecr:GetAuthorizationToken statement requires a wildcard; the repository ARN already supplied to this function is sufficient for the intended image pull.",
+     "title": "Keep ECR image reads scoped to the component repository",
+     "body": "Both ecr:BatchGetImage and ecr:GetDownloadUrlForLayer support repository-level permissions. Changing their resource to '*' lets each runtime role retrieve images and layers from unrelated repositories in the account, unless another policy explicitly denies access. A compromised agent could consequently extract other workloads' proprietary code and image contents. Only GetAuthorizationToken needs the existing separate wildcard grant; pulling this runtime's image does not require broadening repository access.",
      "suggestion": "                resources=[ecr_repo_arn],"
     }
    ],
@@ -39,13 +39,13 @@
    "difficulty": "easy",
    "outcome": "reviewed_dry_run",
    "reason": "bench:e2-jwt-logged",
-   "cost": 0.0127,
+   "cost": 0.2028,
    "models": {
     "us.openai.gpt-6-astra": {
      "input_tokens": 2,
-     "output_tokens": 194,
-     "cache_read": 1835,
-     "cache_write": 0,
+     "output_tokens": 220,
+     "cache_read": 0,
+     "cache_write": 13865,
      "calls": 1
     }
    },
@@ -57,9 +57,9 @@
      "line": 141,
      "severity": "major",
      "category": "security",
-     "title": "Do not log verified bearer tokens",
-     "body": "This logs the complete JWT after signature, expiry, and claims validation, exposing a usable bearer credential to anyone who can read the runtime logs or downstream log exports. A reader could replay the token to impersonate its principal until it expires. Logging also persists any sensitive claims contained in the token beyond its lifetime.",
-     "suggestion": "logger.info(\"Verified JWT for user_id: %s\", user_id)"
+     "title": "Do not log the caller's bearer token",
+     "body": "Every successful verification now writes the full JWT at INFO level. Anyone with access to the runtime logs or downstream log exports can retrieve and replay that bearer token until it expires, impersonating the caller wherever the token is accepted. This also persists identity claims in logs and violates the platform's explicit prohibition on token logging. Remove the token argument and add a log-capture regression test asserting that a supplied token never appears in emitted logs.",
+     "suggestion": "    logger.info(\"JWT verification succeeded\")"
     }
    ],
    "tp": 1,
@@ -73,13 +73,13 @@
    "difficulty": "medium",
    "outcome": "reviewed_dry_run",
    "reason": "bench:m1-build-status",
-   "cost": 0.0025,
+   "cost": 0.0423,
    "models": {
     "us.openai.gpt-6.1-sol": {
      "input_tokens": 2,
-     "output_tokens": 207,
-     "cache_read": 1811,
-     "cache_write": 0,
+     "output_tokens": 219,
+     "cache_read": 0,
+     "cache_write": 14518,
      "calls": 1
     }
    },
@@ -91,8 +91,8 @@
      "line": 30,
      "severity": "major",
      "category": "correctness",
-     "title": "Failed builds are reported as successful",
-     "body": "FAILED, FAULT, STOPPED, and TIMED_OUT all satisfy this condition, so the handler sends SUCCESS and returns before reaching the failure handling below. CloudFormation therefore treats the custom resource as successfully completed even when CodeBuild fails. The previous code already stopped polling for all listed terminal statuses while correctly distinguishing success from failure.",
+     "title": "Terminal build failures are reported as SUCCESS",
+     "body": "FAILED, FAULT, STOPPED, and TIMED_OUT all satisfy this condition, so the handler sends SUCCESS to CloudFormation before reaching the failure branch below. A failed image build will therefore be treated as complete, allowing dependent runtime provisioning to proceed with a missing image or masking the actual build failure. The previous code already stopped polling on both successful and failed terminal statuses.",
      "suggestion": "            if status == \"SUCCEEDED\":"
     }
    ],
@@ -107,13 +107,13 @@
    "difficulty": "medium",
    "outcome": "reviewed_dry_run",
    "reason": "bench:m2-trail-encryption",
-   "cost": 0.0302,
+   "cost": 0.2158,
    "models": {
     "us.openai.gpt-6-astra": {
      "input_tokens": 2,
-     "output_tokens": 515,
-     "cache_read": 1664,
-     "cache_write": 0,
+     "output_tokens": 397,
+     "cache_read": 0,
+     "cache_write": 14106,
      "calls": 1
     }
    },
@@ -125,17 +125,17 @@
      "line": 52,
      "severity": "major",
      "category": "security",
-     "title": "Preserve the customer-managed encryption option",
-     "body": "When retain_data and enable_kms are both true, the bucket previously configured the provisioned CMK as its default encryption key. UNENCRYPTED removes that configuration, silently falling back to S3's baseline SSE-S3 encryption rather than the selected customer-managed key. S3's automatic encryption does not preserve customer control over key permissions and lifecycle.",
-     "suggestion": "encryption=(s3.BucketEncryption.KMS if retain_data and self.kms_key else s3.BucketEncryption.S3_MANAGED),\n                encryption_key=self.kms_key if retain_data else None,\n                enforce_ssl=True,"
+     "title": "Preserve customer-managed encryption for retained audit logs",
+     "body": "When retain_data and enable_kms are true, the bucket previously used the platform CMK. UNENCRYPTED removes that configuration, so new audit objects no longer receive the intended customer-managed encryption protection. S3\u2019s baseline server-side encryption does not replace the CMK\u2019s access-control and key-lifecycle guarantees.",
+     "suggestion": ""
     },
     {
      "path": "stacks/security_stack.py",
      "line": 52,
      "severity": "major",
      "category": "security",
-     "title": "Restore HTTPS enforcement for the audit bucket",
-     "body": "Removing enforce_ssl=True removes the bucket-policy denial of requests made over insecure transport. An otherwise authorized caller can consequently access audit objects over HTTP, exposing sensitive audit data in transit. Simplifying encryption at rest should not remove this independent transport-security control.",
+     "title": "Restore HTTPS enforcement on the audit bucket",
+     "body": "The replacement also removes enforce_ssl=True, eliminating the bucket-policy deny for requests made over insecure transport. Authorized clients can consequently access sensitive audit logs over HTTP; encryption at rest does not protect those transfers. Retain enforce_ssl=True independently of the encryption choice.",
      "suggestion": ""
     }
    ],
@@ -150,13 +150,13 @@
    "difficulty": "hard",
    "outcome": "reviewed_dry_run",
    "reason": "bench:h1-missing-await",
-   "cost": 0.0023,
+   "cost": 0.0413,
    "models": {
     "us.openai.gpt-6.1-sol": {
      "input_tokens": 2,
-     "output_tokens": 193,
-     "cache_read": 1544,
-     "cache_write": 0,
+     "output_tokens": 202,
+     "cache_read": 0,
+     "cache_write": 14218,
      "calls": 1
     }
    },
@@ -168,8 +168,8 @@
      "line": 96,
      "severity": "major",
      "category": "correctness",
-     "title": "Await the asynchronous token fetch before constructing the client",
-     "body": "_fetch_gateway_token() is asynchronous, so calling it without await returns a coroutine and does not execute token acquisition. The Authorization header then contains the coroutine's string representation rather than an access token, causing authenticated gateway requests to fail whenever gateway tools are enabled.",
+     "title": "Await the gateway token before constructing the MCP client",
+     "body": "_fetch_gateway_token() is asynchronous, so calling it without await returns a coroutine and does not execute the token fetch. The subsequent header becomes `Bearer <coroutine object ...>` instead of a valid access token, causing gateway MCP authentication and tool discovery to fail whenever the gateway is configured.",
      "suggestion": "    fresh_token = await _fetch_gateway_token()"
     }
    ],
@@ -184,13 +184,13 @@
    "difficulty": "hard",
    "outcome": "reviewed_dry_run",
    "reason": "bench:h2-test-no-assert",
-   "cost": 0.0391,
+   "cost": 0.2036,
    "models": {
     "us.openai.gpt-6-astra": {
      "input_tokens": 2,
-     "output_tokens": 196,
+     "output_tokens": 202,
      "cache_read": 0,
-     "cache_write": 2061,
+     "cache_write": 13996,
      "calls": 1
     }
    },
@@ -202,9 +202,9 @@
      "line": 54,
      "severity": "major",
      "category": "tests",
-     "title": "Keep asserting that a foreign issuer is rejected",
-     "body": "The test now passes both when validate_claims raises TokenRejected and when it returns normally. A regression that accepts a foreign-issuer token with an allowed client would therefore go undetected by this test. To tolerate message changes without losing the security assertion, use `with pytest.raises(TokenRejected):` and remove the except/pass block.",
-     "suggestion": ""
+     "title": "Keep asserting that a wrong issuer is rejected",
+     "body": "The test now passes both when validate_claims raises TokenRejected and when it returns normally. Consequently, accepting a token from an unauthorized issuer with a matching client would no longer fail this test. To tolerate message changes without losing the security assertion, use pytest.raises(TokenRejected) without match and remove the except/pass block.",
+     "suggestion": "    with pytest.raises(TokenRejected):"
     }
    ],
    "tp": 1,
@@ -218,13 +218,13 @@
    "difficulty": "clean",
    "outcome": "reviewed_dry_run",
    "reason": "bench:c1-clean-status-constant",
-   "cost": 0.0009,
+   "cost": 0.0409,
    "models": {
     "us.openai.gpt-6.1-sol": {
      "input_tokens": 2,
      "output_tokens": 64,
-     "cache_read": 1831,
-     "cache_write": 0,
+     "cache_read": 0,
+     "cache_write": 14597,
      "calls": 1
     }
    },
@@ -242,13 +242,13 @@
    "difficulty": "clean",
    "outcome": "reviewed_dry_run",
    "reason": "bench:c2-clean-claims-walrus",
-   "cost": 0.025,
+   "cost": 0.1901,
    "models": {
     "us.openai.gpt-6-astra": {
      "input_tokens": 2,
-     "output_tokens": 56,
+     "output_tokens": 68,
      "cache_read": 0,
-     "cache_write": 1593,
+     "cache_write": 13549,
      "calls": 1
     }
    },
@@ -266,13 +266,13 @@
    "difficulty": "large",
    "outcome": "reviewed_dry_run",
    "reason": "bench:x1-env-layer-order",
-   "cost": 0.0037,
+   "cost": 0.0499,
    "models": {
     "us.openai.gpt-6.1-sol": {
      "input_tokens": 2,
-     "output_tokens": 281,
-     "cache_read": 5108,
-     "cache_write": 0,
+     "output_tokens": 245,
+     "cache_read": 0,
+     "cache_write": 17154,
      "calls": 1
     }
    },
@@ -285,7 +285,7 @@
      "severity": "major",
      "category": "correctness",
      "title": "Preserve resolved secrets as the highest-precedence environment layer",
-     "body": "Previously, resolved secrets were applied last. The new order lets MIGRATION_ENV_JSON or legacy MIGRATION_ENV overwrite a resolved secret with a placeholder or stale credential when both define the same key. This can break child authentication despite successfully fetching the correct secret, contradicting the intended behavior-preserving refactor. The modified JSON merge test also removes the JIRA_TOKEN collision that previously checked this contract. Restore secrets-last precedence and retain collision tests for both JSON and legacy inputs.",
+     "body": "Previously, resolved Secrets Manager values overwrote declared migration environment values. Applying migration_env(environ) last now replaces a resolved secret whenever the same key appears in MIGRATION_ENV_JSON or legacy MIGRATION_ENV. For example, a declared JIRA_TOKEN placeholder will replace the fetched credential, breaking child authentication. The existing test explicitly exercised this collision, but this PR removes it rather than preserving the contract. Restore secret-last precedence and retain a collision regression test.",
      "suggestion": "    layers = (environ, migration_env(environ), secrets)"
     }
    ],
@@ -300,13 +300,13 @@
    "difficulty": "large",
    "outcome": "reviewed_dry_run",
    "reason": "bench:x2-role-construct",
-   "cost": 0.0213,
+   "cost": 0.2781,
    "models": {
     "us.openai.gpt-6-astra": {
      "input_tokens": 2,
-     "output_tokens": 258,
-     "cache_read": 6479,
-     "cache_write": 0,
+     "output_tokens": 246,
+     "cache_read": 0,
+     "cache_write": 19242,
      "calls": 1
     }
    },
@@ -318,9 +318,9 @@
      "line": 74,
      "severity": "major",
      "category": "security",
-     "title": "Wildcard model grant bypasses the configured allow-list",
-     "body": "BedrockModels now unconditionally allows invocation of all foundation models and inference profiles, even when model_resources is supplied. IAM combines Allow statements, so the additional BedrockAllowList statement does not restrict that wildcard grant. Previously, RuntimeStack replaced the wildcard resources with allowed_model_resources(allowed_models). A runtime can therefore invoke models outside the platform.yaml allow-list after this change. Use the configured resources instead of the wildcard defaults when present, and add a regression test confirming that a configured allow-list leaves no wildcard model grant.",
-     "suggestion": "            resources=model_resources or ["
+     "title": "Replace wildcard model access when an allow-list is configured",
+     "body": "BedrockModels now always allows invocation of every foundation model and inference profile. Adding BedrockAllowList afterward does not narrow that permission: IAM Allow statements are additive. Consequently, deployments with agents.allowed_models configured can invoke unapproved models, whereas the previous RuntimeStack implementation replaced the wildcard resources with the configured list. Use model_resources instead of the wildcard defaults when supplied, and add a synthesis regression test that verifies no wildcard model grant remains for an allow-listed deployment.",
+     "suggestion": "            resources=model_resources if model_resources is not None else ["
     }
    ],
    "tp": 1,
@@ -334,13 +334,13 @@
    "difficulty": "large",
    "outcome": "reviewed_dry_run",
    "reason": "bench:x3-restart-budget",
-   "cost": 0.004,
+   "cost": 0.0485,
    "models": {
     "us.openai.gpt-6.1-sol": {
      "input_tokens": 2,
-     "output_tokens": 316,
-     "cache_read": 4501,
-     "cache_write": 0,
+     "output_tokens": 286,
+     "cache_read": 0,
+     "cache_write": 16479,
      "calls": 1
     }
    },
@@ -352,8 +352,8 @@
      "line": 243,
      "severity": "major",
      "category": "correctness",
-     "title": "Check the restart budget before starting a replacement",
-     "body": "The preceding self.start() runs before the budget check, allowing restart_limit + 1 actual restarts. A limit of zero still starts a replacement after the first exit; the default limit of one starts another replacement after the second exit. On that final restart, the supervisor marks the child unhealthy and returns without waiting for or stopping the newly launched process. Consequently, a potentially healthy child keeps running unsupervised while alive() reports false. The new tests miss this because they check restarts_used but never assert the number of starts recorded in started.",
+     "title": "Check the restart budget before starting another child",
+     "body": "self.start() runs before _budget_left(), so a limit of N actually permits N+1 restarts; even limit=0 launches a replacement. When the budget check fails, the supervisor returns without stopping or monitoring that newly started process, while unhealthy=True causes alive() to reject it. This can leave customer background work running despite the adapter reporting failure. The added tests only check the counter and unhealthy flag, so they miss the extra process launch.",
      "suggestion": ""
     }
    ],
@@ -368,13 +368,13 @@
    "difficulty": "large",
    "outcome": "reviewed_dry_run",
    "reason": "bench:x4-settings-dataclass",
-   "cost": 0.0219,
+   "cost": 0.0536,
    "models": {
     "us.openai.gpt-6.1-sol": {
      "input_tokens": 2,
-     "output_tokens": 532,
+     "output_tokens": 422,
      "cache_read": 0,
-     "cache_write": 5843,
+     "cache_write": 17804,
      "calls": 1
     }
    },
@@ -385,9 +385,9 @@
      "path": "migration/adapter/adapter.py",
      "line": 120,
      "severity": "major",
-     "category": "security",
-     "title": "Missing ENVIRONMENT now selects production secrets",
-     "body": "Previously, secret_id_for() defaulted ENVIRONMENT to an empty string. This changes an omitted ENVIRONMENT to \"prod\", so a declared secret without an explicit ARN now requests <project>/prod/migration/<NAME> instead of the previous ID. If the runtime role can access that secret, a deployment with missing environment configuration can silently receive production credentials. A settings refactor should not introduce this change in secret selection, and the added tests do not cover it.",
+     "category": "correctness",
+     "title": "Preserve the existing environment default for secret resolution",
+     "body": "Previously, secret_id_for() defaulted a missing ENVIRONMENT to an empty string; this parser now defaults it to prod. A caller supplying PROJECT_NAME and MIGRATION_SECRETS but omitting ENVIRONMENT will consequently request <project>/prod/migration/<NAME> instead of the previous secret ID. If the execution role can read that secret, the child can silently receive production credentials; otherwise, a previously working caller fails to start. This settings refactor should not change credential selection, and the new tests do not cover the missing-ENVIRONMENT case.",
      "suggestion": "            environment=environ.get(\"ENVIRONMENT\", \"\"),"
     }
    ],
@@ -402,13 +402,13 @@
    "difficulty": "clean-large",
    "outcome": "reviewed_dry_run",
    "reason": "bench:x5-clean-rename",
-   "cost": 0.0187,
+   "cost": 0.0514,
    "models": {
     "us.openai.gpt-6.1-sol": {
      "input_tokens": 2,
-     "output_tokens": 113,
+     "output_tokens": 119,
      "cache_read": 0,
-     "cache_write": 6352,
+     "cache_write": 18223,
      "calls": 1
     }
    },
@@ -426,13 +426,13 @@
    "difficulty": "clean-large",
    "outcome": "reviewed_dry_run",
    "reason": "bench:x6-clean-claims-helpers",
-   "cost": 0.057,
+   "cost": 0.2208,
    "models": {
     "us.openai.gpt-6-astra": {
      "input_tokens": 2,
-     "output_tokens": 106,
+     "output_tokens": 100,
      "cache_read": 0,
-     "cache_write": 3722,
+     "cache_write": 15655,
      "calls": 1
     }
    },
@@ -450,13 +450,13 @@
    "difficulty": "misleading",
    "outcome": "reviewed_dry_run",
    "reason": "bench:y1-comments-hide-exp",
-   "cost": 0.0444,
+   "cost": 0.2108,
    "models": {
     "us.openai.gpt-6-astra": {
      "input_tokens": 2,
-     "output_tokens": 219,
+     "output_tokens": 231,
      "cache_read": 0,
-     "cache_write": 2349,
+     "cache_write": 14408,
      "calls": 1
     }
    },
@@ -468,8 +468,8 @@
      "line": 130,
      "severity": "major",
      "category": "security",
-     "title": "Restore local JWT expiry verification",
-     "body": "Changing verify_exp to False allows jwt.decode to accept expired, correctly signed tokens. The upstream authorizer is not a substitute for this helper's existing expiry check: calls outside that authorizer path, or verification after a token expires downstream, no longer receive the previous protection. This is a security-relevant behavior change, not a comment cleanup. Preserve expiry verification and add a regression test asserting that an expired signed token is rejected.",
+     "title": "Restore application-side JWT expiry verification",
+     "body": "Setting verify_exp to False allows expired, correctly signed tokens to pass this helper: validate_claims checks issuer, client and subject, not expiry. Although the configured Runtime JWT authorizer rejects expired tokens upstream, this helper is explicitly intended to verify identity independently of the deployment. Local or alternative deployments without that authorizer can now accept expired credentials and use their subject for user-scoped access, including Memory. This is a behavioral security change, not a comment cleanup.",
      "suggestion": "                \"verify_exp\": True,"
     }
    ],
@@ -484,13 +484,13 @@
    "difficulty": "misleading",
    "outcome": "reviewed_dry_run",
    "reason": "bench:y2-wrong-file-issuer",
-   "cost": 0.0568,
+   "cost": 0.2282,
    "models": {
     "us.openai.gpt-6-astra": {
      "input_tokens": 2,
-     "output_tokens": 226,
+     "output_tokens": 225,
      "cache_read": 0,
-     "cache_write": 3225,
+     "cache_write": 15695,
      "calls": 1
     }
    },
@@ -502,8 +502,8 @@
      "line": 73,
      "severity": "major",
      "category": "security",
-     "title": "Missing issuer claims now bypass issuer validation",
-     "body": "The added truthiness guard skips validation when `iss` is absent, null, or empty. For example, `validate_claims({'sub': 'caller'}, expected_issuer='https://trusted.example')` now returns `caller` with the default allowed_clients, whereas it previously rejected the claims. This violates the function's expected-issuer trust boundary; checking a client ID when configured does not establish the issuer either.",
+     "title": "Preserve rejection of tokens without an issuer",
+     "body": "The new truthiness guard skips issuer validation when `iss` is absent, null, or empty. Such claims now pass this helper if they contain a subject and satisfy any configured client allowlist, despite not matching the configured issuer. Signature verification does not itself require an issuer claim, and this helper is the documented agent-side issuer check. Restore strict equality and add regression tests for missing, null, and empty `iss` values.",
      "suggestion": "    if issuer != expected_issuer:"
     }
    ],
@@ -518,13 +518,13 @@
    "difficulty": "misleading",
    "outcome": "reviewed_dry_run",
    "reason": "bench:y3-refactor-drops-https-guard",
-   "cost": 0.0075,
+   "cost": 0.0431,
    "models": {
     "us.openai.gpt-6.1-sol": {
      "input_tokens": 2,
-     "output_tokens": 225,
+     "output_tokens": 341,
      "cache_read": 0,
-     "cache_write": 1828,
+     "cache_write": 14317,
      "calls": 1
     }
    },
@@ -537,7 +537,7 @@
      "severity": "major",
      "category": "security",
      "title": "Restore HTTPS validation before sending the response",
-     "body": "Removing the scheme guard allows an event-supplied HTTP ResponseURL to receive the CloudFormation response over an unencrypted connection. Previously, _send rejected such URLs. The remaining nosec comment also incorrectly claims the URL is validated above.",
+     "body": "The previous implementation rejected ResponseURL values that did not start with https://. The extracted helper only serializes the body, so _send now passes an unchecked URL to urllib.request.urlopen, including HTTP URLs that transmit the response without TLS. This is a behavioral security regression, and the remaining nosec comment incorrectly claims the URL was validated.",
      "suggestion": "    if not url.startswith(\"https://\"):\n        raise ValueError(f\"Response URL must use HTTPS scheme, got: {url[:20]}\")\n    body = _response_body(event, status, data, reason)"
     }
    ],
@@ -552,13 +552,13 @@
    "difficulty": "misleading",
    "outcome": "reviewed_dry_run",
    "reason": "bench:y4-scary-but-clean",
-   "cost": 0.0303,
+   "cost": 0.1944,
    "models": {
     "us.openai.gpt-6-astra": {
      "input_tokens": 2,
-     "output_tokens": 80,
+     "output_tokens": 77,
      "cache_read": 0,
-     "cache_write": 1881,
+     "cache_write": 13828,
      "calls": 1
     }
    },
@@ -580,5 +580,5 @@
   "recall": 1.0,
   "f1": 1.0
  },
- "cost_usd": 0.3926
+ "cost_usd": 2.5264
 }
