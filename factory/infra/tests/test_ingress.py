@@ -148,3 +148,20 @@ def test_dependabot_drafts_and_closed_prs_are_not_reviewed(sent):
     ):
         assert ingress.handler(pr_event(body), None)["statusCode"] == 202
     assert not sent
+
+
+def test_merged_factory_pr_queues_the_merge_handler_only(sent):
+    def merged(branch, merged=True):
+        b = json.loads(pr_body(action="closed", branch=branch))
+        b["pull_request"]["merged"] = merged
+        return json.dumps(b).encode()
+
+    for body in (
+        merged("factory/task/123"),
+        merged("feature/x"),
+        merged("factory/task/9", merged=False),
+    ):
+        assert ingress.handler(pr_event(body), None)["statusCode"] == 202
+    assert sent == [
+        {"role": "merge_handler", "delivery_id": "d-1", "pull_request": {"number": 7}}
+    ]

@@ -19,8 +19,10 @@ from pathlib import Path
 
 import boto3
 
-from factory import github
+from factory import asana, github
 from factory.ci_fixer import Run
+from factory.developer import Developer, MergeHandler, next_task, open_agent_prs
+from factory.pm import ProductManager
 from factory.reviewer import Review
 
 REPO = os.environ.get(
@@ -32,6 +34,8 @@ MAX_BODY = 5 * 1024 * 1024
 PUBLISH = os.environ.get("FACTORY_PUBLISH", "false") == "true"
 # Reviews are posted only with their own switch, separate from CI-fix PRs.
 REVIEW_PUBLISH = os.environ.get("FACTORY_REVIEW_PUBLISH", "false") == "true"
+# Developer PRs need their own switch AND an Asana token; otherwise the branch stays local.
+DEV_PUBLISH = os.environ.get("FACTORY_DEV_PUBLISH", "false") == "true"
 _busy = threading.Lock()  # one run per session; each session is its own microVM
 _state = {"last_update": int(time.time())}
 
@@ -99,6 +103,25 @@ def validate(payload: dict) -> dict:
         if number <= 0:
             raise ValueError("pull_request.number must be positive")
         return {"id": number}
+    if payload.get("role") == "product_manager":
+        return {"id": "pm"}
+    if payload.get("role") == "developer":
+        task = payload.get("task")
+        if task is not None and not (
+            re.fullmatch(r"\d{1,20}", str(task.get("gid", "")))
+            and str(task.get("title", "")).strip()
+        ):
+            raise ValueError("task needs a numeric gid and a title")
+        if payload.get("snapshot_key") is not None and not re.fullmatch(
+            r"[\w-]{1,64}", str(payload["snapshot_key"])
+        ):
+            raise ValueError("snapshot_key must be [A-Za-z0-9_-]{1,64}")
+        return {"id": f"task-{(task or {}).get('gid', 'next')}"}
+    if payload.get("role") == "merge_handler":
+        number = int(payload["pull_request"]["number"])
+        if number <= 0:
+            raise ValueError("pull_request.number must be positive")
+        return {"id": f"merge-{number}"}
     if payload.get("role") != "ci_fixer":
         raise ValueError(f"unsupported role {payload.get('role')!r}")
     run = payload["workflow_run"]
@@ -199,9 +222,108 @@ def handle_review(payload: dict) -> dict:
     }
 
 
+def _github_token() -> str:
+    creds = load_app_creds()
+    return github.installation_token(creds, REPO)[0] if creds else ""
+
+
+def _finish(agent, rec: dict, dry_run: bool, keys: tuple) -> dict:
+    line = agent.record(rec, dry_run=dry_run)
+    print(json.dumps({"factory_run": line}), flush=True)
+    return {**line, **{k: rec[k] for k in keys if rec.get(k)}}
+
+
+def _safe(fn) -> dict:
+    try:
+        return fn()
+    except Exception as e:  # noqa: BLE001 - every failure must still produce a run row
+        traceback.print_exc()
+        return {"outcome": "failed", "reason": f"{type(e).__name__}: {e}"[:500]}
+
+
+def handle_pm(payload: dict) -> dict:
+    work = Path("/tmp/factory") / "pm"
+    agent = ProductManager(clone(work), work, REGION, REPO, _github_token())
+    rec = _safe(lambda: agent.execute(initial=payload.get("initial")))
+    return _finish(
+        agent, rec, True, ("board_diff", "proposed_tasks", "reconcile", "dropped")
+    )
+
+
+def handle_developer(payload: dict) -> dict:
+    token = _github_token()
+    session = boto3.Session(region_name=REGION)
+    task = payload.get("task")
+    board = asana.Board(
+        session,
+        "developer",
+        f"task-{(task or {}).get('gid', 'next')}",
+        snapshot_key=payload.get("snapshot_key"),
+        # A test snapshot's ops carry the test key as project, so the Mac sync never applies them.
+        project=payload.get("snapshot_key") or asana.PROJECT,
+    )
+    if task is None:
+        try:
+            task = next_task(board)
+        except asana.StaleSnapshot as e:
+            return {"outcome": "skipped", "reason": str(e)}
+    if task is None:
+        return {"outcome": "skipped", "reason": "no task in Ready for agent"}
+    work = Path("/tmp/factory") / f"task-{task['gid']}"
+    agent = Developer(task, clone(work), work, REGION, REPO, board)
+    board.run_id = agent.id
+    publish = bool(DEV_PUBLISH and token and not payload.get("dry_run"))
+    if publish and open_agent_prs(REPO, token) >= 2:
+        rec = {"outcome": "skipped", "reason": "2 agent PRs already open"}
+    else:
+        rec = _safe(agent.execute)
+        if publish and rec.get("outcome") == "branch_ready_dry_run":
+            rec.update(_safe(lambda: agent.ship(token)))
+        rec["asana_ops"] = board.ops
+    keys = (
+        "plan",
+        "checks",
+        "pr_title",
+        "pr_body",
+        "pr_url",
+        "files_changed",
+        "refused",
+        "asana_ops",
+    )
+    return _finish(agent, rec, not publish, keys)
+
+
+def handle_merge(payload: dict) -> dict:
+    token = _github_token()
+    pr = github.get_pull(REPO, int(payload["pull_request"]["number"]), token)
+    if not pr.get("merged_at") or not pr["head"]["ref"].startswith("factory/"):
+        return {"outcome": "skipped", "reason": "not a merged factory PR"}
+    board = asana.Board(
+        boto3.Session(region_name=REGION), "merge_handler", f"merge-{pr['number']}"
+    )
+    agent = MergeHandler(
+        pr, Path("/tmp/factory") / f"merge-{pr['number']}", REGION, REPO, board
+    )
+    agent.work.mkdir(parents=True, exist_ok=True)
+    out = _finish(
+        agent, _safe(agent.execute), True, ("pr_url", "updated_runs", "asana_ops")
+    )
+    out["product_manager"] = handle_pm(
+        {}
+    )  # a merge changes the repo: refresh the board
+    return out
+
+
 def handle(payload: dict) -> dict:
-    if payload.get("role") == "pr_reviewer":
+    role = payload.get("role")
+    if role == "pr_reviewer":
         return handle_review(payload)
+    if role == "product_manager":
+        return handle_pm(payload)
+    if role == "developer":
+        return handle_developer(payload)
+    if role == "merge_handler":
+        return handle_merge(payload)
     run = validate(payload)
     work = Path("/tmp/factory") / str(run["id"])
     repo = clone(work)

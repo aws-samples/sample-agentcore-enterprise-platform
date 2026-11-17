@@ -4,7 +4,7 @@ FROM --platform=linux/arm64 public.ecr.aws/docker/library/node:22-bookworm-slim 
 
 FROM --platform=linux/arm64 public.ecr.aws/docker/library/python:3.13-slim
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git ca-certificates \
+    && apt-get install -y --no-install-recommends git ca-certificates make \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules

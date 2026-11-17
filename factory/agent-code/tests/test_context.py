@@ -2,9 +2,10 @@
 
 import subprocess
 
-from factory import reviewer
 from factory.context import build_pack
 from factory.reviewer import Review
+
+from factory import reviewer
 
 
 def _git(cwd, *args):
