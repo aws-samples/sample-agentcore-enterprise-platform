@@ -177,3 +177,72 @@ def test_superseded_op_can_be_queued_again():
     assert a.ops_table.items[k]["status"] == "pending" and not b.ops[-1].get(
         "duplicate"
     )
+
+
+def test_open_pr_coverage_comment_action_and_multi_pr_done():
+    from factory.pm import covered_by_open_pr
+
+    open_prs = [
+        {"url": "https://x/pull/118", "files": ["migration/a.py", "tests/t.py"]}
+    ]
+    assert (
+        covered_by_open_pr({"files": ["migration/a.py", "tests/new.py"]}, open_prs)
+        == "https://x/pull/118"
+    )
+    assert (
+        covered_by_open_pr(
+            {"files": ["stacks/b.py", "stacks/c.py", "migration/a.py"]}, open_prs
+        )
+        == ""
+    )
+    proposal = {
+        "reconcile": [
+            {
+                "task_gid": "1",
+                "action": "done",
+                "pr_urls": ["https://x/pull/82", "https://x/pull/88"],
+            },
+            {
+                "task_gid": "2",
+                "action": "comment",
+                "pr_urls": ["https://x/pull/118"],
+                "text": "PR open",
+            },
+            {
+                "task_gid": "3",
+                "action": "comment",
+                "pr_urls": ["https://x/pull/7"],
+                "text": "?",
+            },
+        ],
+        "tasks": [
+            {
+                "title": "T",
+                "why": "w",
+                "acceptance": ["x"],
+                "files": ["migration/a.py"],
+                "size": "S",
+            }
+        ],
+    }
+    rec, new, dropped = plan_board(
+        proposal,
+        [],
+        {"1", "2", "3"},
+        {"https://x/pull/82", "https://x/pull/88"},
+        set(),
+        open_prs,
+    )
+    assert [(r["task"], r["section"]) for r in rec] == [("1", "Done"), ("2", None)]
+    assert "pull/88" in rec[0]["comment"] and not new and len(dropped) == 2
+
+
+def test_ruling_still_needs_merged_prs():
+    rulings = [
+        {"task_gid": "1", "action": "done", "pr_urls": ["https://x/pull/82"]},
+        {"task_gid": "2", "action": "done", "pr_urls": ["https://x/pull/999"]},
+    ]
+    rec, _, dropped = plan_board(
+        {"reconcile": rulings}, [], {"1", "2"}, {"https://x/pull/82"}, set()
+    )
+    assert [r["task"] for r in rec] == ["1"] and len(dropped) == 1
