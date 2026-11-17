@@ -3,7 +3,9 @@
 This is a simple Strands agent running on EC2 with no managed infrastructure.
 The workshop will migrate this to AgentCore Runtime.
 """
+
 import os
+
 from strands import Agent
 from strands.models.bedrock import BedrockModel
 
