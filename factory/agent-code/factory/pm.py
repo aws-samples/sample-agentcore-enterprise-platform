@@ -161,6 +161,7 @@ class ProductManager(Run):
     TOKEN_CAP = 400_000
     EXTRA_KEYS = (
         "issue_ops",
+        "proposal",
         "board_diff",
         "proposed_tasks",
         "reconcile",
@@ -393,6 +394,7 @@ class ProductManager(Run):
                 "issue_ops": self.tracker.ops,
                 "board_diff": counts,
                 "proposed_tasks": new,
+                "proposal": proposal,  # the model's raw answer, before the rules above (audit trail)
                 "reconcile": reconcile,
                 "dropped": dropped,
                 "inputs": {
