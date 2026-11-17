@@ -500,3 +500,35 @@ def test_cloud_sync_claims_first_and_refuses_tasks_outside_the_project():
         ("b", "failed"),
     ]
     assert "not in project" in out[1]["error"] and moved == ["1"]
+
+
+def test_user_token_asks_for_consent_until_the_user_has_authorized():
+    from factory.asana_sync import SCOPES, user_token
+
+    class AC:
+        def __init__(self, resp):
+            self.resp, self.req = resp, None
+
+        def get_workload_access_token_for_user_id(self, workloadName, userId):
+            assert (workloadName, userId) == ("wl", "robcata")
+            return {"workloadAccessToken": "wat"}
+
+        def get_resource_oauth2_token(self, **kw):
+            self.req = kw
+            return self.resp
+
+    ac = AC(
+        {
+            "authorizationUrl": "https://app.asana.com/-/oauth_authorize?x",
+            "sessionUri": "urn:s",
+        }
+    )
+    assert user_token(ac, "wl", "https://r") == {
+        "authorization_url": "https://app.asana.com/-/oauth_authorize?x",
+        "session_uri": "urn:s",
+    }
+    assert ac.req["oauth2Flow"] == "USER_FEDERATION" and ac.req["scopes"] == SCOPES
+    assert (
+        "projects:write" not in SCOPES
+    )  # sections already exist; no project-level write
+    assert user_token(AC({"accessToken": "t"}), "wl", "https://r") == {"token": "t"}
