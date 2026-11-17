@@ -44,13 +44,16 @@ def _secret() -> bytes:
 
 
 def _installation_id() -> str:
-    """installation_id from the GitHub App secret; '' while the secret is '{}' (dry run, App not created)."""
+    """Expected GitHub App installation id from SSM; '' while the parameter is 'none' (App not set up yet).
+
+    Kept out of the App secret so the ingress never holds the App's private key.
+    """
     if _cache["installation"] is not None and time.time() - _cache["inst_at"] < 300:
         return _cache["installation"]
-    raw = _client("secretsmanager").get_secret_value(
-        SecretId=os.environ["APP_SECRET_ARN"]
-    )["SecretString"]
-    value = str(json.loads(raw or "{}").get("installation_id") or "")
+    raw = _client("ssm").get_parameter(Name=os.environ["INSTALLATION_PARAM"])[
+        "Parameter"
+    ]["Value"]
+    value = "" if raw.strip() == "none" else raw.strip()
     _cache.update(installation=value, inst_at=time.time())
     return value
 

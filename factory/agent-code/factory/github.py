@@ -107,6 +107,7 @@ def verify_app(creds: dict, repo: str) -> dict:
     repos = request("GET", "/installation/repositories?per_page=100", token)
     deliveries = request("GET", "/app/hook/deliveries?per_page=50", jwt)
     return {
+        "installation_id": inst.get("id"),
         "account": (inst.get("account") or {}).get("login"),
         "repository_selection": inst.get("repository_selection"),
         "suspended": bool(inst.get("suspended_at")),

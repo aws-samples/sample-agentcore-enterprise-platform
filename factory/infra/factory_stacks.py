@@ -66,6 +66,9 @@ from aws_cdk import (
     aws_sqs as sqs,
 )
 from aws_cdk import (
+    aws_ssm as ssm,
+)
+from aws_cdk import (
     custom_resources as cr,
 )
 from constructs import Construct
@@ -130,6 +133,14 @@ class SoftwareFactoryDataStack(cdk.Stack):
             generate_secret_string=sm.SecretStringGenerator(
                 password_length=64, exclude_punctuation=True
             ),
+        )
+        # Not a secret; the ingress reads it so it never needs the App secret. 'none' = accept any installation.
+        self.installation_id = ssm.StringParameter(
+            self,
+            "InstallationId",
+            parameter_name="/software-factory/github-installation-id",
+            string_value=self.node.try_get_context("installation_id") or "none",
+            description="GitHub App installation id the webhook ingress accepts",
         )
         # Empty placeholder until the user creates the GitHub App; the agent runs dry-run while empty.
         self.github_app = sm.Secret(
@@ -517,16 +528,14 @@ class SoftwareFactoryStack(cdk.Stack):
             ),
             environment={
                 "SECRET_ARN": data.webhook_secret.secret_arn,
-                "APP_SECRET_ARN": data.github_app.secret_arn,
+                "INSTALLATION_PARAM": data.installation_id.parameter_name,
                 "DEDUPE_TABLE": data.dedupe.table_name,
                 "QUEUE_URL": queue.queue_url,
                 "REPO": GITHUB_REPO,
             },
         )
         data.webhook_secret.grant_read(ingress)
-        # shortcut: reads the whole App secret (incl. private key) for installation_id; split it into its
-        # own secret if the ingress should not hold the key.
-        data.github_app.grant_read(ingress)
+        data.installation_id.grant_read(ingress)
         ingress.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["dynamodb:PutItem", "dynamodb:DeleteItem"],

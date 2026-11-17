@@ -1,6 +1,7 @@
 {
   "app": "python3 app.py",
   "context": {
-    "@aws-cdk/aws-iam:minimizePolicies": true
+    "@aws-cdk/aws-iam:minimizePolicies": true,
+    "installation_id": "182870829"
   }
 }
