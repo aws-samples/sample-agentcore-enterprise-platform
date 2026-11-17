@@ -16,7 +16,19 @@ def handler(event, context):
         try:
             message = json.loads(record["body"])
             # Deterministic id: a retry reattaches to the same session instead of starting a second run.
-            if message.get("role") == "pr_reviewer":
+            role = message.get("role")
+            if role == "merge_handler":
+                session_id = (
+                    f"factory-merge-{int(message['pull_request']['number'])}".ljust(
+                        33, "-"
+                    )
+                )
+            elif role in ("product_manager", "developer"):
+                # Scheduled/manual: one session per SQS message (its id is unique per delivery).
+                session_id = f"factory-{role}-{record['messageId']}"[:100].ljust(
+                    33, "-"
+                )
+            elif role == "pr_reviewer":
                 pr = message["pull_request"]
                 session_id = f"factory-rev-{int(pr['number'])}-{str(pr.get('head_sha', ''))[:12]}".ljust(
                     33, "-"

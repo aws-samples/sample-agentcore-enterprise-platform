@@ -94,6 +94,26 @@ REVIEW_ACTIONS = {"opened", "synchronize", "reopened", "ready_for_review"}
 def _pull_request(payload: dict, delivery: str) -> dict:
     """Queue a review. factory/* PRs are reviewed too (agent-written code gets an agent review); Dependabot is not."""
     pr = payload.get("pull_request") or {}
+    merged_factory_pr = (
+        payload.get("action") == "closed"
+        and pr.get("merged")
+        and str((pr.get("head") or {}).get("ref", "")).startswith("factory/")
+        and ((pr.get("base") or {}).get("repo") or {}).get("full_name") == REPO
+    )
+    if merged_factory_pr:
+        if not delivery or not _first_delivery(delivery):
+            return _resp(202, "duplicate")
+        message = {
+            "role": "merge_handler",
+            "delivery_id": delivery,
+            "pull_request": {"number": int(pr["number"])},
+        }
+        try:
+            _enqueue(message, group=f"pr-{int(pr['number'])}", dedupe_id=delivery)
+        except Exception:
+            _forget(delivery)
+            raise
+        return _resp(202, "queued")
     if (
         payload.get("action") not in REVIEW_ACTIONS
         or pr.get("draft")

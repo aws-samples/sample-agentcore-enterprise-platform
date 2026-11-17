@@ -36,6 +36,7 @@ PRICES = {  # (input, output, cache read, cache write); cache write = the defaul
     "us.openai.gpt-6.1-sol": (2.2, 11.0, 0.11, 2.75),
     "us.openai.gpt-6-astra": (11.0, 55.0, 1.1, 13.75),
 }
+FALLBACK = {"us.anthropic.claude-fable-5-2": "us.anthropic.claude-opus-5-5"}
 BASE_BRANCH = os.environ.get("FACTORY_BASE_BRANCH", "main")
 
 _TS = re.compile(r"^(?:[\w-]+\t[^\t]*\t)?\d{4}-\d\d-\d\dT[\d:.]+Z ?")
@@ -119,6 +120,7 @@ class Run:
         self.id = str(run_obj["id"])
         self.started = time.time()
         self.models: dict = {}
+        self.fallbacks: list[str] = []
         self.used_input = 0
         self.session = session = boto3.Session(profile_name=profile, region_name=region)
         self.bedrock = session.client(
@@ -140,12 +142,22 @@ class Run:
             raise BudgetExceeded(
                 f"next call would exceed {self.TOKEN_CAP} input tokens"
             )
-        resp = self.bedrock.converse(
-            modelId=model,
-            system=[{"text": system}],
-            messages=[{"role": "user", "content": [{"text": prompt}]}],
-            inferenceConfig={"maxTokens": max_tokens},
-        )
+        try:
+            resp = self.bedrock.converse(
+                modelId=model,
+                system=[{"text": system}],
+                messages=[{"role": "user", "content": [{"text": prompt}]}],
+                inferenceConfig={"maxTokens": max_tokens},
+            )
+        except self.bedrock.exceptions.ValidationException as e:
+            # Fable needs the account's Bedrock data-retention opt-in (an account owner's decision);
+            # until then use Opus and say so in the run row.
+            if model not in FALLBACK or "data retention mode" not in str(e):
+                raise
+            self.fallbacks.append(
+                f"{model} -> {FALLBACK[model]}: account has no data-retention opt-in"
+            )
+            return self.ask(FALLBACK[model], system, prompt, max_tokens)
         u = resp["usage"]
         m = self.models.setdefault(
             model,
@@ -708,6 +720,11 @@ class Run:
             "est_cost_usd": self.cost(),
             "started_at": datetime.fromtimestamp(self.started, UTC).isoformat(),
             "dry_run": dry_run,
+            **(
+                {"model_fallbacks": sorted(set(self.fallbacks))}
+                if self.fallbacks
+                else {}
+            ),
         }
         with open(self.work / "factory-runs.jsonl", "a") as f:
             f.write(json.dumps(line) + "\n")
