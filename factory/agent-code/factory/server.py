@@ -284,12 +284,21 @@ def handle_developer(payload: dict) -> dict:
     agent = Developer(task, clone(work), work, REGION, REPO, board)
     board.run_id = agent.id
     publish = bool(DEV_PUBLISH and token and not payload.get("dry_run"))
+    board.op_status = "pending" if publish else "dry_run"
     if publish and open_agent_prs(REPO, token) >= 2:
         rec = {"outcome": "skipped", "reason": "2 agent PRs already open"}
     else:
         rec = _safe(agent.execute)
         if publish and rec.get("outcome") == "branch_ready_dry_run":
             rec.update(_safe(lambda: agent.ship(token)))
+        elif (
+            rec.get("outcome") == "branch_ready_dry_run"
+        ):  # the ops a real run would emit after opening the PR
+            board.move(
+                task["gid"],
+                "In review",
+                f"Developer agent (dry run): would open PR '{rec['pr_title']}'",
+            )
         rec["asana_ops"] = board.ops
     keys = (
         "plan",
