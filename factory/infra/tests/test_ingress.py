@@ -167,12 +167,17 @@ def test_merged_factory_pr_queues_the_merge_handler_only(sent):
     ]
 
 
-def comment_event(body: str, login: str = "maintainer", kind: str = "User") -> dict:
+def comment_event(
+    body: str,
+    login: str = "maintainer",
+    kind: str = "User",
+    association: str = "MEMBER",
+) -> dict:
     payload = {
         "action": "created",
         "repository": {"full_name": REPO},
         "issue": {"number": 7},
-        "comment": {"body": body},
+        "comment": {"body": body, "author_association": association},
         "sender": {"login": login, "type": kind},
     }
     raw = json.dumps(payload).encode()
@@ -210,4 +215,14 @@ def test_bot_and_plain_comments_never_queue(sent, monkeypatch):
 def test_rate_limited_command_is_not_queued(sent, monkeypatch):
     monkeypatch.setattr(ingress, "_rate_limited", lambda issue: True)
     ingress.handler(comment_event("/dev"), None)
+    assert sent == []
+
+
+def test_outsider_command_is_dropped_before_the_rate_limit(sent, monkeypatch):
+    def counted(issue):
+        raise AssertionError("an outsider's command must not be counted")
+
+    monkeypatch.setattr(ingress, "_rate_limited", counted)
+    ingress.handler(comment_event("/pm hello", association="NONE"), None)
+    ingress.handler(comment_event("/dev", association="CONTRIBUTOR"), None)
     assert sent == []

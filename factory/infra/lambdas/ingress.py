@@ -97,6 +97,7 @@ ISSUE_COMMANDS = {"/pm", "/dev", "/approve", "/reject"}
 PROPOSAL_IDS = re.compile(r"^(all|P-[0-9a-f]{6})( P-[0-9a-f]{6})*$")
 MAX_PM_TEXT = 4000
 MAX_COMMANDS_PER_HOUR = 10  # per issue, per UTC hour
+TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}  # GitHub's author_association on a comment
 
 
 def _command(payload: dict, event_name: str) -> dict | None:
@@ -143,6 +144,12 @@ def _issue(payload: dict, event_name: str, delivery: str) -> dict:
     cmd = _command(payload, event_name)
     if cmd is None:
         return _resp(202, "ignored: not a factory command")
+    # Cheap filter before any write or count: comments from outsiders never reach the rate limit.
+    # Label events carry no author_association; the runtime's write check covers them.
+    if event_name == "issue_comment" and (payload.get("comment") or {}).get(
+        "author_association"
+    ) not in TRUSTED_ASSOCIATIONS:
+        return _resp(202, "ignored: author is not an owner, member or collaborator")
     if not delivery or not _first_delivery(delivery):
         return _resp(202, "duplicate")
     number = int(issue["number"])
