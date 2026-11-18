@@ -4,6 +4,7 @@
     "@aws-cdk/aws-iam:minimizePolicies": true,
     "installation_id": "182870829",
     "factory_publish": "true",
+    "factory_pm_publish": "true",
     "factory_review_publish": "true",
     "factory_dev_publish": "true"
   }
