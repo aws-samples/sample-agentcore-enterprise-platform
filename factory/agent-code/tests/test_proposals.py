@@ -48,3 +48,20 @@ def test_unit_cost_divides_spend_by_outcome_count_and_handles_zero():
     assert unit["per posted review"] == {"spend_usd": 0.6, "count": 1, "usd_each": 0.6}
     assert unit["per CI fix PR"]["usd_each"] is None  # no outcomes: no division by zero
     assert unit["per merged dev PR"] == {"spend_usd": 1.0, "count": 1, "usd_each": 1.0}
+
+
+def test_approve_applies_close_relabel_and_create_including_old_proposals():
+    t = issues.Tracker("o/r", "", publish=False)
+    issues.apply_proposal(t, {"action": "close", "target": 7, "body": "done"})
+    issues.apply_proposal(t, {"action": "needs_scoping", "target": 8, "body": "vague"})
+    issues.apply_proposal(
+        t, {"title": "T", "body": "b", "labels": ["factory:pm"]}
+    )  # no action: create
+    assert [(o["op"], o.get("issue")) for o in t.ops] == [
+        ("comment", 7),
+        ("close", 7),
+        ("add_labels", 8),
+        ("remove_label", 8),
+        ("comment", 8),
+        ("create", None),
+    ]

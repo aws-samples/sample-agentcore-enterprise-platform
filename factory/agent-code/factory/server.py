@@ -477,7 +477,11 @@ def handle_merge(payload: dict) -> dict:
     return out
 
 
-WRITE_ROLES = {"admin", "maintain", "write"}  # the commands in issue comments need write access
+WRITE_ROLES = {
+    "admin",
+    "maintain",
+    "write",
+}  # the commands in issue comments need write access
 
 
 def _can_write(login: str, token: str) -> bool:
@@ -525,7 +529,10 @@ def _decide(number: int, name: str, args: str, actor: str, token: str) -> dict:
     """/approve or /reject P-xxxxxx (or 'all'): only on the Factory digest issue, where proposals are posted."""
     digest, _ = issues.digest_issue(REPO, token, create=False)
     if digest is None or number != digest:
-        return {"outcome": "skipped", "reason": "reply on the open 'Factory digest' issue"}
+        return {
+            "outcome": "skipped",
+            "reason": "reply on the open 'Factory digest' issue",
+        }
     pending = issues.pending_proposals(REPO, token, digest)
     verdict = "approved" if name == "approve" else "rejected"
     tracker = issues.Tracker(REPO, token, True)
@@ -535,11 +542,7 @@ def _decide(number: int, name: str, args: str, actor: str, token: str) -> dict:
             decisions.append({"id": pid, "outcome": "not pending"})
             continue
         p = pending[pid]
-        created = (
-            tracker.create(p["title"], p["body"], p["labels"])
-            if verdict == "approved"
-            else None
-        )
+        created = issues.apply_proposal(tracker, p) if verdict == "approved" else None
         note = f"{pid} {verdict} by @{actor}" + (f" as #{created}" if created else "")
         tracker.comment(
             digest, f"<!-- factory:resolved {pid} {verdict} -->\nFactory PM: {note}"

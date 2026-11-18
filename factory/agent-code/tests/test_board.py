@@ -284,14 +284,21 @@ def test_tracker_dry_run_records_and_never_calls_github(monkeypatch):
     issues.apply_plan(dry, reconcile, new)
     assert not calls and all(not o["applied"] for o in dry.ops)
     assert [o["op"] for o in dry.ops] == [
+        "propose",
+        "propose",
         "comment",
+        "propose",
+        "propose",
+    ]
+    # Closes and relabels wait for /approve: the plan alone never closes or relabels an issue.
+    assert not {"close", "add_labels", "remove_label", "create"} & {
+        o["op"] for o in dry.ops
+    }
+    assert [o["action"] for o in dry.ops if o["op"] == "propose"] == [
         "close",
-        "add_labels",
-        "remove_label",
-        "comment",
-        "comment",
-        "propose",
-        "propose",
+        "needs_scoping",
+        "create",
+        "create",
     ]
     assert dry.ops[-2]["labels"] == [issues.PM, issues.READY] and dry.ops[-1][
         "labels"

@@ -15,7 +15,9 @@ from factory import github
 READY, IN_PROGRESS, BACKLOG = "factory:ready", "factory:in-progress", "factory:backlog"
 NEEDS_SCOPING, PM = "factory:needs-scoping", "factory:pm"
 MARKER = "<!-- factory:pm -->"  # in the body too, so a PM issue is recognised even if its label is removed
-DIGEST_TITLE = "Factory digest"  # the one pinned issue: digests, proposals and their decisions
+DIGEST_TITLE = (
+    "Factory digest"  # the one pinned issue: digests, proposals and their decisions
+)
 PROPOSAL = re.compile(r"<!-- factory:proposal (\{.*?\}) -->")
 RESOLVED = re.compile(r"<!-- factory:resolved (P-[0-9a-f]{6}) (approved|rejected) -->")
 SECTION_LABEL = {
@@ -119,12 +121,31 @@ class Tracker:
         )
         return resp.get("number")
 
-    def propose(self, title: str, body: str, labels: list[str]) -> str:
-        """Post a proposed issue as a comment on the Factory digest issue. A maintainer's /approve creates it."""
+    def propose(
+        self,
+        title: str,
+        body: str,
+        labels: list[str],
+        action: str = "create",
+        target: int | None = None,
+    ) -> str:
+        """Post a proposal as a comment on the Factory digest issue; a maintainer's /approve applies it.
+
+        action: create (a new issue), close (target), or needs_scoping (relabel target off factory:ready).
+        """
         pid = "P-" + secrets.token_hex(3)
         # Escape < and > so the JSON cannot close the HTML comment early.
         data = (
-            json.dumps({"id": pid, "title": title, "body": body, "labels": labels})
+            json.dumps(
+                {
+                    "id": pid,
+                    "action": action,
+                    "target": target,
+                    "title": title,
+                    "body": body,
+                    "labels": labels,
+                }
+            )
             .replace("<", "\\u003c")
             .replace(">", "\\u003e")
         )
@@ -133,9 +154,21 @@ class Tracker:
             f"Reply `/approve {pid}` (or `/reject {pid}`) on this issue.\n\n"
             f"<!-- factory:proposal {data} -->"
         )
-        number = digest_issue(self.repo, self.token, create=True)[0] if self.publish else None
+        number = (
+            digest_issue(self.repo, self.token, create=True)[0]
+            if self.publish
+            else None
+        )
         self._do(
-            {"op": "propose", "id": pid, "title": title, "labels": labels, "issue": number},
+            {
+                "op": "propose",
+                "id": pid,
+                "action": action,
+                "target": target,
+                "title": title,
+                "labels": labels,
+                "issue": number,
+            },
             "POST",
             f"/issues/{number}/comments",
             {"body": text},
@@ -144,14 +177,21 @@ class Tracker:
 
 
 def apply_plan(tracker: Tracker, reconcile: list[dict], new: list[dict]) -> None:
-    """plan_board's output as issue writes."""
+    """plan_board's output: comments go straight on the issue; closes, relabels and new issues become proposals."""
     for r in reconcile:
         n = int(r["task"])
         if r["section"] == "Done":
-            tracker.close(n, f"Factory PM: {r['comment']}")
+            r["proposal"] = tracker.propose(
+                f"Close #{n}", f"Factory PM: {r['comment']}", [], "close", n
+            )
         elif r["section"] == "Needs scoping":
-            tracker.label(n, add=[NEEDS_SCOPING], remove=[READY])
-            tracker.comment(n, f"Factory PM: needs scoping. {r['comment']}")
+            r["proposal"] = tracker.propose(
+                f"Mark #{n} as needing scoping",
+                f"Factory PM: needs scoping. {r['comment']}",
+                [NEEDS_SCOPING],
+                "needs_scoping",
+                n,
+            )
         else:
             tracker.comment(n, f"Factory PM: {r['comment']}")
     for t in new:
@@ -160,9 +200,29 @@ def apply_plan(tracker: Tracker, reconcile: list[dict], new: list[dict]) -> None
         )
 
 
+def apply_proposal(tracker: Tracker, p: dict) -> int | None:
+    """What /approve does with one proposal. Returns the new issue number for a create, else None."""
+    action, target = (
+        p.get("action", "create"),
+        p.get("target"),
+    )  # older proposals had no action
+    if action == "close":
+        tracker.close(int(target), p["body"])
+        return None
+    if action == "needs_scoping":
+        tracker.label(int(target), add=[NEEDS_SCOPING], remove=[READY])
+        tracker.comment(int(target), p["body"])
+        return None
+    if action != "create":
+        raise ValueError(f"unknown proposal action {action!r}")
+    return tracker.create(p["title"], p["body"], p["labels"])
+
+
 def digest_issue(repo: str, token: str, create: bool) -> tuple[int | None, bool]:
     """(number, created): the open 'Factory digest' issue, created when missing and create is set."""
-    for i in open_issues(repo, token):  # shortcut: lists every open issue, fine until the repo has thousands
+    for i in open_issues(
+        repo, token
+    ):  # shortcut: lists every open issue, fine until the repo has thousands
         if i["title"] == DIGEST_TITLE:
             return i["number"], False
     if not create:
@@ -201,7 +261,9 @@ def _comments(repo: str, token: str, number: int) -> list[dict]:
     out, page = [], 1
     while True:
         batch = github.request(
-            "GET", f"/repos/{repo}/issues/{number}/comments?per_page=100&page={page}", token
+            "GET",
+            f"/repos/{repo}/issues/{number}/comments?per_page=100&page={page}",
+            token,
         )
         out += batch
         if len(batch) < 100:
