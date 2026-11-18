@@ -500,3 +500,80 @@ def test_regional_model_swap_refused_leaves_platform_yaml_unchanged(
     with pytest.raises(SystemExit, match="same available model"):
         w.step_platform()
     assert manifest.read_text() == _PINNED
+
+
+# ── upsert: the old block is replaced whole, whatever its layout ─────────────
+_NEW = {"claude_version": "2.1.320", "teams": [{"name": "new"}]}
+
+
+def _upserted(text: str) -> tuple[str, dict]:
+    out = setup.upsert_use_case_block(text, _NEW)
+    return out, yaml.safe_load(out)
+
+
+def test_old_block_with_a_two_space_comment_leaves_no_stale_fields():
+    # YAML ignores a comment's indentation: fields after it still belong to the block.
+    text = (
+        "use_cases:\n"
+        "  claude-3p-on-bedrock:\n"
+        "    claude_version: 2.1.0\n"
+        "  # a comment at two spaces\n"
+        "    teams: [{name: old}]\n"
+        "    default: {models: []}\n"
+        "region: eu-west-1\n"
+    )
+    out, data = _upserted(text)
+    assert data["use_cases"]["claude-3p-on-bedrock"] == _NEW
+    assert (
+        out.count("teams:") == 1 and "default" not in out
+    )  # no stale or duplicate keys
+    assert data["region"] == "eu-west-1"
+
+
+def test_four_space_indentation_is_kept():
+    text = (
+        "use_cases:\n"
+        "    release-notes: {x: 1}\n"
+        "    claude-3p-on-bedrock:\n"
+        "        claude_version: 2.1.0\n"
+        "region: eu-west-1\n"
+    )
+    out, data = _upserted(text)
+    assert data["use_cases"]["release-notes"] == {"x": 1}
+    assert data["use_cases"]["claude-3p-on-bedrock"] == _NEW
+    assert (
+        "    claude-3p-on-bedrock:\n" in out and "\n  claude-3p-on-bedrock" not in out
+    )
+
+
+def test_new_block_follows_the_existing_indentation():
+    text = "use_cases:\n    release-notes: {x: 1}\nregion: eu-west-1\n"
+    out, data = _upserted(text)
+    assert data["use_cases"]["claude-3p-on-bedrock"] == _NEW
+    assert "\n    claude-3p-on-bedrock:\n" in out
+
+
+def test_comments_after_the_block_and_other_use_cases_survive():
+    text = (
+        "use_cases:\n"
+        "  claude-3p-on-bedrock:\n"
+        "    claude_version: 2.1.0\n"
+        "    guardrail: |\n"
+        "      multi\n"
+        "      line\n"
+        "  # about the next one\n"
+        "  release-notes: {}\n"
+        "region: eu-west-1\n"
+    )
+    out, data = _upserted(text)
+    assert "# about the next one" in out
+    assert data["use_cases"]["release-notes"] == {}
+    assert data["use_cases"]["claude-3p-on-bedrock"] == _NEW
+    assert "multi" not in out
+
+
+def test_empty_block_value_is_replaced():
+    for old in ("claude-3p-on-bedrock: {}", "claude-3p-on-bedrock:"):
+        _, data = _upserted(f"use_cases:\n  {old}\n  other: {{}}\nregion: r\n")
+        assert data["use_cases"]["claude-3p-on-bedrock"] == _NEW
+        assert data["use_cases"]["other"] == {}

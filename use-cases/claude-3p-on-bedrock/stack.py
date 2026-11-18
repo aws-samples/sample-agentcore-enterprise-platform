@@ -750,7 +750,7 @@ def build(app, ctx: dict, config: dict) -> None:
         raise ValueError(
             f"use_cases.{USE_CASE} in platform.yaml is invalid:\n{e}"
         ) from None
-    Claude3pOnBedrockStack(
+    stack = Claude3pOnBedrockStack(
         app,
         f"{ctx['prefix']}-uc-{USE_CASE}",
         ctx=ctx,
@@ -758,3 +758,16 @@ def build(app, ctx: dict, config: dict) -> None:
         env=ctx["cdk_env"],
         description="Claude Code and Desktop/Cowork on Bedrock via the Claude apps gateway (Entra SSO)",
     )
+    if cfg.agentcore_tools:
+        # The task reads <ssm_prefix>/gateway/url when CloudFormation deploys it, so
+        # the platform's gateway stack must deploy first. Declared, not left to
+        # construct order: `deploy --stack "<networking> <use case>"` then pulls the
+        # gateway in (and fails here, at synth, when it isn't in the footprint).
+        gateway = app.node.try_find_child(f"{ctx['prefix']}-gateway")
+        if gateway is None:
+            raise ValueError(
+                f"use_cases.{USE_CASE}.agentcore_tools needs the platform's gateway "
+                f"stack ({ctx['prefix']}-gateway), which isn't part of this deployment. "
+                "Add it to the platform, or remove agentcore_tools."
+            )
+        stack.add_dependency(gateway)

@@ -158,8 +158,21 @@ NON_INTERACTIVE=1 ./scripts/deploy.sh deploy --stack "agentcore-workshop-dev-net
 ```
 
 About 25 minutes the first time. This deploys only the platform network and
-the gateway. Replace `agentcore-workshop-dev` if you changed `project` or
-`environment`. To deploy the whole platform too, use `./scripts/deploy.sh build`.
+the Claude apps gateway. Replace `agentcore-workshop-dev` if you changed
+`project` or `environment`. To deploy the whole platform too, use
+`./scripts/deploy.sh build`.
+
+**With `agentcore_tools`** (the example file has it), the AgentCore Gateway has
+to exist first, because the use case reads its URL when it deploys. Add the
+platform's `auth` and `gateway` stacks to the list. The use case's stack also
+declares the dependency, so the gateway always deploys first:
+
+```bash
+NON_INTERACTIVE=1 ./scripts/deploy.sh deploy --stack "agentcore-workshop-dev-networking agentcore-workshop-dev-auth agentcore-workshop-dev-gateway agentcore-workshop-dev-uc-claude-3p-on-bedrock"
+```
+
+If the deployment has no gateway stack, the synth (part of `deploy` and `build`)
+stops with an error that says so. Remove `agentcore_tools` to deploy without it.
 
 ### 4. Check it works
 

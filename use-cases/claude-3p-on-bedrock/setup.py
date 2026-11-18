@@ -213,36 +213,42 @@ def best_public_zone(hostname: str, zones: list[dict]) -> dict | None:
     return max(matches, key=lambda z: len(z["Name"]), default=None)
 
 
-def render_block(cfg: dict) -> str:
+def render_block(cfg: dict, indent: int = 2) -> str:
     body = yaml.safe_dump(cfg, sort_keys=False, default_flow_style=False, width=100)
+    pad = " " * (indent + 2)
     indented = "".join(
-        f"    {line}" if line.strip() else line
+        f"{pad}{line}" if line.strip() else line
         for line in body.splitlines(keepends=True)
     )
-    return f"  {USE_CASE}:\n" + indented
+    return f"{' ' * indent}{USE_CASE}:\n" + indented
 
 
-def _flow_use_cases_to_block(lines: list[str], top: int, text: str) -> None:
-    """`use_cases: {a: {}, b: {x: 1}}` (one or several lines) -> block style, in
-    place, keeping every other use case. Comments inside the flow mapping are not
-    kept. Anything that isn't a mapping is refused, never silently rewritten."""
-    root = yaml.compose(text)
-    value = next(
-        (
-            v
-            for k, v in (root.value if isinstance(root, yaml.MappingNode) else [])
-            if k.value == "use_cases"
-        ),
-        None,
-    )
-    existing = (yaml.safe_load(text) or {}).get("use_cases")
-    if not isinstance(existing, dict) or value is None:
-        raise SystemExit(
-            "stopped: platform.yaml unchanged. use_cases is written in a form the "
-            "wizard can't edit; make it a block mapping (use_cases:, then names "
-            "indented below it) and run again."
+def _last_line(node: yaml.Node) -> int:
+    """Last source line (0-based) holding content of `node`. A block collection's
+    own end mark is the start of whatever follows it, so use its children."""
+    if isinstance(node, yaml.ScalarNode):
+        end = node.end_mark
+        return (
+            end.line - 1
+            if end.column == 0 and end.line > node.start_mark.line
+            else end.line
         )
-    others = {k: v for k, v in existing.items() if k != USE_CASE}
+    if isinstance(node, yaml.CollectionNode) and not node.flow_style:
+        children = (
+            [x for pair in node.value for x in pair]
+            if isinstance(node, yaml.MappingNode)
+            else node.value
+        )
+        return max((_last_line(c) for c in children), default=node.start_mark.line)
+    return node.end_mark.line
+
+
+def _flow_use_cases_to_block(text: str, key: yaml.Node, value: yaml.Node) -> str:
+    """`use_cases: {a: {}, b: {x: 1}}` (one or several lines) -> block style, keeping
+    every other use case. Comments inside the flow mapping are not kept."""
+    others = {
+        k: v for k, v in yaml.safe_load(text)["use_cases"].items() if k != USE_CASE
+    }
     section = ["use_cases:\n"]
     if others:
         body = yaml.safe_dump(
@@ -252,56 +258,64 @@ def _flow_use_cases_to_block(lines: list[str], top: int, text: str) -> None:
             f"  {line}" if line.strip() else line
             for line in body.splitlines(keepends=True)
         ]
-    # One element per line: the caller walks the section line by line.
-    lines[top : value.end_mark.line + 1] = section
+    lines = text.splitlines(keepends=True)
+    lines[key.start_mark.line : value.end_mark.line + 1] = section
+    return "".join(lines)
 
 
 def upsert_use_case_block(text: str, cfg: dict) -> str:
-    """Replace (or add) `use_cases: claude-3p-on-bedrock:` textually, keeping
-    every other line and comment of platform.yaml exactly as it was."""
-    block = render_block(cfg)
+    """Replace (or add) `use_cases: claude-3p-on-bedrock:` and keep every other line
+    and comment of platform.yaml. The extent of the old block comes from the YAML
+    parser's source positions, not from counting spaces, so comments inside it and
+    any indentation style are handled, and no old field can survive."""
     lines = text.splitlines(keepends=True)
     if lines and not lines[-1].endswith("\n"):
         lines[-1] += "\n"
-    top = next((i for i, l in enumerate(lines) if re.match(r"^use_cases:", l)), None)
-    if top is None:
-        return (
-            "".join(lines)
-            + ("\n" if lines and lines[-1].strip() else "")
-            + "use_cases:\n"
-            + block
-        )
-    after = re.sub(r"\s+#.*$", "", lines[top].split(":", 1)[1]).strip()
-    if after in ("{}", "null", "~"):
-        lines[top] = "use_cases:\n"
-    elif after:
-        # Flow style with content: convert, or the section below would be skipped
-        # and a second `use_cases:` key would silently replace the first.
-        _flow_use_cases_to_block(lines, top, text)
-    end = top + 1  # end of the use_cases section: next column-0 key
-    while end < len(lines) and (
-        not lines[end].strip() or lines[end].startswith((" ", "#"))
-    ):
-        end += 1
-    start = next(
+    text = "".join(lines)
+    root = yaml.compose(text) if text.strip() else None
+    pair = next(
         (
-            i
-            for i in range(top + 1, end)
-            if re.match(rf"^  {re.escape(USE_CASE)}:", lines[i])
+            (k, v)
+            for k, v in (root.value if isinstance(root, yaml.MappingNode) else [])
+            if k.value == "use_cases"
         ),
         None,
     )
-    if start is None:
-        insert_at = end
-        while insert_at > top + 1 and not lines[insert_at - 1].strip():
-            insert_at -= 1
-        return "".join(lines[:insert_at] + [block] + lines[insert_at:])
-    stop = start + 1
-    while stop < end and (not lines[stop].strip() or lines[stop].startswith("    ")):
-        stop += 1
-    while stop > start + 1 and not lines[stop - 1].strip():
-        stop -= 1
-    return "".join(lines[:start] + [block] + lines[stop:])
+    if pair is None:
+        return (
+            text
+            + ("\n" if lines and lines[-1].strip() else "")
+            + "use_cases:\n"
+            + render_block(cfg)
+        )
+    key, value = pair
+    top = key.start_mark.line
+    if value.tag.endswith(":null"):  # `use_cases:`, `use_cases: null`, `use_cases: ~`
+        if value.value:
+            lines[top] = "use_cases:\n"
+        return "".join(lines[: top + 1] + [render_block(cfg)] + lines[top + 1 :])
+    if not isinstance(value, yaml.MappingNode):
+        raise SystemExit(
+            "stopped: platform.yaml unchanged. use_cases is written in a form the "
+            "wizard can't edit; make it a block mapping (use_cases:, then names "
+            "indented below it) and run again."
+        )
+    if value.flow_style:
+        if not value.value:  # `use_cases: {}`
+            lines[top] = "use_cases:\n"
+            return "".join(lines[: top + 1] + [render_block(cfg)] + lines[top + 1 :])
+        # Flow style with content: convert, or a second `use_cases:` key would
+        # silently replace the first.
+        return upsert_use_case_block(_flow_use_cases_to_block(text, key, value), cfg)
+    indent = value.value[0][0].start_mark.column
+    block = render_block(cfg, indent).splitlines(keepends=True)
+    old = next((kv for kv in value.value if kv[0].value == USE_CASE), None)
+    if old:
+        lines[old[0].start_mark.line : max(map(_last_line, old)) + 1] = block
+    else:
+        last = max(_last_line(x) for pair in value.value for x in pair)
+        lines[last + 1 : last + 1] = block
+    return "".join(lines)
 
 
 def replace_in_section(text: str, section: str, old: str, new: str) -> str:

@@ -19,7 +19,8 @@ UC = REPO / "use-cases" / "claude-3p-on-bedrock"
 FIXTURE = REPO / "tests" / "fixtures" / "contract" / "claude-3p-on-bedrock.yaml"
 
 
-def _synth(extra: dict | None = None):
+def _build(extra: dict | None = None, *, gateway: bool = True):
+    """Build the use-case stack; `gateway` adds a stand-in for the platform's."""
     import os
 
     # The fixture uses example values on purpose, like CI. Restored afterwards
@@ -35,6 +36,8 @@ def _synth(extra: dict | None = None):
         raw.update(extra or {})
         app = cdk.App()
         env = cdk.Environment(account="111111111111", region="us-east-1")
+        if gateway:
+            cdk.Stack(app, "p-e-gateway", env=env)
         ctx = {
             "project": "p",
             "environment": "e",
@@ -44,12 +47,19 @@ def _synth(extra: dict | None = None):
             "cdk_env": env,
         }
         mod.build(app, ctx, raw)
-        return Template.from_stack(app.node.find_child("p-e-uc-claude-3p-on-bedrock"))
+        return app, app.node.find_child("p-e-uc-claude-3p-on-bedrock")
     finally:
         if previous is None:
             os.environ.pop("PLATFORM_ALLOW_PLACEHOLDERS", None)
         else:
             os.environ["PLATFORM_ALLOW_PLACEHOLDERS"] = previous
+
+
+def _synth(extra: dict | None = None):
+    return Template.from_stack(_build(extra)[1])
+
+
+_AGENTCORE = {"agentcore_tools": {"client_id": "22222222-2222-2222-2222-222222222222"}}
 
 
 @pytest.fixture(scope="module")
@@ -59,9 +69,7 @@ def template():
 
 @pytest.fixture(scope="module")
 def agentcore_template():
-    return _synth(
-        {"agentcore_tools": {"client_id": "22222222-2222-2222-2222-222222222222"}}
-    )
+    return _synth(_AGENTCORE)
 
 
 def _gateway_env(t) -> dict:
@@ -113,3 +121,17 @@ def test_service_waits_for_execution_role_policy(template):
     exec_policy = next(k for k in policies if "ExecutionRole" in k)
     service = next(iter(template.find_resources("AWS::ECS::Service").values()))
     assert exec_policy in service.get("DependsOn", [])
+
+
+def test_agentcore_tools_deploy_after_the_platform_gateway():
+    # The task resolves <ssm_prefix>/gateway/url at deploy time, so the gateway
+    # stack must come first whatever order the operator lists the stacks in.
+    _, stack = _build(_AGENTCORE)
+    assert [d.node.id for d in stack.dependencies] == ["p-e-gateway"]
+    _, plain = _build()
+    assert plain.dependencies == []
+
+
+def test_agentcore_tools_without_a_gateway_stack_fail_at_synth():
+    with pytest.raises(ValueError, match="needs the platform's gateway stack"):
+        _build(_AGENTCORE, gateway=False)
