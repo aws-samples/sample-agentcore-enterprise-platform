@@ -766,3 +766,22 @@ def test_verify_agentcore_ok(monkeypatch):
 )
 def test_verify_agentcore_failures(monkeypatch, kwargs, reason):
     assert reason in _verify(monkeypatch, **kwargs)
+
+
+@pytest.mark.parametrize("cidr", ["0.0.0.0/0", "128.0.0.0/1", "8.0.0.0/7"])
+def test_client_cidrs_refuse_everything(raw, cidr):
+    raw["client_cidrs"] = [cidr]
+    with pytest.raises(Exception, match="wider than /8"):
+        gc.load(raw)
+
+
+@pytest.mark.parametrize("cidr", ["172.16.0.0/12", "192.168.0.0/16", "172.16.4.0/22"])
+def test_client_cidrs_accept_corporate_ranges(raw, cidr):
+    raw["client_cidrs"] = [cidr]
+    gc.load(raw)
+
+
+def test_too_broad_boundary():
+    assert gc.too_broad("0.0.0.0/0")
+    assert gc.too_broad("8.0.0.0/7")
+    assert not gc.too_broad("10.0.0.0/8")

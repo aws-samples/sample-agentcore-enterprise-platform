@@ -253,3 +253,148 @@ def test_wizard_agentcore_without_direct_mode_needs_a_client_id():
     w = _agentcore_wizard({"idp": "cognito"})
     with pytest.raises(SystemExit, match="no answer"):
         w.step_agentcore()
+
+
+# ── re-running the wizard must not lose what it doesn't ask about ────────────
+def _wizard(existing: dict, answers: dict | None = None, *, yes: bool = True):
+    w = setup.Wizard.__new__(setup.Wizard)
+    w.raw = {"project": "p", "environment": "e"}
+    w.existing = existing
+    w.answers = answers or {}
+    w.cfg = {
+        "hostname": "claude.corp.example.com",
+        "models": [{"id": "m1"}, {"id": "m2"}],
+    }
+    w.ui = setup.UI(interactive=False, assume_yes=yes)
+    w._az_inspect = lambda *a: []
+    return w
+
+
+_TENANT = "9a8b7c6d-1111-2222-3333-444455556666"
+_APP = "1f2e3d4c-1111-2222-3333-444455556666"
+
+
+def test_rerun_keeps_sign_in_restrictions_it_does_not_ask_about():
+    old_oidc = {
+        "tenant_id": _TENANT,
+        "client_id": _APP,
+        "client_secret_name": "claude-3p/entra-oidc",
+        "allowed_email_domains": ["corp.example.com"],
+        "allowed_roles": ["Claude.Engineering"],
+        "groups_claim": "groups",
+        "extra_auth_params": {"domain_hint": "corp.example.com"},
+    }
+    w = _wizard(
+        {"oidc": old_oidc},
+        {
+            "tenant_id": _TENANT,
+            "client_id": _APP,
+            "email_domains": ["corp.example.com"],
+        },
+    )
+    w.step_entra()
+    oidc = w.cfg["oidc"]
+    assert oidc["allowed_roles"] == ["Claude.Engineering"]
+    assert oidc["groups_claim"] == "groups"
+    assert oidc["extra_auth_params"] == {"domain_hint": "corp.example.com"}
+
+
+_OLD_TEAM = {
+    "name": "engineering",
+    "entra_roles": ["Claude.Engineering"],
+    "models": ["m1"],
+    "start_model": "m1",
+    "settings": {"permissions": {"ask": ["Bash"]}},
+    "desktop_settings": {"disabledBuiltinTools": ["WebFetch"]},
+}
+
+
+def test_rerun_keeps_team_and_default_policy_fields():
+    w = _wizard(
+        {
+            "teams": [_OLD_TEAM],
+            "default": {"models": ["m2"], "settings": {"model": "m2"}},
+        }
+    )
+    w.step_teams()
+    (team,) = w.cfg["teams"]
+    assert team["start_model"] == "m1"
+    assert team["settings"] == {"permissions": {"ask": ["Bash"]}}
+    assert team["desktop_settings"] == {"disabledBuiltinTools": ["WebFetch"]}
+    assert w.cfg["default"]["settings"] == {"model": "m2"}
+    # The answers file keeps only what the wizard asked, no policy fields.
+    assert "settings" not in w.answers["teams"][0]
+
+
+def test_rerun_follows_a_renamed_team_by_its_roles():
+    w = _wizard(
+        {"teams": [_OLD_TEAM]},
+        {"teams": [{**_OLD_TEAM, "name": "platform"}]},
+    )
+    w.step_teams()
+    assert w.cfg["teams"][0]["name"] == "platform"
+    assert w.cfg["teams"][0]["settings"] == _OLD_TEAM["settings"]
+
+
+def test_explicit_empty_default_models_stay_empty():
+    # `models: []` is a deny-all policy; accepting the defaults must not grant a model.
+    w = _wizard({"teams": [_OLD_TEAM], "default": {"models": [], "deny_tools": []}})
+    w.step_teams()
+    assert w.cfg["default"]["models"] == []
+    assert "deny_tools" not in w.cfg["default"]  # an explicit "none" stays none
+
+
+def test_missing_default_models_get_the_suggestion():
+    w = _wizard({"teams": [_OLD_TEAM]})
+    w.step_teams()
+    assert w.cfg["default"]["models"] == ["m2"]
+
+
+def test_models_prompt_accepts_none():
+    w = _wizard({"teams": [_OLD_TEAM]}, {"default": {"models": []}})
+    w.step_teams()
+    assert w.cfg["default"]["models"] == []
+
+
+def test_removing_an_existing_team_needs_confirmation():
+    other = {"name": "ops", "entra_roles": ["Claude.Ops"], "models": ["m2"]}
+    answers = {"teams": [_OLD_TEAM]}  # one team, but two exist
+    with pytest.raises(SystemExit, match="keep those teams"):
+        _wizard({"teams": [_OLD_TEAM, other]}, answers, yes=False).step_teams()
+    w = _wizard({"teams": [_OLD_TEAM, other]}, answers, yes=True)
+    w.step_teams()
+    assert [t["name"] for t in w.cfg["teams"]] == ["engineering"]
+
+
+def test_replay_with_an_empty_optional_list():
+    ui = setup.UI(interactive=False, assume_yes=False)
+    assert ui.ask_list("denied tools", []) == []
+    with pytest.raises(SystemExit, match="no answer"):
+        ui.ask_list("domains", None)
+
+
+def test_write_keeps_keys_the_wizard_does_not_own(tmp_path, monkeypatch):
+    monkeypatch.setenv("PLATFORM_ALLOW_PLACEHOLDERS", "1")
+    monkeypatch.setattr(setup, "BACKUP_DIR", tmp_path / "bak")
+    monkeypatch.setattr(setup, "ANSWERS_DIR", tmp_path / "answers")
+    (tmp_path / "answers").mkdir()
+    fixture = (
+        Path(__file__).parent / "fixtures" / "contract" / "claude-3p-on-bedrock.yaml"
+    )
+    manifest = tmp_path / "platform.yaml"
+    manifest.write_text(fixture.read_text())
+    block = yaml.safe_load(manifest.read_text())["use_cases"]["claude-3p-on-bedrock"]
+    block.update(desktop=False, session_ttl_hours=4, spend_admin_roles=["Admins"])
+    w = setup.Wizard(manifest, setup.UI(False, True), {})
+    w.existing = block
+    w.cfg = {
+        k: v
+        for k, v in block.items()
+        if k not in ("desktop", "session_ttl_hours", "spend_admin_roles")
+    }
+    w._claude_version = lambda: "2.1.311"
+    w.step_write()
+    written = yaml.safe_load(manifest.read_text())["use_cases"]["claude-3p-on-bedrock"]
+    assert written["desktop"] is False
+    assert written["session_ttl_hours"] == 4
+    assert written["spend_admin_roles"] == ["Admins"]

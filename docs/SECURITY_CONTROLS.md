@@ -61,6 +61,12 @@ Set via CDK context (`-c flag=value`) or environment variable (`FLAG=value`):
 | `enable_security` | `ENABLE_SECURITY` | KMS CMK + CloudTrail; **prerequisite for item 7** (needs management events) |
 | `org_id` | `ORG_ID` | Org ID (o-xxxx) required by items 2 and 4 |
 
+Item 6b and the `agents.allowed_models` allow-list apply to the AgentCore runtime roles only.
+Use cases run their own roles and are outside both: `claude-3p-on-bedrock`'s task role can invoke
+every model in its own `models:` catalog, with a guardrail only when `guardrail:` is set (see its
+README, Known limitations). Until the platform passes these settings to use cases, keep that
+catalog to the approved models and set `guardrail:` where 6b is required.
+
 Item 4 hard-fails without `org_id`; item 2 silently ships an unpolicied endpoint instead.
 `scripts/deploy.sh` fails fast (or prompts) when resource policies are on and `ORG_ID` is empty.
 

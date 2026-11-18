@@ -286,6 +286,14 @@ AGENTCORE_URL_VAR = "AGENTCORE_GATEWAY_URL"
 AGENTCORE_CALLBACK_PORT = 53280
 
 
+# Widest client network accepted (a corporate /8 is fine; /0 to /7 is not).
+MIN_CLIENT_PREFIX = 8
+
+
+def too_broad(cidr: str) -> bool:
+    return ipaddress.ip_network(cidr, strict=False).prefixlen < MIN_CLIENT_PREFIX
+
+
 class AgentCoreTools(_Strict):
     """The platform's AgentCore Gateway as an MCP server in Claude Code and Cowork.
 
@@ -375,6 +383,19 @@ class Claude3pConfig(_Strict):
                 raise ValueError(
                     f"{c}: IPv4 only (internal dual-stack ALBs break /login)"
                 )
+        return v
+
+    @field_validator("client_cidrs")
+    @classmethod
+    def _cidrs_not_everything(cls, v: list[str]) -> list[str]:
+        # The ALB is internal, but 0.0.0.0/0 still admits every network routed into
+        # the VPC (VPN, peering, Transit Gateway), not just developer networks.
+        broad = [c for c in v if too_broad(c)]
+        if broad:
+            raise ValueError(
+                f"client_cidrs {broad} are wider than /{MIN_CLIENT_PREFIX}: list the "
+                "networks developers connect from, not everything routed to the VPC"
+            )
         return v
 
     @field_validator("log_retention_days")

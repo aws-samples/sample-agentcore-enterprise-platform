@@ -51,6 +51,10 @@ network, never over the internet.
 
 The platform doesn't create the VPN or these routes for you.
 
+Give the wizard the networks developers connect from, such as the VPN client
+pool, not every range that is routed to the VPC. It accepts IPv4 ranges from
+`/8` up to `/32`, and refuses wider ones like `0.0.0.0/0`.
+
 **Done when** a laptop on the corporate network reaches a test machine in a
 platform private subnet on port 443.
 

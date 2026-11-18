@@ -194,12 +194,21 @@ see **[Change models, teams and settings](docs/changes.md)**. Most changes are a
 - **Fixed platform network.** The platform VPC is `10.0.0.0/16`. Your
   corporate ranges must not overlap it. See
   [Connect the corporate network](docs/walkthrough.md#connect-the-corporate-network).
-- **IPv4 only.** `client_cidrs` accepts IPv4 ranges only, because sign-in
-  breaks behind an internal dual-stack load balancer.
+- **IPv4 only, and not too wide.** `client_cidrs` accepts IPv4 ranges only,
+  because sign-in breaks behind an internal dual-stack load balancer, and
+  refuses ranges wider than `/8` such as `0.0.0.0/0`, which would admit every
+  network routed into the VPC.
 - **Access ends within one session.** A person you remove in Entra keeps
   access until their session expires: `session_ttl_hours`, 1 hour by default.
 - **Duplicate models in Claude Desktop.** Models with a 1M-token context show
   twice. See [Show each model only once](docs/changes.md#show-each-model-only-once-in-claude-desktop).
+- **Outside the platform's Bedrock controls.** The platform's model allow-list
+  (`agents.allowed_models`) and guardrailed-only inference
+  (`security.require_guardrails`, [control 6b](../../docs/SECURITY_CONTROLS.md))
+  are enforced on the AgentCore runtime roles. This use case's gateway has its
+  own role: it can invoke every model in `models:`, and uses a guardrail only if
+  you set `guardrail:`. Keep `models:` to your approved list, and set `guardrail:`
+  where your policy requires guardrailed inference. Nothing checks this for you yet.
 - **AgentCore Gateway over the internet.** With `agentcore_tools`, laptops
   reach the AgentCore Gateway at its public AWS address over HTTPS, and only
   a valid Entra token gets through. A private-only path would need a resource

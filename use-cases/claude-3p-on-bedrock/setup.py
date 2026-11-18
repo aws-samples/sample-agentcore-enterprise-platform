@@ -57,6 +57,27 @@ ANSWERS_DIR = Path.home() / ".claude-3p-on-bedrock"
 # Backups of platform.yaml live here, not next to it: a .bak in the repository
 # is not gitignored and would carry the customer's values into a commit.
 BACKUP_DIR = ANSWERS_DIR / "backups"
+# What the wizard asks for in a team or the default policy. Every other key of
+# an existing block (settings, desktop_settings, start_model, ...) is kept.
+_WIZARD_POLICY_KEYS = ("models", "deny_tools")
+_WIZARD_TEAM_KEYS = ("name", "entra_roles", *_WIZARD_POLICY_KEYS)
+
+# Keys of the use-case block the wizard sets (or deliberately removes) itself.
+_WIZARD_OWNED_KEYS = (
+    "claude_version",
+    "hostname",
+    "dns",
+    "certificate_arn",
+    "certificate_private_ca",
+    "client_cidrs",
+    "trusted_proxies",
+    "oidc",
+    "models",
+    "teams",
+    "default",
+    "agentcore_tools",
+)
+
 GENERIC_ANSWER_KEYS = (
     "region",
     "platform_model_id",
@@ -312,7 +333,9 @@ class UI:
     def ask_list(
         self, prompt: str, default: list[str] | None = None, validate=None
     ) -> list[str]:
-        raw = self.ask(prompt, ", ".join(default or []) or None, None)
+        # An explicit empty default ("" ) is a complete answer; only a missing
+        # default (None) makes a non-interactive run stop.
+        raw = self.ask(prompt, None if default is None else ", ".join(default), None)
         items = [x.strip() for x in raw.split(",") if x.strip()]
         if validate:
             err = validate(items)
@@ -569,6 +592,12 @@ class Wizard:
                 return "at least one CIDR"
             if bad:
                 return f"IPv4 only: {bad}"
+            broad = [c for c in items if gc.too_broad(c)]
+            if broad:
+                return (
+                    f"{broad} are too broad (wider than /{gc.MIN_CLIENT_PREFIX}): "
+                    "list the networks developers connect from"
+                )
             clash = overlaps_platform_vpc(items)
             return (
                 f"{clash} overlap the platform VPC {PLATFORM_VPC} (see docs/walkthrough.md: Connect the corporate network)"
@@ -890,6 +919,11 @@ class Wizard:
             bool(old.get("email_claim")),
         ):
             oidc["email_claim"] = ["email", "preferred_username"]
+        # Sign-in restrictions the wizard doesn't ask about (allowed_roles,
+        # groups_claim, extra_auth_params, ...) must survive a re-run.
+        for key, value in (self.existing.get("oidc") or {}).items():
+            if key != "email_claim":  # answered above
+                oidc.setdefault(key, value)
         self.cfg["oidc"] = oidc
         redirect = f"https://{self.cfg['hostname']}/oauth/callback"
         print(
@@ -1050,6 +1084,22 @@ class Wizard:
             bad = [x for x in xs if x not in ids]
             return f"not in the catalog: {bad}" if bad else None
 
+        def parse_models(v: str) -> list[str]:
+            v = v.strip()
+            return (
+                []
+                if v.lower() in ("none", "[]")
+                else [x.strip() for x in v.split(",") if x.strip()]
+            )
+
+        def ask_models(prompt: str, default: list[str]) -> list[str]:
+            raw = self.ui.ask(
+                f'{prompt} ("none" for no models)',
+                ", ".join(default) or "none",
+                lambda v: models_ok(parse_models(v)),
+            )
+            return parse_models(raw)
+
         prev = self.answers.get("teams") or self.existing.get("teams") or []
         n = int(
             self.ui.ask(
@@ -1077,9 +1127,7 @@ class Wizard:
                     [r for r in p.get("entra_roles") or [] if valid_role(r)] or None,
                     roles_ok,
                 ),
-                "models": self.ui.ask_list(
-                    "    models", p.get("models") or ids, models_ok
-                ),
+                "models": ask_models("    models", p.get("models", ids)),
             }
             deny = self.ui.ask_list(
                 "    denied Claude Code tools (empty for none)",
@@ -1088,22 +1136,59 @@ class Wizard:
             if deny:
                 t["deny_tools"] = deny
             teams.append(t)
-        self.cfg["teams"] = teams
+
+        # Merge in what the wizard doesn't ask about (settings, desktop_settings,
+        # start_model, ...) from the existing team with the same name, or the same
+        # Entra roles when it was renamed. Never drop a policy silently.
+        old_teams = self.existing.get("teams") or []
+
+        def old_for(t: dict) -> dict:
+            for o in old_teams:
+                if o.get("name") == t["name"]:
+                    return o
+            for o in old_teams:
+                if set(o.get("entra_roles") or []) == set(t["entra_roles"]):
+                    return o
+            return {}
+
+        merged = [
+            {**{k: v for k, v in old_for(t).items() if k not in _WIZARD_TEAM_KEYS}, **t}
+            for t in teams
+        ]
+        kept = {id(o) for t in teams for o in [old_for(t)] if o}
+        dropped = [o.get("name", "?") for o in old_teams if id(o) not in kept]
+        if dropped:
+            print(
+                f"  ! These existing teams are not in your answers: {', '.join(dropped)}"
+            )
+            if not self.ui.confirm(
+                "Remove them, with their roles, models and tool rules from platform.yaml?"
+            ):
+                raise SystemExit(
+                    "stopped: platform.yaml unchanged. Re-run and keep those teams."
+                )
+        self.cfg["teams"] = merged
         pd = self.answers.get("default") or self.existing.get("default") or {}
         print(
             "  default policy (signed in, in no team; its denied tools apply to every team):"
         )
-        default = {
-            "models": self.ui.ask_list(
-                "    models ([] = none)", pd.get("models") or ids[-1:], models_ok
-            )
-        }
+        # An explicit `models: []` is a deny-all policy; only a missing key gets
+        # the suggested model.
+        default = {"models": ask_models("    models", pd.get("models", ids[-1:]))}
         deny = self.ui.ask_list(
-            "    denied tools for everyone", pd.get("deny_tools") or ["Read(./.env)"]
+            "    denied tools for everyone",
+            pd.get("deny_tools", ["Read(./.env)"]),
         )
         if deny:
             default["deny_tools"] = deny
-        self.cfg["default"] = default
+        self.cfg["default"] = {
+            **{
+                k: v
+                for k, v in (self.existing.get("default") or {}).items()
+                if k not in _WIZARD_POLICY_KEYS
+            },
+            **default,
+        }
         self.answers["teams"], self.answers["default"] = teams, default
 
     # 7 ─────────────────────────────────────────────────────────────────────
@@ -1179,23 +1264,11 @@ class Wizard:
     def step_write(self) -> None:
         header("8. Write platform.yaml")
         cfg = {"claude_version": self._claude_version(), **self.cfg}
-        for k in (
-            "spend_admin_roles",
-            "guardrail",
-            "database",
-            "service",
-            "telemetry",
-            "retain",
-            "policy_mode",
-            "session_ttl_hours",
-            "bedrock_region",
-            "gateway_ip_allowlist",
-            "log_retention_days",
-        ):
-            if k in self.existing and k not in cfg:
-                cfg[k] = self.existing[
-                    k
-                ]  # keep advanced keys the wizard doesn't ask about
+        # Keep every key the wizard doesn't ask about (spend_admin_roles, guardrail,
+        # desktop, policy_mode, ...), including ones added by hand or in later versions.
+        for k, v in self.existing.items():
+            if k not in _WIZARD_OWNED_KEYS and k not in cfg:
+                cfg[k] = v
         while True:  # the same validation as `deploy.sh design`
             try:
                 gc.load(cfg)
