@@ -576,7 +576,11 @@ class SoftwareFactoryStack(cdk.Stack):
         data.installation_id.grant_read(ingress)
         ingress.add_to_role_policy(
             iam.PolicyStatement(
-                actions=["dynamodb:PutItem", "dynamodb:DeleteItem", "dynamodb:UpdateItem"],
+                actions=[
+                    "dynamodb:PutItem",
+                    "dynamodb:DeleteItem",
+                    "dynamodb:UpdateItem",
+                ],
                 resources=[data.dedupe.table_arn],
             )
         )
