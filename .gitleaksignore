@@ -1,0 +1,5 @@
+# Historical findings that are not credentials. Each line is a gitleaks fingerprint
+# (commit:file:rule:line) so only these exact occurrences are skipped.
+# asana-client-id: Asana project GID hardcoded on factory/infra, removed in 2cfb071.
+effe2dd495941f1d2b3dfad779ce42652868b7bb:factory/infra/factory_stacks.py:asana-client-id:96
+effe2dd495941f1d2b3dfad779ce42652868b7bb:factory/agent-code/factory/asana.py:asana-client-id:21
