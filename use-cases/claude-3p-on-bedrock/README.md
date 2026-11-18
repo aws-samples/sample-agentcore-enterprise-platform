@@ -315,7 +315,7 @@ use_cases:
 | `gateway_ip_allowlist` | `false` | The gateway itself also enforces `client_cidrs` (needs `trusted_proxies`) |
 | `bedrock_region` | deploy Region | Region of the Bedrock endpoint |
 | `telemetry.mode` | `off` | `sidecar`: usage metrics per person to CloudWatch. Each developer confirms a one-time dialog. |
-| `service.desired_count`, `cpu`, `memory_mib` | 2, 512, 1024 | Gateway size |
+| `service.desired_count`, `cpu`, `memory_mib` | 2, 512, 1024 | Gateway size. `memory_mib` must be a size Fargate offers for the `cpu`: 256 → 512, 1024, 2048; 512 → 1024 to 4096; 1024 → 2048 to 8192; 2048 → 4096 to 16384; 4096 → 8192 to 30720 (1024 steps from 2048 up). `design` refuses other pairs. |
 | `service.drain_seconds` | `300` | How long open responses keep streaming during an update |
 | `database.instance_class`, `multi_az`, `backup_retention_days` | t4g.micro, false, 7 | Database size and resilience |
 | `retain` | `false` | Keep the database, secrets, images and logs when the stack is deleted |

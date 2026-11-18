@@ -577,3 +577,72 @@ def test_empty_block_value_is_replaced():
         _, data = _upserted(f"use_cases:\n  {old}\n  other: {{}}\nregion: r\n")
         assert data["use_cases"]["claude-3p-on-bedrock"] == _NEW
         assert data["use_cases"]["other"] == {}
+
+
+# ── model catalog step: bad answers stop a replay instead of looping ─────────
+class _ProfilesAws:
+    region = "eu-west-1"
+
+    def anthropic_profiles(self):
+        return [
+            "eu.anthropic.claude-sonnet-4-6",
+            "global.anthropic.claude-sonnet-4-6",
+            "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+        ]
+
+
+def _models_wizard(answers: dict):
+    w = setup.Wizard.__new__(setup.Wizard)
+    w.existing, w.answers, w.cfg = {}, answers, {}
+    w.aws = _ProfilesAws()
+    w.ui = setup.UI(interactive=False, assume_yes=True)
+    return w
+
+
+def test_replayed_catalog_with_the_same_model_twice_stops():
+    # eu. and global. of one model collide on the same id: this used to repeat forever.
+    w = _models_wizard(
+        {
+            "models": [
+                "eu.anthropic.claude-sonnet-4-6",
+                "global.anthropic.claude-sonnet-4-6",
+            ]
+        }
+    )
+    with pytest.raises(SystemExit, match="each model once"):
+        w.step_models()
+
+
+def test_replayed_catalog_with_a_missing_profile_stops():
+    # No default can be derived, so there is no answer to replay.
+    w = _models_wizard({"models": ["eu.anthropic.claude-opus-9"]})
+    with pytest.raises(SystemExit, match="no answer"):
+        w.step_models()
+
+
+@pytest.mark.parametrize("answer", ["0", "4", "-1", "x", "1,,x"])
+def test_model_numbers_outside_the_list_are_refused(answer):
+    w = _models_wizard({})
+    w.ui = setup.UI(interactive=False, assume_yes=True)
+    original = w.ui.ask
+
+    def ask(prompt, default=None, validate=None):
+        return original(prompt, answer, validate)
+
+    w.ui.ask = ask
+    with pytest.raises(SystemExit, match="use the numbers shown"):
+        w.step_models()
+
+
+def test_a_valid_catalog_pick_is_kept():
+    w = _models_wizard(
+        {
+            "models": [
+                "eu.anthropic.claude-sonnet-4-6",
+                "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+            ]
+        }
+    )
+    w.step_models()
+    assert [m["bedrock"] for m in w.cfg["models"]] == w.answers["models"]
+    assert len({m["id"] for m in w.cfg["models"]}) == 2

@@ -785,3 +785,30 @@ def test_too_broad_boundary():
     assert gc.too_broad("0.0.0.0/0")
     assert gc.too_broad("8.0.0.0/7")
     assert not gc.too_broad("10.0.0.0/8")
+
+
+# ── service size: only Fargate's cpu/memory pairs ────────────────────────────
+@pytest.mark.parametrize(
+    "cpu, memory",
+    [(256, 512), (256, 2048), (512, 1024), (512, 4096), (1024, 2048), (1024, 8192)]
+    + [(2048, 4096), (2048, 16384), (4096, 8192), (4096, 30720)],
+)
+def test_service_accepts_fargate_sizes(raw, cpu, memory):
+    raw["service"] = {"cpu": cpu, "memory_mib": memory}
+    gc.load(raw)
+
+
+@pytest.mark.parametrize(
+    "cpu, memory",
+    [(256, 4096), (256, 3072), (512, 512), (512, 5120), (1024, 1024), (1024, 9216)]
+    + [(2048, 2048), (2048, 17408), (4096, 4096), (4096, 8704)],
+)
+def test_service_refuses_pairs_fargate_does_not_offer(raw, cpu, memory):
+    raw["service"] = {"cpu": cpu, "memory_mib": memory}
+    with pytest.raises(Exception, match=f"memory_mib {memory} isn't offered with"):
+        gc.load(raw)
+
+
+def test_default_service_size_is_offered():
+    s = gc.ServiceConfig()
+    assert s.memory_mib in gc._FARGATE_MEMORY_MIB[s.cpu]

@@ -1129,23 +1129,33 @@ class Wizard:
         default = (
             ",".join(str(profiles.index(p) + 1) for p in prev if p in profiles) or None
         )
-        while True:
-            raw = self.ui.ask(
-                "Numbers of the models to offer (comma-separated)", default
-            )
+
+        def pick(raw: str) -> tuple[list[str], str | None]:
+            """The chosen profiles, or the reason the answer can't be used."""
             try:
-                picked = [
-                    profiles[int(x) - 1] for x in raw.replace(" ", "").split(",") if x
-                ]
-            except (ValueError, IndexError):
-                print("    ! use the numbers shown")
-                continue
-            ids = [model_id_from_profile(p) for p in picked]
-            if picked and len(ids) == len(set(ids)):
-                break
-            print(
-                "    ! pick at least one model, and each model once (not both eu. and global. of the same one)"
-            )
+                nums = [int(x) for x in raw.replace(" ", "").split(",") if x]
+            except ValueError:
+                return [], "use the numbers shown"
+            if any(not 1 <= n <= len(profiles) for n in nums):
+                return [], f"use the numbers shown (1 to {len(profiles)})"
+            chosen = [profiles[n - 1] for n in nums]
+            ids = [model_id_from_profile(p) for p in chosen]
+            if not chosen or len(ids) != len(set(ids)):
+                return [], (
+                    "pick at least one model, and each model once "
+                    "(not both eu. and global. of the same one)"
+                )
+            return chosen, None
+
+        # The prompt's own validation retries on a keyboard and stops a replayed
+        # answers file (--non-interactive), which would otherwise repeat forever.
+        raw = self.ui.ask(
+            "Numbers of the models to offer (comma-separated)",
+            default,
+            lambda v: pick(v)[1],
+        )
+        picked, _ = pick(raw)
+        ids = [model_id_from_profile(p) for p in picked]
         self.cfg["models"] = [
             {"id": i, "label": model_label(i), "bedrock": p}
             for i, p in zip(ids, picked)

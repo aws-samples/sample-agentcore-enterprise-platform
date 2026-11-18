@@ -244,6 +244,18 @@ class DatabaseConfig(_Strict):
     max_connections: int = Field(default=5, ge=1, le=100)
 
 
+# Memory (MiB) Fargate offers per task CPU: other pairs register fine in
+# CloudFormation validation and then fail when the task definition is created.
+# https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-tasks-services.html
+_FARGATE_MEMORY_MIB: dict[int, set[int]] = {
+    256: {512, 1024, 2048},
+    512: {1024, 2048, 3072, 4096},
+    1024: set(range(2048, 8192 + 1, 1024)),
+    2048: set(range(4096, 16384 + 1, 1024)),
+    4096: set(range(8192, 30720 + 1, 1024)),
+}
+
+
 class ServiceConfig(_Strict):
     desired_count: int = Field(default=2, ge=1, le=20)
     cpu: Literal[256, 512, 1024, 2048, 4096] = 512
@@ -253,6 +265,16 @@ class ServiceConfig(_Strict):
     # the ALB closes remaining connections when it ends, so this, not the
     # gateway's 25 s SIGTERM drain, bounds a response that survives a deploy.
     drain_seconds: int = Field(default=300, ge=30, le=3600)
+
+    @model_validator(mode="after")
+    def _fargate_size(self) -> ServiceConfig:
+        allowed = _FARGATE_MEMORY_MIB[self.cpu]
+        if self.memory_mib not in allowed:
+            raise ValueError(
+                f"service.memory_mib {self.memory_mib} isn't offered with "
+                f"service.cpu {self.cpu}: Fargate allows {sorted(allowed)}"
+            )
+        return self
 
 
 class TelemetryConfig(_Strict):
