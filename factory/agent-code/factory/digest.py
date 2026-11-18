@@ -10,6 +10,32 @@ from factory.ci_fixer import Run
 
 AGENTS = ("ci_fixer", "pr_reviewer", "product_manager", "developer", "merge_handler")
 OPENED = {"fix_pr_opened", "pr_opened"}
+# (label, agent whose spend counts, agent and outcome that count the units)
+UNIT_COSTS = (
+    ("per posted review", "pr_reviewer", "pr_reviewer", "review_posted"),
+    ("per CI fix PR", "ci_fixer", "ci_fixer", "fix_pr_opened"),
+    ("per merged dev PR", "developer", "merge_handler", "merged_recorded"),
+)
+
+
+def unit_costs(rows_by_agent: dict[str, list[dict]]) -> dict:
+    """Spend divided by outcome count for each unit. Spend includes runs that did not produce the outcome."""
+    out = {}
+    for label, spend_agent, count_agent, outcome in UNIT_COSTS:
+        spend = sum(
+            float(r.get("est_cost_usd") or 0) for r in rows_by_agent.get(spend_agent, [])
+        )
+        n = sum(
+            1
+            for r in rows_by_agent.get(count_agent, [])
+            if r.get("outcome") == outcome
+        )
+        out[label] = {
+            "spend_usd": round(spend, 4),
+            "count": n,
+            "usd_each": round(spend / n, 4) if n else None,
+        }
+    return out
 
 
 def summarize(rows_by_agent: dict[str, list[dict]], day: str) -> dict:
@@ -67,12 +93,31 @@ class Digest(Run):
         table = self.session.resource("dynamodb").Table(
             os.environ["FACTORY_RUNS_TABLE"]
         )
-        nxt = (datetime.fromisoformat(self.day) + timedelta(days=1)).date().isoformat()
+        day = datetime.fromisoformat(self.day)
+        nxt = (day + timedelta(days=1)).date().isoformat()
+        week = (day - timedelta(days=6)).date().isoformat()  # the 7 UTC days ending on self.day
+        week_rows = self._rows(table, week, nxt)
+        # sk starts with the run's UTC start time, so the first 10 characters are its day.
+        day_rows = {
+            a: [r for r in rs if str(r["sk"])[:10] == self.day]
+            for a, rs in week_rows.items()
+        }
+        summary = summarize(day_rows, self.day)
+        summary["unit_costs"] = {"1d": unit_costs(day_rows), "7d": unit_costs(week_rows)}
+        return {
+            "outcome": "digest_written",
+            "summary": summary,
+            "check_passed": True,
+            "reason": f"{summary['runs']} runs, ${summary['cost_usd_total']}",
+        }
+
+    @staticmethod
+    def _rows(table, start: str, end: str) -> dict[str, list[dict]]:
         rows = {}
         for agent in AGENTS:
             kwargs = {
                 "KeyConditionExpression": Key("pk").eq(f"agent#{agent}")
-                & Key("sk").between(self.day, nxt)
+                & Key("sk").between(start, end)
             }
             rows[agent] = []
             while True:
@@ -81,13 +126,16 @@ class Digest(Run):
                 if "LastEvaluatedKey" not in page:
                     break
                 kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
-        summary = summarize(rows, self.day)
-        return {
-            "outcome": "digest_written",
-            "summary": summary,
-            "check_passed": True,
-            "reason": f"{summary['runs']} runs, ${summary['cost_usd_total']}",
-        }
+        return rows
+
+
+def _unit_lines(unit: dict) -> list[str]:
+    return [
+        f"- {label}: "
+        + (f"${v['usd_each']:.4f}" if v["usd_each"] is not None else "no outcomes")
+        + f" ({v['count']} outcomes, ${v['spend_usd']:.4f} spend)"
+        for label, v in unit.items()
+    ]
 
 
 def render(summary: dict, pending: list[str], open_prs: list[int]) -> str:
@@ -102,6 +150,11 @@ def render(summary: dict, pending: list[str], open_prs: list[int]) -> str:
             f"PRs opened: {', '.join(summary['prs_opened']) or 'none'}",
             f"PRs merged: {', '.join(summary['prs_merged']) or 'none'}",
             f"Failures: {len(summary['failures'])}",
+            "",
+            "Cost per outcome, last day:",
+            *_unit_lines(summary["unit_costs"]["1d"]),
+            "Cost per outcome, last 7 days:",
+            *_unit_lines(summary["unit_costs"]["7d"]),
             "",
             "Waiting on you:",
             f"- Proposals to /approve or /reject: {', '.join(pending) or 'none'}",
