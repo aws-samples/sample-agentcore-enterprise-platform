@@ -30,6 +30,7 @@ from factory.developer import (
     taken_tasks,
 )
 from factory.digest import Digest
+from factory.digest import render as render_digest
 from factory.pm import ProductManager
 from factory.reviewer import Review, build_review
 
@@ -476,8 +477,107 @@ def handle_merge(payload: dict) -> dict:
     return out
 
 
+WRITE_ROLES = {"admin", "maintain", "write"}  # the commands in issue comments need write access
+
+
+def _can_write(login: str, token: str) -> bool:
+    try:
+        perm = github.request(
+            "GET", f"/repos/{REPO}/collaborators/{login}/permission", token
+        )
+    except RuntimeError as e:
+        if "-> 404" in str(e):  # not a collaborator at all
+            return False
+        raise
+    return perm.get("permission") in WRITE_ROLES
+
+
+def _pm_comment(number: int, text: str, token: str) -> dict:
+    """/pm: a consult answer, posted as a comment on the issue it was asked on."""
+    work = Path("/tmp/factory") / "pm"
+    agent = Consult(clone(work), work, REGION, REPO, token, str(number), text, True)
+    rec = _safe(agent.execute)
+    if rec.get("outcome") == "consult_answered":
+        agent.tracker.comment(number, "Factory PM:\n\n" + rec["answer"])
+    return _finish(
+        agent,
+        rec,
+        False,
+        ("answer", "conversation_id", "turn", "queued", "issue_ops", "dropped"),
+    )
+
+
+def _take_issue(number: int, token: str) -> dict:
+    """/dev, or the factory:ready label: the developer takes this issue now (publishing per FACTORY_DEV_PUBLISH)."""
+    issue = github.request("GET", f"/repos/{REPO}/issues/{number}", token)
+    if "pull_request" in issue or issue["state"] != "open":
+        return {"outcome": "skipped", "reason": "not an open issue"}
+    task = {
+        "gid": str(number),
+        "title": issue["title"],
+        "body": issue.get("body") or "",
+        "labels": [label["name"] for label in issue.get("labels", [])],
+    }
+    return handle_developer({"task": task})
+
+
+def _decide(number: int, name: str, args: str, actor: str, token: str) -> dict:
+    """/approve or /reject P-xxxxxx (or 'all'): only on the Factory digest issue, where proposals are posted."""
+    digest, _ = issues.digest_issue(REPO, token, create=False)
+    if digest is None or number != digest:
+        return {"outcome": "skipped", "reason": "reply on the open 'Factory digest' issue"}
+    pending = issues.pending_proposals(REPO, token, digest)
+    verdict = "approved" if name == "approve" else "rejected"
+    tracker = issues.Tracker(REPO, token, True)
+    decisions = []
+    for pid in list(pending) if args == "all" else args.split():
+        if pid not in pending:
+            decisions.append({"id": pid, "outcome": "not pending"})
+            continue
+        p = pending[pid]
+        created = (
+            tracker.create(p["title"], p["body"], p["labels"])
+            if verdict == "approved"
+            else None
+        )
+        note = f"{pid} {verdict} by @{actor}" + (f" as #{created}" if created else "")
+        tracker.comment(
+            digest, f"<!-- factory:resolved {pid} {verdict} -->\nFactory PM: {note}"
+        )
+        decisions.append({"id": pid, "outcome": verdict, "issue": created})
+    return {"outcome": "decided", "decisions": decisions, "issue_ops": tracker.ops}
+
+
+def handle_issue_command(payload: dict) -> dict:
+    token = _github_token()
+    actor, number = payload["actor"]["login"], int(payload["issue"]["number"])
+    if not _can_write(actor, token):
+        return {"outcome": "skipped", "reason": f"@{actor} has no write access"}
+    name, args = payload["command"], payload.get("args", "")
+    if name == "pm":
+        return _pm_comment(number, args, token)
+    if name in ("dev", "ready"):
+        return _take_issue(number, token)
+    return _decide(number, name, args, actor, token)
+
+
+def _post_digest(summary: dict) -> dict:
+    """The daily digest as a comment on the pinned 'Factory digest' issue (created and pinned on first run)."""
+    token = _github_token()
+    number, created = issues.digest_issue(REPO, token, create=True)
+    pinned = issues.pin(REPO, token, number) if created else "existing issue"
+    pending = sorted(issues.pending_proposals(REPO, token, number))
+    prs = [p["number"] for p in github.open_factory_prs(REPO, token)]
+    issues.Tracker(REPO, token, True).comment(
+        number, render_digest(summary, pending, prs)
+    )
+    return {"issue": number, "pin": pinned}
+
+
 def handle(payload: dict) -> dict:
     role = payload.get("role")
+    if role == "issue_command":
+        return _safe(lambda: handle_issue_command(payload))
     if role == "pr_reviewer":
         return handle_review(payload)
     if role == "product_manager":
@@ -490,7 +590,10 @@ def handle(payload: dict) -> dict:
         work = Path("/tmp/factory") / "digest"
         work.mkdir(parents=True, exist_ok=True)
         agent = Digest(work, REGION, REPO, payload.get("day"))
-        return _finish(agent, _safe(agent.execute), False, ("summary",))
+        rec = _safe(agent.execute)
+        if rec.get("outcome") == "digest_written":
+            rec["digest_post"] = _safe(lambda: _post_digest(rec["summary"]))
+        return _finish(agent, rec, False, ("summary", "digest_post"))
     run = validate(payload)
     work = Path("/tmp/factory") / str(run["id"])
     repo = clone(work)

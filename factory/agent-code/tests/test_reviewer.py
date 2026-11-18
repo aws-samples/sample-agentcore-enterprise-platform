@@ -198,6 +198,7 @@ def test_astra_only_for_the_named_risk_areas():
 
 def test_publish_payload_is_validated():
     import pytest
+
     from factory.server import validate
 
     ok = {

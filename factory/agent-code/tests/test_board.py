@@ -1,9 +1,8 @@
 """Issue tracking, PM plan rules, developer path limits and the dedupe guards (no AWS, no model)."""
 
+from factory import issues
 from factory.developer import allowed_paths, new_failures
 from factory.pm import plan_board
-
-from factory import issues
 
 
 def test_plan_board_caps_ready_dedupes_and_validates_reconcile():
@@ -291,8 +290,8 @@ def test_tracker_dry_run_records_and_never_calls_github(monkeypatch):
         "remove_label",
         "comment",
         "comment",
-        "create",
-        "create",
+        "propose",
+        "propose",
     ]
     assert dry.ops[-2]["labels"] == [issues.PM, issues.READY] and dry.ops[-1][
         "labels"

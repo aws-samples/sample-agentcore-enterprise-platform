@@ -2,9 +2,8 @@
 
 from pathlib import Path
 
-from factory.consult import Consult
-
 from factory import issues
+from factory.consult import Consult
 
 
 class Table:

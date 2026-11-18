@@ -88,3 +88,23 @@ class Digest(Run):
             "check_passed": True,
             "reason": f"{summary['runs']} runs, ${summary['cost_usd_total']}",
         }
+
+
+def render(summary: dict, pending: list[str], open_prs: list[int]) -> str:
+    """The digest comment on the pinned 'Factory digest' issue: totals plus what waits on a human."""
+    cost = ", ".join(f"{r} ${c:.4f}" for r, c in summary["cost_usd_by_role"].items())
+    outcomes = "; ".join(f"{r}: {o}" for r, o in summary["outcomes_by_role"].items())
+    return "\n".join(
+        [
+            f"Factory digest for {summary['day']} (UTC day)",
+            f"Runs: {summary['runs']}. Cost: ${summary['cost_usd_total']:.4f} ({cost or 'none'}).",
+            f"Outcomes by role: {outcomes or 'none'}",
+            f"PRs opened: {', '.join(summary['prs_opened']) or 'none'}",
+            f"PRs merged: {', '.join(summary['prs_merged']) or 'none'}",
+            f"Failures: {len(summary['failures'])}",
+            "",
+            "Waiting on you:",
+            f"- Proposals to /approve or /reject: {', '.join(pending) or 'none'}",
+            f"- Factory PRs open for review: {', '.join('#' + str(n) for n in open_prs) or 'none'}",
+        ]
+    )
