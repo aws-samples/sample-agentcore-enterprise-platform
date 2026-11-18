@@ -222,6 +222,40 @@ def render_block(cfg: dict) -> str:
     return f"  {USE_CASE}:\n" + indented
 
 
+def _flow_use_cases_to_block(lines: list[str], top: int, text: str) -> None:
+    """`use_cases: {a: {}, b: {x: 1}}` (one or several lines) -> block style, in
+    place, keeping every other use case. Comments inside the flow mapping are not
+    kept. Anything that isn't a mapping is refused, never silently rewritten."""
+    root = yaml.compose(text)
+    value = next(
+        (
+            v
+            for k, v in (root.value if isinstance(root, yaml.MappingNode) else [])
+            if k.value == "use_cases"
+        ),
+        None,
+    )
+    existing = (yaml.safe_load(text) or {}).get("use_cases")
+    if not isinstance(existing, dict) or value is None:
+        raise SystemExit(
+            "stopped: platform.yaml unchanged. use_cases is written in a form the "
+            "wizard can't edit; make it a block mapping (use_cases:, then names "
+            "indented below it) and run again."
+        )
+    others = {k: v for k, v in existing.items() if k != USE_CASE}
+    section = ["use_cases:\n"]
+    if others:
+        body = yaml.safe_dump(
+            others, sort_keys=False, default_flow_style=False, width=100
+        )
+        section += [
+            f"  {line}" if line.strip() else line
+            for line in body.splitlines(keepends=True)
+        ]
+    # One element per line: the caller walks the section line by line.
+    lines[top : value.end_mark.line + 1] = section
+
+
 def upsert_use_case_block(text: str, cfg: dict) -> str:
     """Replace (or add) `use_cases: claude-3p-on-bedrock:` textually, keeping
     every other line and comment of platform.yaml exactly as it was."""
@@ -229,14 +263,7 @@ def upsert_use_case_block(text: str, cfg: dict) -> str:
     lines = text.splitlines(keepends=True)
     if lines and not lines[-1].endswith("\n"):
         lines[-1] += "\n"
-    top = next(
-        (
-            i
-            for i, l in enumerate(lines)
-            if re.match(r"^use_cases:\s*(\{\s*\})?\s*(#.*)?$", l)
-        ),
-        None,
-    )
+    top = next((i for i, l in enumerate(lines) if re.match(r"^use_cases:", l)), None)
     if top is None:
         return (
             "".join(lines)
@@ -244,8 +271,13 @@ def upsert_use_case_block(text: str, cfg: dict) -> str:
             + "use_cases:\n"
             + block
         )
-    if "{" in lines[top]:
+    after = re.sub(r"\s+#.*$", "", lines[top].split(":", 1)[1]).strip()
+    if after in ("{}", "null", "~"):
         lines[top] = "use_cases:\n"
+    elif after:
+        # Flow style with content: convert, or the section below would be skipped
+        # and a second `use_cases:` key would silently replace the first.
+        _flow_use_cases_to_block(lines, top, text)
     end = top + 1  # end of the use_cases section: next column-0 key
     while end < len(lines) and (
         not lines[end].strip() or lines[end].startswith((" ", "#"))
@@ -270,6 +302,25 @@ def upsert_use_case_block(text: str, cfg: dict) -> str:
     while stop > start + 1 and not lines[stop - 1].strip():
         stop -= 1
     return "".join(lines[:start] + [block] + lines[stop:])
+
+
+def replace_in_section(text: str, section: str, old: str, new: str) -> str:
+    """Replace the whole-token `old` by `new` inside the top-level `section:` only."""
+    lines = text.splitlines(keepends=True)
+    start = next(
+        (i for i, l in enumerate(lines) if re.match(rf"^{re.escape(section)}:", l)),
+        None,
+    )
+    if start is None:
+        return text
+    end = start + 1
+    while end < len(lines) and (
+        not lines[end].strip() or lines[end].startswith((" ", "\t", "#"))
+    ):
+        end += 1
+    token = re.compile(rf"(?<![\w.:-]){re.escape(old)}(?![\w.:-])")
+    lines[start:end] = [token.sub(new, l) for l in lines[start:end]]
+    return "".join(lines)
 
 
 def set_top_scalar(text: str, key: str, value: str) -> str | None:
@@ -542,6 +593,23 @@ class Wizard:
                 )
                 or new
             )
+            allowed = (self.raw.get("agents") or {}).get("allowed_models") or []
+            if model in allowed:
+                # agents.model_id must be in the allow-list, and the allow-list is
+                # a deliberate IAM boundary: swap only the entry that this Region
+                # can't serve, and say so.
+                print(
+                    f"  agents.allowed_models pins {model!r}. The platform requires\n"
+                    f"  agents.model_id to be in it, so {pick!r} must take its place."
+                )
+                if not self.ui.confirm(
+                    f"Replace {model} with {pick} in agents.allowed_models?", True
+                ):
+                    raise SystemExit(
+                        "stopped: platform.yaml unchanged. Set agents.model_id and "
+                        "agents.allowed_models to the same available model, then run again."
+                    )
+                new = replace_in_section(new, "agents", model, pick)
             self.answers["platform_model_id"] = pick
         self.answers["region"] = region
         self._write_if_changed(new, "platform settings")

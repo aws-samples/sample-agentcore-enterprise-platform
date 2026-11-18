@@ -398,3 +398,105 @@ def test_write_keeps_keys_the_wizard_does_not_own(tmp_path, monkeypatch):
     assert written["desktop"] is False
     assert written["session_ttl_hours"] == 4
     assert written["spend_admin_roles"] == ["Admins"]
+
+
+# ── upsert: flow-style use_cases, and the platform model allow-list ──────────
+@pytest.mark.parametrize(
+    "text",
+    [
+        "project: p\nuse_cases: {release-notes: {}}\nregion: eu-west-1\n",
+        "project: p\nuse_cases: {release-notes: {x: 1}}  # others\nregion: eu-west-1\n",
+        "project: p\nuse_cases: {\n  release-notes: {x: 1},\n  hello-platform: {}\n}\nregion: eu-west-1\n",
+        "project: p\nuse_cases: {claude-3p-on-bedrock: {old: 1}, release-notes: {}}\nregion: eu-west-1\n",
+    ],
+)
+def test_flow_style_use_cases_keep_the_other_use_cases(text):
+    before = yaml.safe_load(text)["use_cases"]
+    out = setup.upsert_use_case_block(text, {"claude_version": "2.1.311"})
+    data = yaml.safe_load(out)
+    assert out.count("use_cases:") == 1
+    assert data["use_cases"]["claude-3p-on-bedrock"] == {"claude_version": "2.1.311"}
+    for name, value in before.items():
+        if name != "claude-3p-on-bedrock":
+            assert data["use_cases"][name] == value
+    assert data["region"] == "eu-west-1" and data["project"] == "p"
+
+
+@pytest.mark.parametrize("empty", ["use_cases: null", "use_cases: ~", "use_cases:"])
+def test_empty_use_cases_forms(empty):
+    out = setup.upsert_use_case_block(f"project: p\n{empty}\nregion: r\n", {"a": 1})
+    assert yaml.safe_load(out)["use_cases"] == {"claude-3p-on-bedrock": {"a": 1}}
+    assert out.count("use_cases:") == 1
+
+
+def test_use_cases_in_an_unsupported_form_is_refused():
+    with pytest.raises(SystemExit, match="can't edit"):
+        setup.upsert_use_case_block("use_cases: nothing\nregion: r\n", {"a": 1})
+
+
+def test_replace_in_section_touches_only_that_section():
+    text = (
+        "agents:\n  model_id: us.m   # x\n  allowed_models:\n    - us.m\n    - us.m2\n"
+        "other:\n  note: us.m\n"
+    )
+    out = setup.replace_in_section(text, "agents", "us.m", "eu.m")
+    assert "- eu.m\n" in out and "- us.m2\n" in out  # whole token only
+    assert "note: us.m\n" in out  # other sections untouched
+
+
+class _FakeAws:
+    account = "123456789012"
+    identity = "arn:aws:sts::123456789012:assumed-role/x/y"
+
+    def __init__(self, region):
+        self.region = region
+
+    def anthropic_profiles(self):
+        return ["eu.anthropic.claude-sonnet-4-6"]
+
+
+_PINNED = """project: p
+environment: e
+region: eu-west-1
+deployment:
+  platform_account: "123456789012"
+security:
+  networking: true
+agents:
+  model_id: us.anthropic.claude-sonnet-4-6
+  allowed_models:
+    - us.anthropic.claude-sonnet-4-6
+"""
+
+
+def _platform_wizard(tmp_path, monkeypatch, *, yes=True):
+    monkeypatch.setattr(setup, "Aws", _FakeAws)
+    monkeypatch.setattr(setup, "BACKUP_DIR", tmp_path / "bak")
+    monkeypatch.setattr(setup, "ANSWERS_DIR", tmp_path / "answers")
+    (tmp_path / "answers").mkdir()
+    manifest = tmp_path / "platform.yaml"
+    manifest.write_text(_PINNED)
+    w = setup.Wizard(manifest, setup.UI(False, yes), {"region": "eu-west-1"})
+    return w, manifest
+
+
+def test_regional_model_swap_updates_the_allow_list(tmp_path, monkeypatch):
+    w, manifest = _platform_wizard(tmp_path, monkeypatch)
+    w.step_platform()
+    agents = yaml.safe_load(manifest.read_text())["agents"]
+    new = "eu.anthropic.claude-sonnet-4-6"
+    assert agents["model_id"] == new
+    assert agents["allowed_models"] == [new]  # model_id is always in the allow-list
+
+
+def test_regional_model_swap_refused_leaves_platform_yaml_unchanged(
+    tmp_path, monkeypatch
+):
+    w, manifest = _platform_wizard(tmp_path, monkeypatch)
+    answers = iter(
+        [True, False]
+    )  # the account is right; the allow-list swap is declined
+    monkeypatch.setattr(w.ui, "confirm", lambda *a, **k: next(answers, False))
+    with pytest.raises(SystemExit, match="same available model"):
+        w.step_platform()
+    assert manifest.read_text() == _PINNED
