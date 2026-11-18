@@ -93,7 +93,6 @@ ALLOWED_MODELS = [
     "us.openai.gpt-6-astra",
 ]
 METRIC_NAMESPACE = "SoftwareFactory"
-ASANA_PROJECT = "1216896369638424"
 LOG_RETENTION = logs.RetentionDays.ONE_MONTH
 LOG_PREFIXES = [
     "/aws/lambda/software-factory-",
@@ -554,7 +553,7 @@ class SoftwareFactoryStack(cdk.Stack):
                 "FACTORY_REPO": GITHUB_REPO,
                 "FACTORY_ASANA_OPS_TABLE": data.asana_ops.table_name,
                 "FACTORY_ASANA_SNAPSHOT_TABLE": data.asana_snapshot.table_name,
-                "FACTORY_ASANA_PROJECT": ASANA_PROJECT,
+                "FACTORY_ASANA_PROJECT": self._asana_project(),
                 "FACTORY_CONVERSATIONS_TABLE": data.conversations.table_name,
                 # Developer PRs: off until the user says; while off, branches stay in the runtime.
                 "FACTORY_DEV_PUBLISH": self.node.try_get_context("factory_dev_publish")
@@ -787,6 +786,13 @@ class SoftwareFactoryStack(cdk.Stack):
             treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
         )
         alarm.add_alarm_action(cw_actions.SnsAction(topic))
+
+    def _asana_project(self) -> str:
+        """The Asana board GID comes from `-c asana_project=<gid>`, never from the repo."""
+        project = self.node.try_get_context("asana_project")
+        if not project:
+            raise ValueError("pass -c asana_project=<Asana project GID> for the factory board")
+        return str(project)
 
     def _readonly_role(
         self, data: SoftwareFactoryDataStack, coordinator_role_name: str

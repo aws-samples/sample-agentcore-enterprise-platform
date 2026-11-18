@@ -1,6 +1,6 @@
 """Software factory CDK app. Separate from the repo's app.py so existing stacks synth unchanged.
 
-cd factory/infra && cdk diff -c coordinator_role=<role> && cdk deploy --all -c coordinator_role=<role>
+cd factory/infra && cdk diff -c coordinator_role=<role> -c asana_project=<gid> && cdk deploy --all -c coordinator_role=<role> -c asana_project=<gid>
 """
 
 import os

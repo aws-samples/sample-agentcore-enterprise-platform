@@ -18,8 +18,8 @@ import json
 import os
 from datetime import UTC, datetime, timedelta
 
-PROJECT = os.environ.get("FACTORY_ASANA_PROJECT", "1216896369638424")
-WORKSPACE = os.environ.get("FACTORY_ASANA_WORKSPACE", "8442528107068")
+# Set by the stack from `-c asana_project=<gid>`; no default so no board ID lives in the repo.
+PROJECT = os.environ.get("FACTORY_ASANA_PROJECT", "")
 SECTIONS = (
     "Backlog",
     "Ready for agent",

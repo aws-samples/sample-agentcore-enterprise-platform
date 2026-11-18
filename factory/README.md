@@ -19,8 +19,8 @@ re-runs the failing workflow check in its own container to get the failure.
 
 ```bash
 cd factory/infra
-cdk diff --all -c coordinator_role=<IAM role allowed to assume software-factory-readonly>
-cdk deploy --all -c coordinator_role=<same role>
+cdk diff --all -c coordinator_role=<IAM role allowed to assume software-factory-readonly> -c asana_project=<Asana project GID>
+cdk deploy --all -c coordinator_role=<same role> -c asana_project=<same GID>
 python -m pytest tests -q          # ingress HMAC gate
 cd ../agent-code && python -m pytest tests -q   # golden-case classification
 ```
