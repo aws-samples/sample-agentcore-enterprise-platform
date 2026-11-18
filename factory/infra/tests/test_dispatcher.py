@@ -129,3 +129,9 @@ def test_redrive_moves_only_cost_stop_parked_messages(monkeypatch):
         sqs.sent[1]["MessageGroupId"] == "g-b"
         and sqs.sent[1]["MessageDeduplicationId"] == "redrive-b"
     )
+
+
+def test_issue_command_gets_a_role_session_not_a_workflow_lookup():
+    message = {"role": "issue_command", "issue": {"number": 7}}
+    sid = dispatcher.session_id(message, {"messageId": "m-1"})
+    assert sid.startswith("factory-issue_command-m-1")

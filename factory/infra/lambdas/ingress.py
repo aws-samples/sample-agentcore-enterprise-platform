@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 
 import boto3
@@ -89,6 +90,77 @@ def _enqueue(message: dict, group: str, dedupe_id: str) -> None:
 
 
 REVIEW_ACTIONS = {"opened", "synchronize", "reopened", "ready_for_review"}
+
+# Commands a comment (or the factory:ready label) can start. Ingress only parses; the runtime checks
+# that the sender has write access, because this function holds no GitHub credential.
+ISSUE_COMMANDS = {"/pm", "/dev", "/approve", "/reject"}
+PROPOSAL_IDS = re.compile(r"^(all|P-[0-9a-f]{6})( P-[0-9a-f]{6})*$")
+MAX_PM_TEXT = 4000
+MAX_COMMANDS_PER_HOUR = 10  # per issue, per UTC hour
+
+
+def _command(payload: dict, event_name: str) -> dict | None:
+    if event_name == "issues":
+        if (payload.get("label") or {}).get("name") != "factory:ready":
+            return None
+        return {"command": "ready", "args": ""}
+    text = ((payload.get("comment") or {}).get("body") or "").strip()
+    parts = text.split(None, 1)
+    if not parts or parts[0].lower() not in ISSUE_COMMANDS:
+        return None
+    name, args = parts[0].lower()[1:], (parts[1].strip() if len(parts) > 1 else "")
+    if name == "pm" and not 0 < len(args) <= MAX_PM_TEXT:
+        return None
+    if name in ("approve", "reject") and (
+        not PROPOSAL_IDS.match(args) or (name == "reject" and args == "all")
+    ):
+        return None
+    return {"command": name, "args": args}
+
+
+def _rate_limited(issue: int) -> bool:
+    """Counts commands per issue per hour in the dedupe table (rl# keys, expire after 2 hours)."""
+    now = int(time.time())
+    resp = _client("dynamodb").Table(os.environ["DEDUPE_TABLE"]).update_item(
+        Key={"delivery_id": f"rl#{issue}#{now // 3600}"},
+        UpdateExpression="ADD hits :one SET expires_at = if_not_exists(expires_at, :exp)",
+        ExpressionAttributeValues={":one": 1, ":exp": now + 7200},
+        ReturnValues="UPDATED_NEW",
+    )
+    return int(resp["Attributes"]["hits"]) > MAX_COMMANDS_PER_HOUR
+
+
+def _issue(payload: dict, event_name: str, delivery: str) -> dict:
+    issue, sender = payload.get("issue") or {}, payload.get("sender") or {}
+    login = str(sender.get("login", ""))
+    if "pull_request" in issue:
+        return _resp(202, "ignored: pull request")
+    if sender.get("type") == "Bot" or login.endswith("[bot]"):
+        return _resp(202, "ignored: bot sender (no loops)")
+    expected = "created" if event_name == "issue_comment" else "labeled"
+    if payload.get("action") != expected:
+        return _resp(202, "ignored: action")
+    cmd = _command(payload, event_name)
+    if cmd is None:
+        return _resp(202, "ignored: not a factory command")
+    if not delivery or not _first_delivery(delivery):
+        return _resp(202, "duplicate")
+    number = int(issue["number"])
+    if _rate_limited(number):
+        return _resp(202, "rate limited: 10 commands per issue per hour")
+    message = {
+        "role": "issue_command",
+        "delivery_id": delivery,
+        "issue": {"number": number},
+        "actor": {"login": login},
+        **cmd,
+    }
+    try:
+        _enqueue(message, group=f"issue-{number}", dedupe_id=delivery)
+    except Exception:
+        _forget(delivery)
+        raise
+    return _resp(202, "queued")
 
 
 def _pull_request(payload: dict, delivery: str) -> dict:
@@ -197,6 +269,8 @@ def handler(event, context):
         and str((payload.get("installation") or {}).get("id")) != installation
     ):
         return _resp(202, "ignored: installation")
+    if event_name in ("issue_comment", "issues"):
+        return _issue(payload, event_name, delivery)
     if event_name == "pull_request":
         return _pull_request(payload, delivery)
     if event_name != "workflow_run" or payload.get("action") != "completed":

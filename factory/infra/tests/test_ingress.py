@@ -165,3 +165,49 @@ def test_merged_factory_pr_queues_the_merge_handler_only(sent):
     assert sent == [
         {"role": "merge_handler", "delivery_id": "d-1", "pull_request": {"number": 7}}
     ]
+
+
+def comment_event(body: str, login: str = "maintainer", kind: str = "User") -> dict:
+    payload = {
+        "action": "created",
+        "repository": {"full_name": REPO},
+        "issue": {"number": 7},
+        "comment": {"body": body},
+        "sender": {"login": login, "type": kind},
+    }
+    raw = json.dumps(payload).encode()
+    headers = {
+        "X-GitHub-Event": "issue_comment",
+        "X-GitHub-Delivery": "d-2",
+        "X-Hub-Signature-256": sign(raw),
+    }
+    return {"headers": headers, "body": raw.decode(), "isBase64Encoded": False}
+
+
+def test_pm_command_is_queued_for_its_issue(sent, monkeypatch):
+    monkeypatch.setattr(ingress, "_rate_limited", lambda issue: False)
+    ingress.handler(comment_event("/pm what is next?"), None)
+    assert sent == [
+        {
+            "role": "issue_command",
+            "delivery_id": "d-2",
+            "issue": {"number": 7},
+            "actor": {"login": "maintainer"},
+            "command": "pm",
+            "args": "what is next?",
+        }
+    ]
+
+
+def test_bot_and_plain_comments_never_queue(sent, monkeypatch):
+    monkeypatch.setattr(ingress, "_rate_limited", lambda issue: False)
+    ingress.handler(comment_event("/dev", login="factory[bot]", kind="Bot"), None)
+    ingress.handler(comment_event("nice work, thanks"), None)
+    ingress.handler(comment_event("/approve P-zzzzzz"), None)  # not a proposal id
+    assert sent == []
+
+
+def test_rate_limited_command_is_not_queued(sent, monkeypatch):
+    monkeypatch.setattr(ingress, "_rate_limited", lambda issue: True)
+    ingress.handler(comment_event("/dev"), None)
+    assert sent == []
