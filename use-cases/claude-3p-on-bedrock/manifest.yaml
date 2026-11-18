@@ -1,0 +1,16 @@
+# The manifest is the only file the platform reads about your use case.
+# Everything here is validated at load time (infra_utils/platform_config.py).
+name: claude-3p-on-bedrock       # must match this directory's name
+owner: pasiniap                  # who reviews changes to this folder
+summary: >-
+  Claude Code and Claude Desktop/Cowork on Amazon Bedrock through Anthropic's
+  Claude apps gateway, with Microsoft Entra ID sign-in and per-team model
+  access, on the platform's private network.
+# Core stack suffixes that must exist in the deployment's footprint. The
+# gateway runs in the platform VPC, read from the networking stack's SSM
+# parameters, so the footprint must include `networking`.
+requires: [networking]
+# Stack suffixes this use case adds (full name = <project>-<env>-<suffix>).
+stacks: [uc-claude-3p-on-bedrock]
+# Module exposing build(app, platform_ctx, config). Default: stack.py
+entry: stack.py

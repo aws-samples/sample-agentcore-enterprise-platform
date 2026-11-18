@@ -1,0 +1,814 @@
+"""claude-3p-on-bedrock: config schema, team -> policy mapping, gateway.yaml
+rendering, IAM scoping, the in-VPC probe, and the verify contract.
+
+Pure Python (the CI pytest job has no aws_cdk). That the stack synthesizes and
+lands in the deployment contract is covered by scripts/check-contract.sh via
+tests/fixtures/contract/claude-3p-on-bedrock.yaml.
+"""
+
+import copy
+import importlib.util
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+import yaml
+
+REPO = Path(__file__).resolve().parents[1]
+UC = REPO / "use-cases" / "claude-3p-on-bedrock"
+FIXTURE = REPO / "tests" / "fixtures" / "contract" / "claude-3p-on-bedrock.yaml"
+EXAMPLE = UC / "docs" / "platform.example.yaml"
+
+
+def _load(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+gc = _load("c3p_gateway_config", UC / "gateway" / "config.py")
+probe = None  # loaded lazily: the handler reads PUBLIC_URL at import
+
+
+@pytest.fixture(autouse=True)
+def _allow_fixture_placeholders(monkeypatch):
+    # The fixture uses example values on purpose, like CI (check-contract.sh).
+    monkeypatch.setenv("PLATFORM_ALLOW_PLACEHOLDERS", "1")
+
+
+@pytest.fixture
+def raw() -> dict:
+    """The use-case block from the contract fixture, a fresh copy per test."""
+    doc = yaml.safe_load(FIXTURE.read_text())
+    return copy.deepcopy(doc["use_cases"]["claude-3p-on-bedrock"])
+
+
+def rendered(raw: dict, region: str = "us-east-1") -> dict:
+    text = gc.render_gateway_yaml(gc.load(raw), region)
+    return yaml.safe_load(text)
+
+
+# ── schema ──────────────────────────────────────────────────────────────────
+
+
+def test_fixture_is_valid(raw):
+    cfg = gc.load(raw)
+    assert cfg.public_url == "https://claude.internal.example.com"
+    assert cfg.oidc.issuer.endswith("/v2.0")
+
+
+def test_unknown_keys_are_errors(raw):
+    raw["modles"] = []  # a typo must fail, not be ignored
+    with pytest.raises(ValueError, match="modles"):
+        gc.load(raw)
+
+
+@pytest.mark.parametrize(
+    "missing",
+    ["claude_version", "hostname", "certificate_arn", "oidc", "models", "default"],
+)
+def test_customer_values_are_required(raw, missing):
+    del raw[missing]
+    with pytest.raises(ValueError, match=missing):
+        gc.load(raw)
+
+
+def test_dns_defaults_to_customer_managed(raw):
+    assert gc.load(raw).dns.mode == "customer"
+
+
+def test_route53_mode_needs_a_zone(raw):
+    raw["dns"] = {"mode": "route53"}
+    with pytest.raises(ValueError, match="needs dns.private_zone"):
+        gc.load(raw)
+
+
+def test_customer_mode_rejects_a_zone(raw):
+    raw["dns"] = {"mode": "customer", "private_zone": {"name": "internal.example.com"}}
+    with pytest.raises(ValueError, match="only used with dns.mode: route53"):
+        gc.load(raw)
+
+
+def test_route53_hostname_must_be_in_zone(raw):
+    raw["dns"] = {"mode": "route53", "private_zone": {"name": "other.example.org"}}
+    with pytest.raises(ValueError, match="not inside dns.private_zone"):
+        gc.load(raw)
+
+
+def test_team_model_must_exist_in_catalog(raw):
+    raw["teams"][0]["models"] = ["claude-nonexistent"]
+    with pytest.raises(ValueError, match="not in models"):
+        gc.load(raw)
+
+
+def test_default_model_must_exist_in_catalog(raw):
+    raw["default"]["models"] = ["claude-nonexistent"]
+    with pytest.raises(ValueError, match=r"default\.models"):
+        gc.load(raw)
+
+
+def test_shadowed_team_is_an_error_in_first_match(raw):
+    raw["teams"].append(
+        {
+            "name": "dup",
+            "entra_roles": ["Claude.Contractors"],
+            "models": ["claude-haiku-4-5"],
+        }
+    )
+    with pytest.raises(ValueError, match="unreachable"):
+        gc.load(raw)
+
+
+def test_shadowed_team_is_allowed_when_layered(raw):
+    raw["teams"].append(
+        {
+            "name": "dup",
+            "entra_roles": ["Claude.Contractors"],
+            "models": ["claude-haiku-4-5"],
+        }
+    )
+    raw["policy_mode"] = "layered"
+    raw["claude_version"] = "2.1.316"
+    gc.load(raw)
+
+
+def test_empty_role_is_rejected(raw):
+    raw["teams"][0]["entra_roles"] = [" "]
+    with pytest.raises(ValueError, match="non-empty"):
+        gc.load(raw)
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"claude_version": "2.1.200"}, "claude_version must be >= 2.1.274"),
+        ({"policy_mode": "layered", "claude_version": "2.1.311"}, "layered needs"),
+        (
+            {"guardrail": {"id": "gr1", "version": "1"}, "claude_version": "2.1.276"},
+            "guardrail needs",
+        ),
+        (
+            {
+                "guardrail": {
+                    "id": "gr1",
+                    "version": "1",
+                    "input_tagging": "user_messages",
+                },
+                "claude_version": "2.1.311",
+            },
+            "input_tagging needs",
+        ),
+    ],
+)
+def test_version_gates(raw, change, message):
+    # An older gateway refuses to start on these keys; fail at design instead.
+    raw.update(change)
+    with pytest.raises(ValueError, match=message):
+        gc.load(raw)
+
+
+def test_ipv6_client_cidr_rejected(raw):
+    raw["client_cidrs"] = ["fd00::/64"]
+    with pytest.raises(ValueError, match="IPv4 only"):
+        gc.load(raw)
+
+
+def test_client_cidrs_must_not_overlap_trusted_proxies(raw):
+    raw["client_cidrs"] = ["10.0.2.0/25"]
+    with pytest.raises(ValueError, match="overlaps trusted_proxies"):
+        gc.load(raw)
+
+
+def test_collector_latest_tag_rejected(raw):
+    raw["telemetry"] = {
+        "mode": "sidecar",
+        "collector_image": "public.ecr.aws/x/y:latest",
+    }
+    with pytest.raises(ValueError, match="latest"):
+        gc.load(raw)
+
+
+def test_settings_cannot_shadow_models(raw):
+    raw["default"]["settings"] = {"availableModels": ["claude-opus-5"]}
+    with pytest.raises(ValueError, match="through `models`"):
+        gc.load(raw)
+
+
+def test_guardrail_version_must_be_string_shaped(raw):
+    raw["guardrail"] = {"id": "gr1", "version": "latest"}
+    with pytest.raises(ValueError, match="version"):
+        gc.load(raw)
+
+
+# ── rendering ────────────────────────────────────────────────────────────────
+
+
+def test_rendered_file_holds_no_secret_values(raw):
+    text = gc.render_gateway_yaml(gc.load(raw), "us-east-1")
+    doc = yaml.safe_load(text)
+    assert doc["oidc"]["client_secret"] == "${OIDC_CLIENT_SECRET}"
+    assert doc["session"]["jwt_secret"] == "${GATEWAY_JWT_SECRET}"
+    assert doc["store"]["password"] == "${DB_PASSWORD}"
+    assert "sslmode=verify-full" in doc["store"]["postgres_url"]
+
+
+def test_entra_oidc_block(raw):
+    oidc = rendered(raw)["oidc"]
+    assert (
+        oidc["issuer"]
+        == "https://login.microsoftonline.com/00000000-0000-0000-0000-000000000000/v2.0"
+    )
+    assert oidc["groups_claim"] == "roles"  # App Roles: readable names, not GUIDs
+    assert "allowed_groups" not in oidc
+
+
+def test_only_catalog_models_are_served(raw):
+    doc = rendered(raw)
+    assert doc["auto_include_builtin_models"] is False
+    assert [m["id"] for m in doc["models"]] == [
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "claude-haiku-4-5",
+    ]
+
+
+def test_teams_become_policies_in_order_with_base_last(raw):
+    pols = rendered(raw)["managed"]["policies"]
+    assert [p["match"] for p in pols] == [
+        {"groups": ["Claude.Contractors"]},
+        {"groups": ["Claude.Engineering"]},
+        {},
+    ]
+    contractors, engineering, base = pols
+    assert contractors["cli"]["availableModels"] == ["claude-haiku-4-5"]
+    assert contractors["cli"]["permissions"]["deny"] == ["WebFetch", "WebSearch"]
+    assert "enforceAvailableModels" not in engineering["cli"]  # inherited from base
+    assert base["cli"]["enforceAvailableModels"] is True
+    assert base["desktop"] == {}
+
+
+def test_cli_key_silences_desktop_warning_on_every_policy(raw):
+    pols = rendered(raw)["managed"]["policies"]
+    assert all(p["serve_to_desktop"] is False for p in pols)
+
+
+_MCP = {
+    "name": "agentcore",
+    "transport": "http",
+    "url": "https://gw.example.com/mcp",
+    "oauth": {"clientId": "c", "tenantId": "t", "scope": "api://c/gateway.invoke"},
+}
+
+
+def test_desktop_settings_render_into_desktop_blocks(raw):
+    raw["default"]["desktop_settings"] = {"managedMcpServers": [_MCP]}
+    raw["teams"][0]["desktop_settings"] = {"disabledBuiltinTools": ["WebSearch"]}
+    contractors, engineering, base = rendered(raw)["managed"]["policies"]
+    assert base["desktop"] == {"managedMcpServers": [_MCP]}
+    assert contractors["desktop"] == {"disabledBuiltinTools": ["WebSearch"]}
+    assert "desktop" not in engineering  # inherits the base layer
+    assert "managedMcpServers" not in base["cli"]
+
+
+def test_desktop_settings_need_desktop(raw):
+    raw["desktop"] = False
+    raw["default"]["desktop_settings"] = {"managedMcpServers": [_MCP]}
+    with pytest.raises(Exception, match="default.desktop_settings needs desktop: true"):
+        gc.load(raw)
+
+
+_AC = {"client_id": "22222222-2222-2222-2222-222222222222"}
+
+
+def test_agentcore_tools_reach_everyone_through_the_base_layer(raw):
+    raw["agentcore_tools"] = dict(_AC)
+    contractors, engineering, base = rendered(raw)["managed"]["policies"]
+    code = base["cli"]["managedMcpServers"]["agentcore"]
+    assert code == {
+        "type": "http",
+        "url": "${AGENTCORE_GATEWAY_URL}",
+        "oauth": {
+            "clientId": _AC["client_id"],
+            "callbackPort": 53280,
+            "scopes": f"api://{_AC['client_id']}/gateway.invoke offline_access",
+        },
+    }
+    (desk,) = base["desktop"]["managedMcpServers"]
+    assert desk == {
+        "name": "agentcore",
+        "transport": "http",
+        "url": "${AGENTCORE_GATEWAY_URL}",
+        "oauth": {
+            "clientId": _AC["client_id"],
+            "tenantId": raw["oidc"]["tenant_id"],
+            "scope": f"api://{_AC['client_id']}/gateway.invoke offline_access",
+        },
+    }
+    for team in (contractors, engineering):
+        assert "managedMcpServers" not in team["cli"]  # inherited
+        assert "desktop" not in team
+
+
+def test_agentcore_tools_for_listed_teams_only(raw):
+    raw["agentcore_tools"] = {**_AC, "teams": ["engineering"]}
+    contractors, engineering, base = rendered(raw)["managed"]["policies"]
+    assert "agentcore" in engineering["cli"]["managedMcpServers"]
+    assert engineering["desktop"]["managedMcpServers"][0]["name"] == "agentcore"
+    assert "managedMcpServers" not in contractors["cli"]
+    assert "managedMcpServers" not in base["cli"]
+    assert base["desktop"] == {}
+
+
+def test_agentcore_tools_keep_other_servers(raw):
+    other = {"name": "wiki", "transport": "http", "url": "https://wiki.example.com/mcp"}
+    raw["default"]["desktop_settings"] = {"managedMcpServers": [other]}
+    raw["default"]["settings"] = {
+        "managedMcpServers": {"wiki": {"type": "http", "url": other["url"]}}
+    }
+    raw["agentcore_tools"] = dict(_AC)
+    base = rendered(raw)["managed"]["policies"][-1]
+    assert set(base["cli"]["managedMcpServers"]) == {"wiki", "agentcore"}
+    assert [e["name"] for e in base["desktop"]["managedMcpServers"]] == [
+        "wiki",
+        "agentcore",
+    ]
+
+
+def test_agentcore_tools_without_desktop_serve_claude_code_only(raw):
+    raw["desktop"] = False
+    raw["agentcore_tools"] = dict(_AC)
+    base = rendered(raw)["managed"]["policies"][-1]
+    assert "agentcore" in base["cli"]["managedMcpServers"]
+    assert "desktop" not in base
+
+
+@pytest.mark.parametrize(
+    "change, message",
+    [
+        ({"teams": ["nobody"]}, "agentcore_tools.teams ['nobody'] not in teams"),
+        ({"client_id": "not-a-guid"}, "client_id"),
+        ({"scope": "api://x/y"}, "scope"),
+    ],
+)
+def test_agentcore_tools_validation(raw, change, message):
+    raw["agentcore_tools"] = {**_AC, **change}
+    with pytest.raises(Exception, match=re.escape(message)):
+        gc.load(raw)
+
+
+def test_agentcore_tools_name_must_not_clash(raw):
+    raw["default"]["desktop_settings"] = {
+        "managedMcpServers": [
+            {"name": "agentcore", "transport": "http", "url": "https://x/mcp"}
+        ]
+    }
+    raw["agentcore_tools"] = dict(_AC)
+    with pytest.raises(Exception, match="like agentcore_tools.name"):
+        gc.load(raw)
+
+
+def test_agentcore_tools_example_client_id_is_refused(raw, monkeypatch):
+    monkeypatch.delenv("PLATFORM_ALLOW_PLACEHOLDERS", raising=False)
+    raw = yaml.safe_load(EXAMPLE.read_text())["use_cases"]["claude-3p-on-bedrock"]
+    assert raw.get("agentcore_tools"), "example should show agentcore_tools"
+    with pytest.raises(
+        Exception, match="agentcore_tools.client_id is the example value"
+    ):
+        gc.load(raw)
+
+
+def test_deny_tools_merge_with_settings_permissions(raw):
+    raw["default"]["settings"] = {
+        "permissions": {"deny": ["Bash(rm:*)"], "ask": ["Bash"]}
+    }
+    base = rendered(raw)["managed"]["policies"][-1]["cli"]
+    assert base["permissions"]["deny"] == [
+        "Bash(rm:*)",
+        "Read(./.env)",
+        "Read(./secrets/**)",
+    ]
+    assert base["permissions"]["ask"] == ["Bash"]
+
+
+def test_layered_mode_is_emitted(raw):
+    raw.update(policy_mode="layered", claude_version="2.1.316")
+    assert rendered(raw)["managed"]["policy_mode"] == "layered"
+
+
+def test_spend_admin_roles_enable_admin_api(raw):
+    assert rendered(raw)["admin"] == {"admin_groups": ["Claude.SpendAdmins"]}
+
+
+def test_ip_allowlist_is_opt_in(raw):
+    doc = rendered(raw)
+    assert "access_control" not in doc  # trusted_proxies alone refuses no one
+    assert doc["listen"]["trusted_proxies"] == ["10.0.2.0/24", "10.0.3.0/24"]
+    raw["gateway_ip_allowlist"] = True
+    assert rendered(raw)["access_control"] == {"allow_cidrs": ["172.16.0.0/22"]}
+
+
+def test_ip_allowlist_needs_trusted_proxies(raw):
+    raw.update(gateway_ip_allowlist=True, trusted_proxies=[])
+    with pytest.raises(ValueError, match="needs trusted_proxies"):
+        gc.load(raw)
+
+
+def test_guardrail_rendered_with_string_version(raw):
+    raw["guardrail"] = {"id": "gr-abc", "version": "3"}
+    up = rendered(raw)["upstreams"][0]
+    assert up["guardrail"] == {"id": "gr-abc", "version": "3"}
+    assert gc.render_gateway_yaml(gc.load(raw), "us-east-1").count("version: '3'") == 1
+
+
+def test_bedrock_region_override(raw):
+    raw["bedrock_region"] = "eu-central-1"
+    assert rendered(raw)["upstreams"][0]["region"] == "eu-central-1"
+
+
+def test_telemetry_sidecar_forwards_metrics_only(raw):
+    raw["telemetry"] = {"mode": "sidecar"}
+    assert rendered(raw)["telemetry"] == {
+        "forward_to": [{"url": "http://127.0.0.1:4318", "metrics": True}]
+    }
+
+
+# ── IAM scoping ──────────────────────────────────────────────────────────────
+
+
+def test_bedrock_arns_cover_profile_and_foundation_model(raw):
+    raw["models"].append(
+        {
+            "id": "pt",
+            "label": "PT",
+            "bedrock": "arn:aws:bedrock:us-east-1:1:provisioned-model/x",
+        }
+    )
+    raw["models"].append(
+        {"id": "geo", "label": "Geo", "bedrock": "eu.anthropic.claude-sonnet-5"}
+    )
+    arns = gc.bedrock_resource_arns(gc.load(raw), "us-east-1", "111111111111")
+    assert (
+        "arn:aws:bedrock:us-east-1:111111111111:inference-profile/global.anthropic.claude-opus-5"
+        in arns
+    )
+    assert "arn:aws:bedrock:*::foundation-model/anthropic.claude-opus-5" in arns
+    assert (
+        "arn:aws:bedrock:us-east-1:111111111111:inference-profile/eu.anthropic.claude-sonnet-5"
+        in arns
+    )
+    assert "arn:aws:bedrock:us-east-1:1:provisioned-model/x" in arns
+    assert not any(
+        a.endswith("anthropic.*") for a in arns
+    )  # no wildcard over the catalog
+
+
+def test_foundation_model_id():
+    assert (
+        gc.foundation_model_id("global.anthropic.claude-opus-5")
+        == "anthropic.claude-opus-5"
+    )
+    assert (
+        gc.foundation_model_id("anthropic.claude-opus-5") == "anthropic.claude-opus-5"
+    )
+    assert gc.foundation_model_id("arn:aws:bedrock:us-east-1:1:x") is None
+
+
+# ── probe ────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def probe_mod(monkeypatch):
+    monkeypatch.setenv("PUBLIC_URL", "https://claude.internal.example.com")
+    return _load("c3p_probe", UC / "gateway" / "probe" / "handler.py")
+
+
+def test_probe_ok_when_all_checks_pass(probe_mod, monkeypatch):
+    responses = {
+        "/healthz": (200, "ok"),
+        "/readyz": (200, "ok"),
+        "/.well-known/oauth-authorization-server": (
+            200,
+            '{"issuer": "https://claude.internal.example.com"}',
+        ),
+    }
+    monkeypatch.setattr(probe_mod, "_get", lambda path: responses[path])
+    out = probe_mod.handler({}, None)
+    assert out["ok"] is True
+
+
+def test_probe_fails_on_issuer_mismatch(probe_mod, monkeypatch):
+    responses = {
+        "/healthz": (200, "ok"),
+        "/readyz": (200, "ok"),
+        "/.well-known/oauth-authorization-server": (
+            200,
+            '{"issuer": "https://elsewhere.example.com"}',
+        ),
+    }
+    monkeypatch.setattr(probe_mod, "_get", lambda path: responses[path])
+    assert probe_mod.handler({}, None)["ok"] is False
+
+
+def test_probe_fails_and_reports_without_raising(probe_mod, monkeypatch):
+    def boom(path):
+        raise OSError("name resolution failed")
+
+    monkeypatch.setattr(probe_mod, "_get", boom)
+    out = probe_mod.handler({}, None)
+    assert out["ok"] is False
+    assert "name resolution failed" in out["checks"]["healthz"]["error"]
+
+
+# ── verify contract ──────────────────────────────────────────────────────────
+
+
+def test_verify_fails_fast_without_a_deployment():
+    env = {
+        "PATH": os.environ["PATH"],
+        "HOME": os.environ.get("HOME", "/tmp"),  # nosec B108 - test scaffolding
+        "AWS_CONFIG_FILE": os.devnull,
+        "AWS_SHARED_CREDENTIALS_FILE": os.devnull,
+        "AWS_EC2_METADATA_DISABLED": "true",
+        "AWS_REGION": "us-east-1",
+    }
+    r = subprocess.run(  # nosec B603 - runs this repo's script, fixed argv
+        [sys.executable, str(UC / "verify.py")],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    assert r.returncode == 1
+    assert r.stderr.startswith("FAIL:"), r.stderr
+    assert "Traceback" not in r.stderr
+
+
+# ── review fixes ─────────────────────────────────────────────────────────────
+
+
+def test_every_policy_starts_on_an_allowed_model(raw):
+    # Without `model`, sessions start on the built-in Opus and get 400s.
+    pols = rendered(raw)["managed"]["policies"]
+    assert [p["cli"]["model"] for p in pols] == [
+        "claude-haiku-4-5",
+        "claude-opus-5",
+        "claude-haiku-4-5",
+    ]
+
+
+def test_start_model_override_must_be_listed(raw):
+    raw["teams"][1]["start_model"] = "claude-sonnet-5"
+    assert rendered(raw)["managed"]["policies"][1]["cli"]["model"] == "claude-sonnet-5"
+    raw["teams"][0]["start_model"] = "claude-opus-5"  # contractors may not use Opus
+    with pytest.raises(ValueError, match="start_model"):
+        gc.load(raw)
+
+
+def test_model_cannot_be_set_through_settings(raw):
+    raw["default"]["settings"] = {"model": "claude-opus-5"}
+    with pytest.raises(ValueError, match="start_model"):
+        gc.load(raw)
+
+
+def test_empty_model_list_emits_no_start_model(raw):
+    raw["default"]["models"] = []
+    base = rendered(raw)["managed"]["policies"][-1]["cli"]
+    assert base["availableModels"] == []
+    assert "model" not in base
+
+
+def test_inference_profile_arn_needs_and_grants_foundation_model(raw):
+    arn = "arn:aws:bedrock:us-east-1:111111111111:application-inference-profile/abc123"
+    raw["models"].append({"id": "team-opus", "label": "Team Opus", "bedrock": arn})
+    with pytest.raises(ValueError, match="foundation_model"):
+        gc.load(raw)
+    raw["models"][-1]["foundation_model"] = "anthropic.claude-opus-5"
+    arns = gc.bedrock_resource_arns(gc.load(raw), "us-east-1", "111111111111")
+    assert arn in arns
+    assert "arn:aws:bedrock:*::foundation-model/anthropic.claude-opus-5" in arns
+
+
+def test_drain_seconds_bounds(raw):
+    raw["service"] = {"drain_seconds": 10}
+    with pytest.raises(ValueError, match="drain_seconds"):
+        gc.load(raw)
+
+
+def test_probe_allowlist_mode_expects_refusal(monkeypatch):
+    monkeypatch.setenv("PUBLIC_URL", "https://claude.internal.example.com")
+    monkeypatch.setenv("EXPECT_METADATA_STATUS", "403")
+    mod = _load("c3p_probe_allowlist", UC / "gateway" / "probe" / "handler.py")
+    responses = {
+        "/healthz": (200, "ok"),
+        "/readyz": (200, "ok"),
+        "/.well-known/oauth-authorization-server": (403, "forbidden"),
+    }
+    monkeypatch.setattr(mod, "_get", lambda path: responses[path])
+    out = mod.handler({}, None)
+    assert out["ok"] is True
+    assert out["allowlist_mode"] is True
+    # Allow-list configured but not enforced: must FAIL.
+    responses["/.well-known/oauth-authorization-server"] = (
+        200,
+        '{"issuer": "https://claude.internal.example.com"}',
+    )
+    assert mod.handler({}, None)["ok"] is False
+
+
+def test_probe_connects_to_alb_name_with_gateway_hostname(monkeypatch):
+    monkeypatch.setenv("PUBLIC_URL", "https://claude.corp.example.com")
+    monkeypatch.setenv("CONNECT_HOST", "internal-x.us-east-1.elb.amazonaws.com")
+    mod = _load("c3p_probe_connect", UC / "gateway" / "probe" / "handler.py")
+    conn = mod._PinnedConnection(mod.CONNECT_HOST, mod.HOSTNAME, mod._context())
+    assert conn._connect_host == "internal-x.us-east-1.elb.amazonaws.com"
+    assert (
+        conn.host == "claude.corp.example.com"
+    )  # SNI, certificate check and Host header
+
+
+@pytest.mark.parametrize(
+    "bad", ["claude-3p/entra-client-secret", "app-XEokdd", "x-abcdef"]
+)
+def test_secret_name_must_not_look_like_an_arn_suffix(raw, bad):
+    # Found live: ECS uses the partial ARN; Secrets Manager reads "-secret" as the suffix.
+    raw["oidc"]["client_secret_name"] = bad
+    with pytest.raises(ValueError, match="ARN suffix"):
+        gc.load(raw)
+
+
+@pytest.mark.parametrize(
+    "good", ["claude-3p/entra-oidc", "claude-3p/entra", "x-abcde", "x-abcdefg"]
+)
+def test_secret_names_that_are_safe(raw, good):
+    raw["oidc"]["client_secret_name"] = good
+    gc.load(raw)
+
+
+def test_entra_role_with_spaces_is_rejected(raw):
+    # Found in the wizard test: pasted text ended up as a role value and passed every check.
+    raw["teams"][1]["entra_roles"] = ["=== 6. Teams (Entra App Role -> models) ==="]
+    with pytest.raises(ValueError, match="has no spaces"):
+        gc.load(raw)
+
+
+# ── example platform.yaml ────────────────────────────────────────────────────
+
+
+def test_example_platform_yaml_is_valid_once_values_are_filled(monkeypatch):
+    from infra_utils.platform_config import load_platform_config
+
+    load_platform_config(EXAMPLE)  # placeholders allowed (autouse): shape is valid
+    gc.load(yaml.safe_load(EXAMPLE.read_text())["use_cases"]["claude-3p-on-bedrock"])
+
+
+def test_example_platform_yaml_is_refused_until_edited(monkeypatch):
+    monkeypatch.delenv("PLATFORM_ALLOW_PLACEHOLDERS")
+    block = yaml.safe_load(EXAMPLE.read_text())["use_cases"]["claude-3p-on-bedrock"]
+    with pytest.raises(ValueError) as exc:
+        gc.load(block)
+    msg = str(exc.value)
+    for field in (
+        "oidc.tenant_id",
+        "oidc.client_id",
+        "hostname",
+        "certificate_arn",
+        "allowed_email_domains",
+        "agentcore_tools.client_id",
+    ):
+        assert field in msg, field
+    # Real-looking values pass.
+    block.update(
+        hostname="claude.contoso.net",
+        certificate_arn=block["certificate_arn"]
+        .replace("000000000000", "123412341234")
+        .replace(
+            "00000000-0000-0000-0000-000000000000",
+            "1a2b3c4d-1111-2222-3333-444455556666",
+        ),
+    )
+    block["oidc"].update(
+        tenant_id="9a8b7c6d-1111-2222-3333-444455556666",
+        client_id="1f2e3d4c-1111-2222-3333-444455556666",
+        allowed_email_domains=["contoso.net"],
+    )
+    block["agentcore_tools"]["client_id"] = "2c3d4e5f-1111-2222-3333-444455556666"
+    gc.load(block)
+
+
+# ── verify.py: AgentCore Gateway sign-in discovery ──────────────────────────
+_GW = "https://gw.example.com/mcp"
+_ISSUER = "https://login.microsoftonline.com/t/v2.0"
+
+
+def _verify(monkeypatch, *, status=401, header=None, meta=None):
+    import email.message
+    import io
+    import json
+    import urllib.error
+
+    v = _load("c3p_verify", UC / "verify.py")
+    msg = email.message.Message()
+    if header is not False:
+        msg["WWW-Authenticate"] = header or (
+            'Bearer error="invalid_token", '
+            'resource_metadata="https://gw.example.com/.well-known/oauth-protected-resource"'
+        )
+    body = meta or {"authorization_servers": [_ISSUER], "resource": _GW}
+
+    class _Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake(req, timeout):
+        if getattr(req, "method", None) == "POST":
+            if status == 200:
+                return _Resp(b"{}")
+            raise urllib.error.HTTPError(_GW, status, "x", msg, None)
+        return _Resp(json.dumps(body).encode())
+
+    monkeypatch.setattr(v.urllib.request, "urlopen", fake)
+    return v.check_agentcore(_GW, _ISSUER)
+
+
+def test_verify_agentcore_ok(monkeypatch):
+    assert _verify(monkeypatch) == ""
+
+
+@pytest.mark.parametrize(
+    "kwargs, reason",
+    [
+        ({"status": 200}, "accepted a request without a token"),
+        ({"status": 403}, "answered 403"),
+        ({"header": False}, "no https resource_metadata"),
+        (
+            {"meta": {"authorization_servers": ["https://cognito/x"], "resource": _GW}},
+            "identity.mode: direct",
+        ),
+        (
+            {
+                "meta": {
+                    "authorization_servers": [_ISSUER],
+                    "resource": "https://other/mcp",
+                }
+            },
+            "is not https://gw.example.com/mcp",
+        ),
+    ],
+)
+def test_verify_agentcore_failures(monkeypatch, kwargs, reason):
+    assert reason in _verify(monkeypatch, **kwargs)
+
+
+@pytest.mark.parametrize("cidr", ["0.0.0.0/0", "128.0.0.0/1", "8.0.0.0/7"])
+def test_client_cidrs_refuse_everything(raw, cidr):
+    raw["client_cidrs"] = [cidr]
+    with pytest.raises(Exception, match="wider than /8"):
+        gc.load(raw)
+
+
+@pytest.mark.parametrize("cidr", ["172.16.0.0/12", "192.168.0.0/16", "172.16.4.0/22"])
+def test_client_cidrs_accept_corporate_ranges(raw, cidr):
+    raw["client_cidrs"] = [cidr]
+    gc.load(raw)
+
+
+def test_too_broad_boundary():
+    assert gc.too_broad("0.0.0.0/0")
+    assert gc.too_broad("8.0.0.0/7")
+    assert not gc.too_broad("10.0.0.0/8")
+
+
+# ── service size: only Fargate's cpu/memory pairs ────────────────────────────
+@pytest.mark.parametrize(
+    "cpu, memory",
+    [(256, 512), (256, 2048), (512, 1024), (512, 4096), (1024, 2048), (1024, 8192)]
+    + [(2048, 4096), (2048, 16384), (4096, 8192), (4096, 30720)],
+)
+def test_service_accepts_fargate_sizes(raw, cpu, memory):
+    raw["service"] = {"cpu": cpu, "memory_mib": memory}
+    gc.load(raw)
+
+
+@pytest.mark.parametrize(
+    "cpu, memory",
+    [(256, 4096), (256, 3072), (512, 512), (512, 5120), (1024, 1024), (1024, 9216)]
+    + [(2048, 2048), (2048, 17408), (4096, 4096), (4096, 8704)],
+)
+def test_service_refuses_pairs_fargate_does_not_offer(raw, cpu, memory):
+    raw["service"] = {"cpu": cpu, "memory_mib": memory}
+    with pytest.raises(Exception, match=f"memory_mib {memory} isn't offered with"):
+        gc.load(raw)
+
+
+def test_default_service_size_is_offered():
+    s = gc.ServiceConfig()
+    assert s.memory_mib in gc._FARGATE_MEMORY_MIB[s.cpu]

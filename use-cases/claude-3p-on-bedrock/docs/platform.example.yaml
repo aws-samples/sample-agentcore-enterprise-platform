@@ -1,0 +1,95 @@
+# Example platform.yaml for the claude-3p-on-bedrock use case.
+#
+# Copy it to platform.yaml in the repository root and replace every value
+# marked CHANGE. The setup wizard (use-cases/claude-3p-on-bedrock/setup.py)
+# writes the same file for you; use this when you prefer to edit by hand.
+#
+#   cp use-cases/claude-3p-on-bedrock/docs/platform.example.yaml platform.yaml
+#   ./scripts/deploy.sh design        # validates everything; creates nothing
+#
+# Every key: README.md, "All configuration options".
+
+# ── The platform ────────────────────────────────────────────────────────────
+project: agentcore-workshop
+environment: dev
+region: eu-west-1                     # CHANGE: the Region you deploy to
+
+deployment:
+  strategy: centralized
+  platform_account: "000000000000"    # CHANGE: your 12-digit AWS account ID
+
+# The platform's sign-in, used by the AgentCore Gateway: Entra ID issues the
+# tokens directly, no Cognito (docs/walkthrough.md, Register the AgentCore Gateway in Entra).
+identity:
+  idp: entra_id
+  mode: direct
+  tenant_id: "00000000-0000-0000-0000-000000000000"  # CHANGE: same tenant as oidc below
+  client_id: "00000000-0000-0000-0000-000000000000"  # CHANGE: the "AgentCore Gateway" app
+  client_secret_name: agentcore/entra-platform       # Secrets Manager name holding that app's secret
+
+agents:
+  pattern: orchestrator
+  model_id: eu.anthropic.claude-sonnet-5-5   # the platform's sample agent; must exist in your Region
+
+gateway:
+  web_search: "on"                      # AgentCore web search (us-east-1, eu-west-1, ap-northeast-1)
+
+security:
+  networking: true                    # required: the gateway runs in the platform's private network
+
+observability:
+  transaction_search: true
+
+# ── Claude Code and Cowork on Amazon Bedrock ────────────────────────────────
+use_cases:
+  claude-3p-on-bedrock:
+    claude_version: 2.1.311           # Claude Code release the gateway runs
+
+    # Network and certificate (docs/walkthrough.md)
+    hostname: claude.corp.example.com                    # CHANGE
+    certificate_arn: arn:aws:acm:eu-west-1:000000000000:certificate/00000000-0000-0000-0000-000000000000   # CHANGE
+    client_cidrs: [172.16.0.0/16]                        # CHANGE: corporate ranges developers connect from
+    trusted_proxies: [10.0.2.0/24, 10.0.3.0/24]          # the platform's private subnets; keep as is
+    # dns: { mode: route53, private_zone: { name: corp.example.com } }   # only if your DNS can't resolve AWS names
+
+    # Microsoft Entra ID (docs/walkthrough.md, Register the Entra application)
+    oidc:
+      tenant_id: "00000000-0000-0000-0000-000000000000"  # CHANGE: Directory (tenant) ID
+      client_id: "00000000-0000-0000-0000-000000000000"  # CHANGE: Application (client) ID
+      client_secret_name: claude-3p/entra-oidc           # Secrets Manager name holding the client secret
+      allowed_email_domains: [corp.example.com]          # CHANGE
+      # email_claim: [email, preferred_username]         # for users without a mailbox
+
+    # Models people can use. Find IDs with:
+    #   aws bedrock list-inference-profiles --query 'inferenceProfileSummaries[?contains(inferenceProfileId,`anthropic`)].inferenceProfileId'
+    models:
+      - { id: claude-opus-5,    label: Claude Opus 5,    bedrock: eu.anthropic.claude-opus-5 }
+      - { id: claude-sonnet-5,  label: Claude Sonnet 5,  bedrock: eu.anthropic.claude-sonnet-5 }
+      - { id: claude-haiku-4-5, label: Claude Haiku 4.5, bedrock: eu.anthropic.claude-haiku-4-5-20251001-v1:0 }
+
+    # Teams = Entra App Roles. First match wins, top to bottom.
+    # A team's first model is the one new sessions start on.
+    teams:
+      - name: contractors
+        entra_roles: [Claude.Contractors]                # CHANGE: the App Role value in Entra
+        models: [claude-haiku-4-5]
+        deny_tools: [WebFetch, WebSearch]
+      - name: engineering
+        entra_roles: [Claude.Engineering]                # CHANGE
+        models: [claude-sonnet-5, claude-opus-5, claude-haiku-4-5]
+
+    # Everyone signed in but in no team. Its deny_tools apply to every team.
+    default:
+      models: [claude-haiku-4-5]
+      deny_tools: ["Read(./.env)"]
+
+    # The AgentCore Gateway's tools (web search) in Claude Code and Cowork.
+    # Remove this block, and set identity back to your choice, to leave them out.
+    agentcore_tools:
+      client_id: "00000000-0000-0000-0000-000000000000"  # CHANGE: = identity.client_id above
+      # teams: [engineering]                             # default: everyone
+
+    # Before production (README.md, "Before production"):
+    # retain: true
+    # database: { multi_az: true, backup_retention_days: 14 }
+    # gateway_ip_allowlist: true

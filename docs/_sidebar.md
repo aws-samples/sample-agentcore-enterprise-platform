@@ -27,6 +27,7 @@ Build
 - [Repository structure](REPOSITORY_STRUCTURE.md)
 - [Add gateway tools](GATEWAY_TARGETS.md)
 - [Build a use case](PLATFORM_INTERFACE.md)
+- [Use case: Claude Code and Cowork on Bedrock](https://github.com/aws-samples/sample-agentcore-enterprise-platform/blob/main/use-cases/claude-3p-on-bedrock/README.md)
 
 Migrate
 - [EBA migration runbook](MIGRATION_RUNBOOK.md)
