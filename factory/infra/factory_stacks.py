@@ -595,7 +595,7 @@ class SoftwareFactoryStack(cdk.Stack):
                 "RUNTIME_ARN": runtime_arn,
                 "DLQ_URL": dlq.queue_url,
                 # Hard stop: above this day's summed RunCostUSD, new runs are parked in the DLQ until 00:00 UTC.
-                "DAILY_COST_STOP_USD": "10",
+                "DAILY_COST_STOP_USD": "20",
             },
             log_group=self._log_group(
                 "DispatcherLogs", "/aws/lambda/software-factory-dispatcher"
@@ -785,14 +785,14 @@ class SoftwareFactoryStack(cdk.Stack):
             self,
             "DailyCostAlarm",
             alarm_name="software-factory-daily-run-cost",
-            alarm_description="Factory agents' model spend (RunCostUSD) above $5 in one day",
+            alarm_description="Factory agents' model spend (RunCostUSD) above $15 in one day",
             metric=cloudwatch.Metric(
                 namespace=METRIC_NAMESPACE,
                 metric_name="RunCostUSD",
                 statistic="Sum",
                 period=cdk.Duration.days(1),
             ),
-            threshold=5,
+            threshold=15,
             evaluation_periods=1,
             comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
             treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
