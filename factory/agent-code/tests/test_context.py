@@ -116,8 +116,25 @@ def test_large_pr_skips_astra_when_budget_is_spent(tmp_path, monkeypatch):
         "findings": [{"path": "f0.py", "line": 5, "severity": "major"}],
     }
     r = _review(tmp_path, monkeypatch, {reviewer.SOL: sol, reviewer.ASTRA: {}})
-    monkeypatch.setattr(reviewer, "LARGE_REVIEW_USD", 0.01)
+    # A cap the first pass fits inside, but which leaves too little for a useful second pass.
+    monkeypatch.setattr(reviewer, "LARGE_REVIEW_USD", 0.02)
     result, passes = r.two_pass(_files(3), "head", "base", "hdr", ["f0.py"], [])
     assert r.calls == [reviewer.SOL]
     assert passes[0]["astra"].startswith("skipped")
     assert result["findings"] == sol["findings"]
+    assert r.cost() <= 0.02  # the cap covers the whole review, not just the second pass
+
+
+def test_first_pass_over_the_cap_is_refused_before_any_model_call(
+    tmp_path, monkeypatch
+):
+    """The cap is a running budget: an unaffordable first pass is never paid for."""
+    r = _review(tmp_path, monkeypatch, {reviewer.SOL: {}, reviewer.ASTRA: {}})
+    monkeypatch.setattr(reviewer, "LARGE_REVIEW_USD", 0.001)
+    try:
+        r.two_pass(_files(3), "head", "base", "hdr", [], [])
+    except reviewer.OverCap as e:
+        assert e.projected > 0.001 and e.cap == 0.001
+    else:
+        raise AssertionError("an over-cap first pass must raise OverCap")
+    assert r.calls == [] and r.cost() == 0.0

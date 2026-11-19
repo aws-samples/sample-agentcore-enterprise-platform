@@ -25,6 +25,9 @@ LARGE_PACK_TOKENS = (
     6_000  # context pack for the large path's first pass (small path: 15k)
 )
 ASTRA_OUT_RESERVE = 700  # output tokens budgeted for the second pass
+SOL_OUT_RESERVE = (
+    700  # output tokens budgeted per first-pass call, for the cap projection
+)
 MIN_ASTRA_CHARS = (
     6_000  # second pass skipped when the budget buys less excerpt than this
 )
@@ -59,6 +62,29 @@ SKIP_FILES = re.compile(
 CATEGORIES = ("security", "correctness", "reliability", "tests", "docs", "performance")
 DOC_FILE = re.compile(r"(^docs/|\.md$)")
 _HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+
+class OverCap(Exception):
+    """Even the smallest review worth posting is projected to cost more than the cap."""
+
+    def __init__(self, projected: float, cap: float):
+        super().__init__(f"projected ${projected:.3f} over the ${cap:.2f} cap")
+        self.projected, self.cap = projected, cap
+
+
+def project_usd(model: str, prompt_chars: int, out_tokens: int) -> float:
+    """Projected cost of one call, BEFORE paying for it.
+
+    Input tokens are estimated the way Run.chat's guard counts them (chars // 3), and a fresh prompt is
+    billed as a cache write on these models, so that is the input price: a cap must not under-estimate.
+    """
+    p_in, p_out, _, p_write = PRICES[model]
+    return (prompt_chars // 3) * max(p_in, p_write) / 1e6 + out_tokens * p_out / 1e6
+
+
+def rendered_path(text: str) -> str:
+    """The path out of a render() block's `=== path ===` first line."""
+    return text.split("\n", 1)[0].removeprefix("=== ").removesuffix(" ===")
 
 
 def parse_diff(text: str) -> dict[str, dict]:
@@ -206,6 +232,9 @@ class Review(Run):
     cost_cap: float | None = (
         None  # per-review override of LARGE_REVIEW_USD (one-off large reviews)
     )
+    paths: list[str] | None = (
+        None  # opt-in: review only these changed paths (one-off invokes)
+    )
     EXTRA_KEYS = (
         "review",
         "summary",
@@ -218,6 +247,7 @@ class Review(Run):
         "context_sections",
         "passes",
         "source_run",
+        "projected_usd",
     )
 
     def __init__(
@@ -338,11 +368,11 @@ class Review(Run):
             base = self.fetch()
             head = self.pr["head"]["sha"]
             numstat = self.git("diff", "--numstat", base, head, cwd=self.repo)
-            changed = sum(
-                int(a) + int(d)
-                for a, d, *_ in (ln.split("\t") for ln in numstat.splitlines())
-                if a.isdigit() and d.isdigit()
-            )
+            lines_by_path = {
+                parts[-1]: int(parts[0]) + int(parts[1])
+                for parts in (ln.split("\t") for ln in numstat.splitlines())
+                if len(parts) >= 3 and parts[0].isdigit() and parts[1].isdigit()
+            }
             files = parse_diff(
                 self.git(
                     "diff",
@@ -354,6 +384,21 @@ class Review(Run):
                     cwd=self.repo,
                 )
             )
+            if (
+                self.paths
+            ):  # opt-in narrowing (one-off invokes); webhook reviews never set it
+                files = {p: i for p, i in files.items() if p in self.paths}
+                if not files:
+                    return {
+                        "outcome": "skipped",
+                        "reason": "no changed file matches paths: "
+                        + ", ".join(self.paths[:10]),
+                    }
+            changed = (
+                sum(lines_by_path.get(p, len(i["added"])) for p, i in files.items())
+                if self.paths
+                else sum(lines_by_path.values())
+            )
             model, reason, sensitive = choose_model(files, changed)
             skipped = [
                 p
@@ -362,9 +407,13 @@ class Review(Run):
             ]
             reviewable = {p: i for p, i in files.items() if p not in skipped}
             large = changed > LARGE_DIFF
-            # The large path pays for every hunk, so its first pass gets a smaller context pack.
+            # The large path pays for every hunk, so its first pass gets a smaller context pack. A capped
+            # one-off gets the lean pack too: under a cap, context competes with the code being reviewed.
             pack, sections = build_pack(
-                reviewable, self.repo, base, LARGE_PACK_TOKENS if large else 15_000
+                reviewable,
+                self.repo,
+                base,
+                LARGE_PACK_TOKENS if (large or self.cost_cap) else 15_000,
             )
             # Context first, then the PR header: both are identical across this review's calls, so they
             # form the cacheable prefix; only the excerpts after them change.
@@ -390,9 +439,13 @@ class Review(Run):
                         continue
                     excerpts.append(text)
                     used += len(text)
-                result = self.ask(
-                    model, REVIEW_SYS, header + "\n\n".join(excerpts), 6000
-                )
+                prompt = header + "\n\n".join(excerpts)
+                # An explicit cap covers this single call too; the default small review stays uncapped.
+                if self.cost_cap:
+                    projected = project_usd(model, len(prompt), SOL_OUT_RESERVE)
+                    if projected > self.cost_cap:
+                        raise OverCap(projected, self.cost_cap)
+                result = self.ask(model, REVIEW_SYS, prompt, 6000)
                 passes = [{"model": model, "files": len(excerpts)}]
             review = build_review(result, files, head, model, skipped)
             return {
@@ -414,6 +467,15 @@ class Review(Run):
                 "context_sections": sections,
                 "passes": passes,
             }
+        except OverCap as e:
+            # No "review" key, so nothing downstream can post it.
+            return {
+                "outcome": "skipped_over_cap",
+                "reason": str(e),
+                "projected_usd": round(e.projected, 4),
+                "cap_usd": e.cap,
+                "check_passed": False,
+            }
         except BudgetExceeded as e:
             return {"outcome": "failed", "reason": f"budget: {e}"}
 
@@ -428,9 +490,15 @@ class Review(Run):
     ) -> tuple[dict, list[dict]]:
         """Large diff: Sol reviews every file's hunks (3 lines of context) in groups, then one Astra pass
         re-reviews the riskiest files (sensitive, or flagged by Sol) with full context, within what is left
-        of LARGE_REVIEW_USD. Astra's findings replace Sol's for the files it saw."""
+        of LARGE_REVIEW_USD. Astra's findings replace Sol's for the files it saw.
+
+        The cap covers the WHOLE review: pass 1 is projected before any call and trimmed to fit.
+        """
+        # Risk-first, so what the cap drops is the least risky work: sensitive files, then code, then docs.
         groups, cur = [], []
-        for path in sorted(files):
+        for path in sorted(
+            files, key=lambda p: (p not in sensitive, bool(DOC_FILE.search(p)), p)
+        ):
             text = render(
                 path,
                 self.git("show", f"{head}:{path}", cwd=self.repo),
@@ -445,6 +513,21 @@ class Review(Run):
                 cur = []
             cur.append(text)
         groups += [cur] if cur else []
+        cap = self.cost_cap or LARGE_REVIEW_USD
+
+        def projected_usd(gs: list[list[str]]) -> float:
+            return sum(
+                project_usd(SOL, len(header) + sum(map(len, g)), SOL_OUT_RESERVE)
+                for g in gs
+            )
+
+        # Drop whole groups (least risky last) until the first pass fits. Nothing fits = post nothing.
+        full = projected = projected_usd(groups)
+        while groups and projected > cap:
+            skipped += [rendered_path(t) for t in groups.pop()]
+            projected = projected_usd(groups)
+        if not groups:
+            raise OverCap(full, cap)
         findings, verdicts, summaries = [], [], []
         for g in groups:
             r = self.ask(SOL, REVIEW_SYS, header + "\n\n".join(g), 6000)
@@ -514,10 +597,7 @@ class Review(Run):
                 "findings": findings,
             }, passes
         r = self.ask(ASTRA, REVIEW_SYS, intro + "\n\n".join(excerpts), 2000)
-        seen = {
-            e.split("\n", 1)[0].removeprefix("=== ").removesuffix(" ===")
-            for e in excerpts
-        }
+        seen = {rendered_path(e) for e in excerpts}
         astra = [f for f in r.get("findings", []) if f.get("severity") in SEVERITIES]
         passes.append(
             {

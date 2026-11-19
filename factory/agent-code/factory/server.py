@@ -146,6 +146,19 @@ def validate(payload: dict) -> dict:
         cap = payload.get("cost_cap_usd")
         if cap is not None and not (isinstance(cap, (int, float)) and 0 < cap <= 2.0):
             raise ValueError("cost_cap_usd must be a number in (0, 2.0]")
+        paths = payload.get("paths")
+        if paths is not None:
+            if not isinstance(paths, list) or not 1 <= len(paths) <= 50:
+                raise ValueError("paths must be a list of 1 to 50 repository paths")
+            for p in paths:
+                if (
+                    not isinstance(p, str)
+                    or not re.fullmatch(r"[\w.][\w.\-/]{0,199}", p)
+                    or ".." in p
+                ):
+                    raise ValueError(
+                        "each path must be a relative repository path, no '..'"
+                    )
         return {"id": number}
     if payload.get("role") == "product_manager" and payload.get("mode") == "consult":
         if not re.fullmatch(r"[\w-]{8,64}", str(payload.get("conversation_id", ""))):
@@ -259,6 +272,10 @@ def handle_review(payload: dict) -> dict:
         REGION,
     )
     if payload.get(
+        "paths"
+    ):  # opt-in narrowing: review only these changed paths, nothing else
+        agent.paths = list(payload["paths"])
+    if payload.get(
         "cost_cap_usd"
     ):  # one-off large review: the dollar cap governs, so lift the token cap with it
         agent.cost_cap = float(payload["cost_cap_usd"])
@@ -286,7 +303,14 @@ def handle_review(payload: dict) -> dict:
         **line,
         **{
             k: rec[k]
-            for k in ("review", "verdict", "summary", "model_reason", "files_skipped")
+            for k in (
+                "review",
+                "verdict",
+                "summary",
+                "model_reason",
+                "files_skipped",
+                "projected_usd",
+            )
             if rec.get(k)
         },
     }

@@ -1,5 +1,8 @@
 """Diff parsing and review payload anchoring (no model, no network)."""
 
+from pathlib import Path
+
+from factory import reviewer
 from factory.reviewer import build_review, parse_diff, render
 
 DIFF = """diff --git a/app.py b/app.py
@@ -294,3 +297,117 @@ def test_review_posting_needs_global_switch_or_explicit_publish(monkeypatch, tmp
     assert (
         out["outcome"] == "review_posted" and not out["dry_run"] and len(published) == 1
     )
+
+
+# --- cost cap and the paths filter (no model, no network) -----------------------------------------
+
+LINE = "x" * 60
+
+
+def _pr41_diff(sizes: dict[str, int]) -> tuple[str, str]:
+    """(numstat, -U0 diff) for purely-added files, the shape of PR #41: big docs, small code."""
+    numstat = "\n".join(f"{n}\t0\t{p}" for p, n in sizes.items())
+    out = []
+    for p, n in sizes.items():
+        out += [
+            f"diff --git a/{p} b/{p}",
+            "--- /dev/null",
+            f"+++ b/{p}",
+            f"@@ -0,0 +1,{n} @@",
+            *([f"+{LINE}"] * n),
+        ]
+    return numstat, "\n".join(out)
+
+
+def _review(monkeypatch, paths_diff, cost_cap=None, paths=None):
+    """A Review with no __init__: no boto3 session, no repo, no model."""
+    monkeypatch.setattr(reviewer, "build_pack", lambda *a, **k: ("pack", []))
+    numstat, diff = paths_diff
+    r = reviewer.Review.__new__(reviewer.Review)
+    r.cost_cap, r.paths = cost_cap, paths
+    r.repo, r.branch = Path("/nonexistent"), ""
+    r.pr = {
+        "number": 41,
+        "title": "t",
+        "body": "",
+        "user": {"login": "omrsamer"},
+        "head": {"sha": "f" * 40},
+    }
+    r.prompts = []
+    r.fetch = lambda: "base"
+
+    def git(*a, **k):
+        if a[:2] == ("diff", "--numstat"):
+            return numstat
+        if a[0] == "diff":
+            return diff
+        return "\n".join([LINE] * 2000)  # git show <head>:<path>
+
+    r.git = git
+    r.conventions = lambda head: ""
+    r.cost = lambda: 0.0
+
+    def ask(model, system, prompt, max_tokens):
+        r.prompts.append((model, prompt))
+        return {"summary": "s", "verdict": "approve-worthy", "findings": []}
+
+    r.ask = ask
+    return r
+
+
+def test_large_review_projects_pass_one_and_trims_groups_to_stay_under_the_cap(
+    monkeypatch,
+):
+    """PR #41's shape: 6 doc files + one sensitive workflow, far past the cap if every group runs."""
+    paths = {f"kiro/steering/doc{i}.md": 1200 for i in range(6)}
+    paths[".github/workflows/ci.yml"] = 9
+    r = _review(monkeypatch, _pr41_diff(paths))
+    rec = r.execute()
+
+    assert rec["outcome"] == "reviewed_dry_run"
+    spent = sum(
+        reviewer.project_usd(reviewer.SOL, len(p), reviewer.SOL_OUT_RESERVE)
+        for _, p in r.prompts
+    )
+    assert spent <= reviewer.LARGE_REVIEW_USD, f"projected ${spent:.3f} over the cap"
+    # Risk-first: the sensitive workflow is reviewed, the docs the cap could not afford are listed.
+    assert any(".github/workflows/ci.yml" in p for _, p in r.prompts)
+    assert rec["files_skipped"], "dropped files must be reported, not silently lost"
+    assert all(s.endswith(".md") for s in rec["files_skipped"])
+
+
+def test_review_over_the_cap_is_skipped_and_carries_no_payload_to_post(monkeypatch):
+    r = _review(monkeypatch, _pr41_diff({"kiro/steering/doc.md": 1200}), cost_cap=0.01)
+    rec = r.execute()
+
+    assert rec["outcome"] == "skipped_over_cap"
+    assert rec["projected_usd"] > 0.01 and rec["cap_usd"] == 0.01
+    # handle_review posts only on "reviewed_dry_run", and there is no review payload either way.
+    assert "review" not in rec
+    assert r.prompts == [], "nothing may be paid for once the projection is over cap"
+
+
+def test_paths_narrows_the_review_before_the_model_is_chosen(monkeypatch):
+    """Opt-in: the whole PR is large (two-pass Sol), the narrowed code file alone is a small Astra review."""
+    diff = _pr41_diff({"kiro/steering/doc.md": 1200, ".github/workflows/ci.yml": 9})
+
+    wide = _review(monkeypatch, diff)
+    wide.execute()
+    # Whole PR: the large two-pass path, Sol over every file first.
+    assert [m for m, _ in wide.prompts] == [reviewer.SOL, reviewer.ASTRA]
+    assert any("kiro/steering/doc.md" in p for _, p in wide.prompts)
+
+    narrow = _review(monkeypatch, diff, paths=[".github/workflows/ci.yml"])
+    rec = narrow.execute()
+    assert rec["outcome"] == "reviewed_dry_run"
+    assert len(narrow.prompts) == 1  # small path: one call
+    model, prompt = narrow.prompts[0]
+    assert model == reviewer.ASTRA  # sensitive path, and no longer a large diff
+    assert "kiro/steering/doc.md" not in prompt
+
+
+def test_unmatched_paths_review_nothing_rather_than_the_whole_pr(monkeypatch):
+    r = _review(monkeypatch, _pr41_diff({"a.py": 3}), paths=["does/not/exist.py"])
+    rec = r.execute()
+    assert rec["outcome"] == "skipped" and "no changed file matches" in rec["reason"]
+    assert r.prompts == []
