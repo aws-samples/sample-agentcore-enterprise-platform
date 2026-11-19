@@ -404,6 +404,12 @@ def test_paths_narrows_the_review_before_the_model_is_chosen(monkeypatch):
     model, prompt = narrow.prompts[0]
     assert model == reviewer.ASTRA  # sensitive path, and no longer a large diff
     assert "kiro/steering/doc.md" not in prompt
+    # A narrowed review discloses its own scope, so nobody reads it as a review of the whole PR.
+    assert "**Scope:**" in rec["review"]["body"]
+    assert "`.github/workflows/ci.yml`" in rec["review"]["body"]
+    assert (
+        "**Scope:**" not in (_review(monkeypatch, diff).execute()["review"]["body"])
+    )  # unnarrowed reviews say nothing extra
 
 
 def test_unmatched_paths_review_nothing_rather_than_the_whole_pr(monkeypatch):

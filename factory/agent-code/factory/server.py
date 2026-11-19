@@ -159,6 +159,9 @@ def validate(payload: dict) -> dict:
                     raise ValueError(
                         "each path must be a relative repository path, no '..'"
                     )
+        note = payload.get("note")
+        if note is not None and not (isinstance(note, str) and 0 < len(note) <= 1000):
+            raise ValueError("note must be a string of at most 1000 characters")
         return {"id": number}
     if payload.get("role") == "product_manager" and payload.get("mode") == "consult":
         if not re.fullmatch(r"[\w-]{8,64}", str(payload.get("conversation_id", ""))):
@@ -275,6 +278,8 @@ def handle_review(payload: dict) -> dict:
         "paths"
     ):  # opt-in narrowing: review only these changed paths, nothing else
         agent.paths = list(payload["paths"])
+    if payload.get("note"):  # operator context, appended to the posted review body
+        agent.note = str(payload["note"])
     if payload.get(
         "cost_cap_usd"
     ):  # one-off large review: the dollar cap governs, so lift the token cap with it

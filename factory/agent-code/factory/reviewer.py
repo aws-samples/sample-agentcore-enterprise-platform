@@ -176,7 +176,13 @@ def choose_model(files: dict[str, dict], changed: int) -> tuple[str, str, list[s
 
 
 def build_review(
-    result: dict, files: dict[str, dict], head_sha: str, model: str, skipped: list[str]
+    result: dict,
+    files: dict[str, dict],
+    head_sha: str,
+    model: str,
+    skipped: list[str],
+    covered: list[str] | None = None,
+    note: str = "",
 ) -> dict:
     """GitHub 'create review' payload. Findings not on an added line go into the body instead."""
     comments, loose = [], []
@@ -212,6 +218,17 @@ def build_review(
         body += ["", "Findings outside the changed lines:", *loose]
     if skipped:
         body += ["", f"Not reviewed (size budget): {', '.join(skipped[:20])}"]
+    if covered:
+        # A narrowed review must say so: without this, readers take it for a review of the whole PR.
+        body += [
+            "",
+            (
+                f"**Scope:** this review covers only {', '.join(f'`{p}`' for p in covered)}. "
+                "The rest of the diff was not reviewed."
+            ),
+        ]
+    if note:
+        body += ["", note]
     body += [
         "",
         f"_Automated review by the software factory ({model}). It reads the diff only and never runs PR code._",
@@ -235,6 +252,7 @@ class Review(Run):
     paths: list[str] | None = (
         None  # opt-in: review only these changed paths (one-off invokes)
     )
+    note: str = ""  # operator text appended to the review body (one-off invokes)
     EXTRA_KEYS = (
         "review",
         "summary",
@@ -447,7 +465,15 @@ class Review(Run):
                         raise OverCap(projected, self.cost_cap)
                 result = self.ask(model, REVIEW_SYS, prompt, 6000)
                 passes = [{"model": model, "files": len(excerpts)}]
-            review = build_review(result, files, head, model, skipped)
+            review = build_review(
+                result,
+                files,
+                head,
+                model,
+                skipped,
+                covered=list(files) if self.paths else None,
+                note=self.note,
+            )
             return {
                 "outcome": "reviewed_dry_run",
                 "review": review,
