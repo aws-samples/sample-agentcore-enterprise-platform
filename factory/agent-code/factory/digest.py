@@ -11,9 +11,12 @@ from factory.ci_fixer import Run
 AGENTS = ("ci_fixer", "pr_reviewer", "product_manager", "developer", "merge_handler")
 OPENED = {"fix_pr_opened", "pr_opened"}
 # (label, agent whose spend counts, agent and outcome that count the units). Reviews are split below.
-UNIT_COSTS = (
-    ("per CI fix PR", "ci_fixer", "ci_fixer", "fix_pr_opened"),
-    ("per merged dev PR", "developer", "merge_handler", "merged_recorded"),
+UNIT_COSTS = (("per CI fix PR opened", "ci_fixer", "ci_fixer", "fix_pr_opened"),)
+# A merged factory PR belongs to whichever agent opened it, and the merge row carries the branch that
+# says which: counting every merge as a developer PR charged dev spend for merged CI fixes.
+MERGED_BRANCH = (
+    ("per merged CI fix PR", "ci_fixer", "factory/ci-fix/"),
+    ("per merged dev PR", "developer", "factory/task/"),
 )
 
 
@@ -59,6 +62,14 @@ def unit_costs(rows_by_agent: dict[str, list[dict]]) -> dict:
         n = sum(
             1 for r in rows_by_agent.get(count_agent, []) if r.get("outcome") == outcome
         )
+        out[label] = _unit(_spend(rows_by_agent.get(spend_agent, [])), n)
+    merges = [
+        r
+        for r in rows_by_agent.get("merge_handler", [])
+        if r.get("outcome") == "merged_recorded"
+    ]
+    for label, spend_agent, prefix in MERGED_BRANCH:
+        n = sum(1 for r in merges if str(r.get("branch", "")).startswith(prefix))
         out[label] = _unit(_spend(rows_by_agent.get(spend_agent, [])), n)
     return out
 

@@ -60,8 +60,34 @@ def test_unit_cost_divides_spend_by_outcome_count_and_handles_zero():
         "count": 1,
         "usd_each": 3.0,
     }
-    assert unit["per CI fix PR"]["usd_each"] is None  # no outcomes: no division by zero
-    assert unit["per merged dev PR"] == {"spend_usd": 1.0, "count": 1, "usd_each": 1.0}
+    assert (
+        unit["per CI fix PR opened"]["usd_each"] is None
+    )  # no outcomes: no zero division
+
+
+def test_a_merged_pr_is_charged_to_the_agent_whose_branch_it_was():
+    """A merged CI fix must not be counted as a merged developer PR: the branch says which agent opened it."""
+    rows = {
+        "ci_fixer": [{"outcome": "fix_pr_opened", "est_cost_usd": 0.30}],
+        "developer": [{"outcome": "branch_ready_dry_run", "est_cost_usd": 2.0}],
+        "merge_handler": [
+            {"outcome": "merged_recorded", "branch": "factory/ci-fix/42824695223"},
+            {"outcome": "merged_recorded", "branch": "factory/ci-fix/ash-comment"},
+            {"outcome": "skipped", "branch": "factory/task/7"},  # not a merge
+        ],
+    }
+    unit = digest.unit_costs(rows)
+    assert unit["per merged CI fix PR"] == {
+        "spend_usd": 0.3,
+        "count": 2,
+        "usd_each": 0.15,
+    }
+    # No developer branch was merged, so dev spend buys no merged dev PR yet.
+    assert unit["per merged dev PR"] == {
+        "spend_usd": 2.0,
+        "count": 0,
+        "usd_each": None,
+    }
 
 
 def test_approve_applies_close_relabel_and_create_including_old_proposals():
