@@ -1,5 +1,7 @@
 """Proposals: a PM proposal is a digest-issue comment that /approve or /reject resolves (no AWS, no GitHub)."""
 
+import pytest
+
 from factory import digest, issues
 
 
@@ -65,3 +67,45 @@ def test_approve_applies_close_relabel_and_create_including_old_proposals():
         ("comment", 8),
         ("create", None),
     ]
+
+
+def _listing(monkeypatch, labelled, all_open):
+    """open_issues stand-in: labelled when a label is given, every open issue otherwise."""
+    monkeypatch.setattr(
+        issues,
+        "open_issues",
+        lambda repo, token, label=None: labelled if label else all_open,
+    )
+
+
+def _issue(number):
+    return {"number": number, "title": issues.DIGEST_TITLE}
+
+
+def test_digest_issue_is_found_not_duplicated_and_created_only_with_issues_permission(
+    monkeypatch,
+):
+    posts = []
+    monkeypatch.setattr(
+        issues.github,
+        "request",
+        lambda m, p, t, body=None: posts.append(body) or {"number": 130},
+    )
+    monkeypatch.setattr(issues.github, "MISSING_PERMISSIONS", [])
+    # An unlabelled issue and a later duplicate: the oldest wins and nothing is created.
+    _listing(monkeypatch, [], [_issue(121), _issue(122)])
+    assert issues.digest_issue("o/r", "t", create=True) == (121, False)
+    # The labelled issue is preferred over an unlabelled one.
+    _listing(monkeypatch, [_issue(125)], [_issue(121), _issue(125)])
+    assert issues.digest_issue("o/r", "t", create=True) == (125, False)
+    assert posts == []
+    # None exists: it is created with the label, but only when the App holds Issues access.
+    _listing(monkeypatch, [], [])
+    assert issues.digest_issue("o/r", "t", create=False) == (None, False)
+    monkeypatch.setattr(issues.github, "MISSING_PERMISSIONS", ["issues:write"])
+    with pytest.raises(RuntimeError, match="Issues permission"):
+        issues.digest_issue("o/r", "t", create=True)
+    assert posts == []
+    monkeypatch.setattr(issues.github, "MISSING_PERMISSIONS", [])
+    assert issues.digest_issue("o/r", "t", create=True) == (130, True)
+    assert posts[0]["labels"] == [issues.DIGEST_LABEL]

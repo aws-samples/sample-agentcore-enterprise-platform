@@ -18,6 +18,7 @@ MARKER = "<!-- factory:pm -->"  # in the body too, so a PM issue is recognised e
 DIGEST_TITLE = (
     "Factory digest"  # the one pinned issue: digests, proposals and their decisions
 )
+DIGEST_LABEL = "factory:digest"
 PROPOSAL = re.compile(r"<!-- factory:proposal (\{.*?\}) -->")
 RESOLVED = re.compile(r"<!-- factory:resolved (P-[0-9a-f]{6}) (approved|rejected) -->")
 SECTION_LABEL = {
@@ -219,20 +220,34 @@ def apply_proposal(tracker: Tracker, p: dict) -> int | None:
 
 
 def digest_issue(repo: str, token: str, create: bool) -> tuple[int | None, bool]:
-    """(number, created): the open 'Factory digest' issue, created when missing and create is set."""
-    for i in open_issues(
-        repo, token
-    ):  # shortcut: lists every open issue, fine until the repo has thousands
-        if i["title"] == DIGEST_TITLE:
-            return i["number"], False
+    """(number, created): the one open 'Factory digest' issue. The digest and the PM both come through here.
+
+    Found by the factory:digest label plus the exact title, then by title alone (an issue made before the
+    label existed); the oldest wins, so a stray duplicate never takes over. Uses the list API, which is
+    consistent right after a write, unlike search. Creating is refused when the App lacks the Issues
+    permission: without it the lookup cannot be trusted, and every run would open another issue.
+    """
+    for label in (DIGEST_LABEL, None):
+        for i in open_issues(
+            repo, token, label
+        ):  # shortcut: lists all open issues, fine until thousands
+            if i["title"] == DIGEST_TITLE:
+                return i["number"], False
     if not create:
         return None, False
+    if any(m.startswith("issues:") for m in github.MISSING_PERMISSIONS):
+        raise RuntimeError(
+            "GitHub App lacks the Issues permission ("
+            + ", ".join(github.MISSING_PERMISSIONS)
+            + "): not creating the 'Factory digest' issue"
+        )
     resp = github.request(
         "POST",
         f"/repos/{repo}/issues",
         token,
         {
             "title": DIGEST_TITLE,
+            "labels": [DIGEST_LABEL],
             "body": "Factory digest: a daily summary, proposed issues (/approve or /reject), and "
             "their decisions. Commands are read from comments on this issue.",
         },
@@ -242,16 +257,21 @@ def digest_issue(repo: str, token: str, create: bool) -> tuple[int | None, bool]
 
 def pin(repo: str, token: str, number: int) -> str:
     """Pin the digest issue with GitHub's GraphQL pinIssue mutation. Returns 'pinned' or the error."""
-    node_id = github.request("GET", f"/repos/{repo}/issues/{number}", token)["node_id"]
-    resp = github.request(
-        "POST",
-        "/graphql",
-        token,
-        {
-            "query": "mutation($id: ID!) { pinIssue(input: {issueId: $id}) { issue { number } } }",
-            "variables": {"id": node_id},
-        },
-    )
+    try:
+        node_id = github.request("GET", f"/repos/{repo}/issues/{number}", token)[
+            "node_id"
+        ]
+        resp = github.request(
+            "POST",
+            "/graphql",
+            token,
+            {
+                "query": "mutation($id: ID!) { pinIssue(input: {issueId: $id}) { issue { number } } }",
+                "variables": {"id": node_id},
+            },
+        )
+    except RuntimeError as e:  # e.g. 403 without the Issues permission: a failed pin must not stop the digest
+        return "error: " + str(e)[:160]
     if resp.get("errors"):
         return "error: " + str(resp["errors"][0].get("message", ""))[:120]
     return "pinned"

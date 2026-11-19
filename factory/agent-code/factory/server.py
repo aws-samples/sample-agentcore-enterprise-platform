@@ -567,8 +567,10 @@ def handle_issue_command(payload: dict) -> dict:
 def _post_digest(summary: dict) -> dict:
     """The daily digest as a comment on the pinned 'Factory digest' issue (created and pinned on first run)."""
     token = _github_token()
-    number, created = issues.digest_issue(REPO, token, create=True)
-    pinned = issues.pin(REPO, token, number) if created else "existing issue"
+    number, _ = issues.digest_issue(REPO, token, create=True)
+    pinned = issues.pin(
+        REPO, token, number
+    )  # every run: an existing issue gets pinned once the App can
     pending = sorted(issues.pending_proposals(REPO, token, number))
     prs = [p["number"] for p in github.open_factory_prs(REPO, token)]
     issues.Tracker(REPO, token, True).comment(

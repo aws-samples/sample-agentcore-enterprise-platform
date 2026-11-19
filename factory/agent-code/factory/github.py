@@ -73,6 +73,11 @@ def request(
 _LEVEL = {"read": 1, "write": 2, "admin": 3}
 
 
+MISSING_PERMISSIONS: list[
+    str
+] = []  # set by installation_token: what the App was not granted, e.g. "issues:write"
+
+
 def installation_token(creds: dict, repo: str) -> tuple[str, list[str]]:
     """Token limited to one repository and the PERMISSIONS the installation grants; expires after 1 h.
 
@@ -93,9 +98,11 @@ def installation_token(creds: dict, repo: str) -> tuple[str, list[str]]:
     resp = request(
         "POST", f"/app/installations/{installation}/access_tokens", jwt, body
     )
-    return resp["token"], sorted(
-        f"{k}:{v}" for k, v in PERMISSIONS.items() if k not in perms
+    missing = sorted(f"{k}:{v}" for k, v in PERMISSIONS.items() if k not in perms)
+    MISSING_PERMISSIONS[:] = (
+        missing  # shortcut: process-wide, fine while one App token is used at a time
     )
+    return resp["token"], missing
 
 
 def verify_app(creds: dict, repo: str) -> dict:
@@ -107,6 +114,7 @@ def verify_app(creds: dict, repo: str) -> dict:
     inst = request("GET", f"/app/installations/{int(creds['installation_id'])}", jwt)
     token, missing = installation_token(creds, repo)
     repos = request("GET", "/installation/repositories?per_page=100", token)
+    seen = request("GET", f"/repos/{repo}/issues?state=open&per_page=100", token)
     deliveries = request("GET", "/app/hook/deliveries?per_page=50", jwt)
     return {
         "installation_id": inst.get("id"),
@@ -117,6 +125,14 @@ def verify_app(creds: dict, repo: str) -> dict:
         "events": inst.get("events", []),
         "repositories": sorted(r["full_name"] for r in repos.get("repositories", [])),
         "missing_permissions": missing,
+        # What the token sees in the issue list: issues (no pull_request key) vs pull requests.
+        "issue_list": {
+            "items": len(seen),
+            "issues": sum("pull_request" not in i for i in seen),
+            "titled_factory_digest": [
+                i["number"] for i in seen if i["title"] == "Factory digest"
+            ],
+        },
         "deliveries": [
             {
                 k: d.get(k)
