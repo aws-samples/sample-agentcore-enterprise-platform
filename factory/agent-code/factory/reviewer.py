@@ -210,11 +210,14 @@ def build_review(
             )
         else:
             loose.append(f"- `{f.get('path')}:{line}` {text}")
-    verdict = (
-        "changes needed"
-        if result.get("verdict") == "changes needed"
-        else "approve-worthy"
-    )
+    # Severity decides the wording AND the event below, so the body can never contradict the review.
+    blocking = any(f["severity"] in BLOCKING_SEVERITIES for f in findings)
+    if blocking:
+        verdict = "changes needed"
+    elif findings:
+        verdict = "comments only (no blocking findings)"
+    else:
+        verdict = "no findings"
     body = [result.get("summary", "").strip(), "", f"**Verdict:** {verdict}"]
     if loose:
         body += ["", "Findings outside the changed lines:", *loose]
@@ -239,7 +242,7 @@ def build_review(
         "commit_id": head_sha,
         # Severity decides, not the model's verdict word: only a major or blocker requests changes.
         "event": "REQUEST_CHANGES"
-        if any(f["severity"] in BLOCKING_SEVERITIES for f in findings)
+        if blocking
         else "COMMENT",  # never APPROVE: humans approve
         "body": "\n".join(body),
         "comments": comments,

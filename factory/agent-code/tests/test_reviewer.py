@@ -487,3 +487,30 @@ def test_a_blocker_requests_changes_and_no_findings_comments():
         )["event"]
         == "COMMENT"
     )
+
+
+def test_body_verdict_line_never_contradicts_the_event():
+    """A COMMENT review must not print 'changes needed', whatever word the model chose."""
+
+    def line_and_event(findings, model_word):
+        review = build_review(
+            {"summary": "s", "verdict": model_word, "findings": findings},
+            _ANCHORED,
+            "sha",
+            "m",
+            [],
+        )
+        return (
+            review["body"].split("**Verdict:** ")[1].splitlines()[0],
+            review["event"],
+        )
+
+    assert line_and_event([_finding("minor")], "changes needed") == (
+        "comments only (no blocking findings)",
+        "COMMENT",
+    )
+    assert line_and_event([_finding("major")], "approve-worthy") == (
+        "changes needed",
+        "REQUEST_CHANGES",
+    )
+    assert line_and_event([], "changes needed") == ("no findings", "COMMENT")
