@@ -41,13 +41,25 @@ def test_unit_cost_divides_spend_by_outcome_count_and_handles_zero():
     rows = {
         "pr_reviewer": [
             {"outcome": "review_posted", "est_cost_usd": 0.4},
-            {"outcome": "reviewed_dry_run", "est_cost_usd": 0.2},
+            {
+                "outcome": "review_posted",
+                "est_cost_usd": 0.0,
+            },  # published a stored dry run
+            {"outcome": "reviewed_dry_run", "est_cost_usd": 0.2, "reason": ""},
+            {"outcome": "reviewed_dry_run", "est_cost_usd": 3.0, "reason": " bench:x1"},
         ],
         "merge_handler": [{"outcome": "merged_recorded", "est_cost_usd": 0.0}],
         "developer": [{"outcome": "failed", "est_cost_usd": 1.0}],
     }
     unit = digest.unit_costs(rows)
-    assert unit["per posted review"] == {"spend_usd": 0.6, "count": 1, "usd_each": 0.6}
+    # Posted reviews are priced on posted spend only: dry runs and benchmark runs stay out of it.
+    assert unit["per posted review"] == {"spend_usd": 0.4, "count": 2, "usd_each": 0.2}
+    assert unit["review dry runs on real PRs (not posted)"]["spend_usd"] == 0.2
+    assert unit["review benchmark runs (not per PR)"] == {
+        "spend_usd": 3.0,
+        "count": 1,
+        "usd_each": 3.0,
+    }
     assert unit["per CI fix PR"]["usd_each"] is None  # no outcomes: no division by zero
     assert unit["per merged dev PR"] == {"spend_usd": 1.0, "count": 1, "usd_each": 1.0}
 

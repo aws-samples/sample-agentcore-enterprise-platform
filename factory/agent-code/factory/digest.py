@@ -10,30 +10,56 @@ from factory.ci_fixer import Run
 
 AGENTS = ("ci_fixer", "pr_reviewer", "product_manager", "developer", "merge_handler")
 OPENED = {"fix_pr_opened", "pr_opened"}
-# (label, agent whose spend counts, agent and outcome that count the units)
+# (label, agent whose spend counts, agent and outcome that count the units). Reviews are split below.
 UNIT_COSTS = (
-    ("per posted review", "pr_reviewer", "pr_reviewer", "review_posted"),
     ("per CI fix PR", "ci_fixer", "ci_fixer", "fix_pr_opened"),
     ("per merged dev PR", "developer", "merge_handler", "merged_recorded"),
 )
 
 
+def _review_bucket(r: dict) -> str:
+    """posted | benchmark (the bench harness appends 'bench:<id>' to reason) | dry_run (a real PR, not posted)."""
+    if r.get("outcome") == "review_posted":
+        return "posted"
+    return "benchmark" if "bench:" in str(r.get("reason", "")) else "dry_run"
+
+
+def _spend(rows: list[dict]) -> float:
+    return sum(float(r.get("est_cost_usd") or 0) for r in rows)
+
+
+def _unit(spend: float, n: int) -> dict:
+    return {
+        "spend_usd": round(spend, 4),
+        "count": n,
+        "usd_each": round(spend / n, 4) if n else None,
+    }
+
+
 def unit_costs(rows_by_agent: dict[str, list[dict]]) -> dict:
-    """Spend divided by outcome count for each unit. Spend includes runs that did not produce the outcome."""
-    out = {}
+    """Spend divided by outcome count per unit.
+
+    Reviews are priced on posted reviews only. Dry runs on real PRs and benchmark runs are listed apart, so
+    neither inflates the per-review figure. A posted review that only published a stored dry run costs $0 here;
+    that dry run's spend shows on its own line.
+    """
+    reviews = defaultdict(list)
+    for r in rows_by_agent.get("pr_reviewer", []):
+        reviews[_review_bucket(r)].append(r)
+    out = {
+        "per posted review": _unit(_spend(reviews["posted"]), len(reviews["posted"])),
+        "review dry runs on real PRs (not posted)": _unit(
+            _spend(reviews["dry_run"]), len(reviews["dry_run"])
+        ),
+        "review benchmark runs (not per PR)": _unit(
+            _spend(reviews["benchmark"]), len(reviews["benchmark"])
+        ),
+    }
     for label, spend_agent, count_agent, outcome in UNIT_COSTS:
-        spend = sum(
-            float(r.get("est_cost_usd") or 0)
-            for r in rows_by_agent.get(spend_agent, [])
-        )
         n = sum(
             1 for r in rows_by_agent.get(count_agent, []) if r.get("outcome") == outcome
         )
-        out[label] = {
-            "spend_usd": round(spend, 4),
-            "count": n,
-            "usd_each": round(spend / n, 4) if n else None,
-        }
+        out[label] = _unit(_spend(rows_by_agent.get(spend_agent, [])), n)
     return out
 
 
@@ -137,7 +163,7 @@ def _unit_lines(unit: dict) -> list[str]:
     return [
         f"- {label}: "
         + (f"${v['usd_each']:.4f}" if v["usd_each"] is not None else "no outcomes")
-        + f" ({v['count']} outcomes, ${v['spend_usd']:.4f} spend)"
+        + f" (n={v['count']}, ${v['spend_usd']:.4f} spend)"
         for label, v in unit.items()
     ]
 
