@@ -315,6 +315,7 @@ def handle_review(payload: dict) -> dict:
                 "model_reason",
                 "files_skipped",
                 "projected_usd",
+                "pr_url",
             )
             if rec.get(k)
         },
@@ -352,7 +353,15 @@ def publish_stored(agent: Review, pr: dict, token: str, payload: dict) -> dict:
         "findings": json.loads(item.get("findings") or "[]") + extras,
     }
     head, files = agent.diff_files()
-    review = build_review(result, files, head, "+".join(item.get("models") or {}), [])
+    review = build_review(
+        result,
+        files,
+        head,
+        "+".join(item.get("models") or {}),
+        [],
+        covered=agent.paths,
+        note=agent.note,
+    )
     review["event"] = (
         "COMMENT"  # posting was approved as a comment: never APPROVE or REQUEST_CHANGES
     )

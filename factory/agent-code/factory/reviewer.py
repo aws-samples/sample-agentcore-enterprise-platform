@@ -34,6 +34,8 @@ MIN_ASTRA_CHARS = (
 CONTEXT = 30
 PROMPT_CHAR_BUDGET = 360_000  # ~120k tokens of diff context
 SEVERITIES = ("blocker", "major", "minor", "nit")
+# Only these request changes. A minor or a nit is worth saying, not worth blocking someone's PR on.
+BLOCKING_SEVERITIES = ("blocker", "major")
 # Escalate to Astra only for what the user named: IAM, Secrets Manager / KMS, auth/token handling,
 # workflows, network / security-group config, or a large diff. A bare word like "secret" is not enough.
 SENSITIVE_PATH = re.compile(
@@ -235,8 +237,9 @@ def build_review(
     ]
     return {
         "commit_id": head_sha,
+        # Severity decides, not the model's verdict word: only a major or blocker requests changes.
         "event": "REQUEST_CHANGES"
-        if verdict == "changes needed"
+        if any(f["severity"] in BLOCKING_SEVERITIES for f in findings)
         else "COMMENT",  # never APPROVE: humans approve
         "body": "\n".join(body),
         "comments": comments,

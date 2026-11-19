@@ -53,6 +53,17 @@ class BudgetExceeded(Exception):
     pass
 
 
+def runs_value(v):
+    """One run-record extra, as the runs table should hold it.
+
+    Numbers stay numbers so they can be read and compared as numbers; everything else becomes text,
+    bounded so one field cannot push the item past DynamoDB's 400 KB limit.
+    """
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return v
+    return (v if isinstance(v, str) else json.dumps(v))[:100_000]
+
+
 def clean_log(text: str) -> str:
     return "\n".join(_ANSI.sub("", _TS.sub("", line)) for line in text.splitlines())
 
@@ -755,11 +766,7 @@ class Run:
             f.write(json.dumps(line) + "\n")
         if table := os.environ.get("FACTORY_RUNS_TABLE"):
             # Dry run: the would-be PR lives in the item instead of on GitHub. Item cap is 400 KB.
-            extra = {
-                k: (rec[k] if isinstance(rec[k], str) else json.dumps(rec[k]))[:100_000]
-                for k in self.EXTRA_KEYS
-                if rec.get(k)
-            }
+            extra = {k: runs_value(rec[k]) for k in self.EXTRA_KEYS if rec.get(k)}
             item = json.loads(json.dumps({**line, **extra}), parse_float=Decimal)
             item.update(
                 pk=f"agent#{self.AGENT}", sk=f"{line['started_at']}#{line['run_id']}"

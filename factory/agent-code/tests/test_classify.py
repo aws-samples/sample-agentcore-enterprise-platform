@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from factory.ci_fixer import classify
+from factory.ci_fixer import classify, runs_value
 
 GOLDEN = Path(__file__).resolve().parents[2] / "golden"
 
@@ -54,3 +54,15 @@ def test_edits_outside_the_failing_files_are_refused(tmp_path):
     assert (tmp_path / "a.py").read_text() == "x = 2\n"
     assert (tmp_path / "b.py").read_text() == "y = 1\n"
     assert len(notes) == 2 and all("refused" in n for n in notes)
+
+
+def test_runs_value_keeps_numbers_numeric_and_bounds_text():
+    """findings_count must land in the runs table as a number, not the string "1"."""
+    assert runs_value(1) == 1
+    assert runs_value(0.2736) == 0.2736
+    assert runs_value("text") == "text"
+    assert runs_value(True) == "true"  # json, as before: DynamoDB gets a stable type
+    assert runs_value([{"path": "a.py"}]) == '[{"path": "a.py"}]'
+    assert (
+        len(runs_value("x" * 200_000)) == 100_000
+    )  # one field cannot blow the item cap

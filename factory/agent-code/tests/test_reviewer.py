@@ -417,3 +417,73 @@ def test_unmatched_paths_review_nothing_rather_than_the_whole_pr(monkeypatch):
     rec = r.execute()
     assert rec["outcome"] == "skipped" and "no changed file matches" in rec["reason"]
     assert r.prompts == []
+
+
+# --- severity gates the request-changes event ----------------------------------------------------
+
+_ANCHORED = {"app.py": {"added": {4: "print(os.environ)"}, "removed": {}, "hunks": []}}
+
+
+def _finding(severity, title="t"):
+    return {
+        "path": "app.py",
+        "line": 4,
+        "severity": severity,
+        "title": title,
+        "body": "b",
+    }
+
+
+def test_minor_only_review_comments_instead_of_requesting_changes():
+    """A nit is worth saying, not worth blocking a PR on -- even when the model says 'changes needed'."""
+    review = build_review(
+        {
+            "summary": "s",
+            "verdict": "changes needed",
+            "findings": [_finding("minor"), _finding("nit")],
+        },
+        _ANCHORED,
+        "sha",
+        "m",
+        [],
+    )
+    assert review["event"] == "COMMENT"
+    assert len(review["comments"]) == 2  # the findings are still posted
+
+
+def test_one_major_finding_requests_changes():
+    review = build_review(
+        {
+            "summary": "s",
+            "verdict": "approve-worthy",  # the model's word does not decide the event
+            "findings": [_finding("minor"), _finding("major")],
+        },
+        _ANCHORED,
+        "sha",
+        "m",
+        [],
+    )
+    assert review["event"] == "REQUEST_CHANGES"
+
+
+def test_a_blocker_requests_changes_and_no_findings_comments():
+    assert (
+        build_review(
+            {"summary": "s", "verdict": "", "findings": [_finding("blocker")]},
+            _ANCHORED,
+            "sha",
+            "m",
+            [],
+        )["event"]
+        == "REQUEST_CHANGES"
+    )
+    assert (
+        build_review(
+            {"summary": "s", "verdict": "changes needed", "findings": []},
+            _ANCHORED,
+            "sha",
+            "m",
+            [],
+        )["event"]
+        == "COMMENT"
+    )
