@@ -215,6 +215,57 @@ def validate(payload: dict) -> dict:
     return run
 
 
+# What each role's GitHub writes need, as installation_token() names them. A role absent here
+# needs no permission of its own, and is never skipped by the pre-flight.
+ROLE_PERMISSIONS = {
+    "pr_reviewer": ("pull_requests:write",),
+    "product_manager": ("issues:write",),
+    "developer": (
+        "issues:write",
+        "contents:write",
+    ),  # labels and comments, then the push
+    "ci_fixer": ("actions:read", "contents:write"),
+}
+
+
+def preflight(role: str) -> dict | None:
+    """Is the repo reachable, and does the installation grant what this role writes?
+
+    Runs before clone() and before any model call, so a run that cannot finish costs no tokens.
+    Returns a skip record, or None to proceed. Without App creds the run is a dry run reading the
+    public repo anonymously, which needs no permission, so there is nothing to check.
+    """
+    need = ROLE_PERMISSIONS.get(role)
+    if not need:
+        return None
+    try:
+        creds = load_app_creds()
+        if not creds:
+            return None
+        token, missing = github.installation_token(creds, REPO)
+        github.request("GET", f"/repos/{REPO}", token)
+    except Exception as e:  # noqa: BLE001 - any failure here means we must not start the run
+        return {
+            "outcome": "skipped",
+            "reason": f"repo_unreachable: {type(e).__name__}: {e}"[:300],
+        }
+    lacks = [p for p in need if p in missing]
+    if lacks:
+        return {"outcome": "skipped", "reason": "missing_permission:" + ",".join(lacks)}
+    return None
+
+
+def _record_skip(role: str, trigger: str, rec: dict) -> dict:
+    """A run row for a run that never started: same table, same shape, no clone and no model call."""
+    work = Path("/tmp/factory") / "preflight"
+    work.mkdir(parents=True, exist_ok=True)
+    agent = Run(
+        {"id": trigger, "repository": {"full_name": REPO}}, work, work, None, REGION
+    )
+    agent.AGENT, agent.branch = role, ""
+    return _finish(agent, rec, True, ())
+
+
 def clone(work: Path) -> Path:
     repo = work / "repo"
     if not repo.exists():
@@ -617,8 +668,20 @@ def _post_digest(summary: dict) -> dict:
     return {"issue": number, "pin": pinned}
 
 
+def _trigger(payload: dict) -> str:
+    """What the skipped run row points at: the same id validate() gives the real run."""
+    try:
+        return str(validate(payload).get("id", "") or payload.get("role", ""))
+    except (ValueError, KeyError, TypeError):
+        return str(payload.get("role", ""))
+
+
 def handle(payload: dict) -> dict:
     role = payload.get("role")
+    # Pre-flight: a run that cannot finish is skipped here, before clone() and any model call.
+    # The bench reviews a local patch and never writes to GitHub, so it needs no permission.
+    if "bench" not in payload and (skip := preflight(role)):
+        return _record_skip(role, _trigger(payload), skip)
     if role == "issue_command":
         return _safe(lambda: handle_issue_command(payload))
     if role == "pr_reviewer":
