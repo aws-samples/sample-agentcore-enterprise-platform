@@ -8,7 +8,7 @@ One test per layer.
 import pytest
 from factory.ci_fixer import Run
 
-from factory import ci_fixer, digest, server
+from factory import ci_fixer, digest, github, server
 
 
 @pytest.fixture(autouse=True)
@@ -53,10 +53,22 @@ def test_the_error_that_became_the_outcome_is_not_repeated(tmp_path):
     assert "swallowed_errors" not in line
 
 
-def test_each_run_carries_only_its_own_errors(tmp_path):
+def test_each_invocation_carries_only_its_own_errors(monkeypatch, tmp_path):
+    """The reset is per invocation, in handle(), not per agent."""
     server._safe(boom("an earlier run in this session"))
-    run = Run({"id": "2"}, tmp_path, tmp_path, None, "us-east-1")  # resets the list
-    assert "swallowed_errors" not in run.record({"outcome": "no_fix"}, dry_run=True)
+    monkeypatch.setattr(server, "_dispatch", lambda role, p: {"outcome": "no_fix"})
+    assert "swallowed_errors" not in server.handle({"role": "ci_fixer"})
+
+
+def test_a_second_agent_in_one_run_does_not_erase_the_firsts_errors(tmp_path):
+    """The merge handler refreshes the PM, so one run builds two agents."""
+    server._safe(boom("the merge handler could not comment"))
+    Run({"id": "first"}, tmp_path, tmp_path, None, "us-east-1")
+    second = Run({"id": "second"}, tmp_path, tmp_path, None, "us-east-1")
+    line = second.record({"outcome": "issues_dry_run"}, dry_run=True)
+    assert line["swallowed_errors"] == [
+        "RuntimeError: the merge handler could not comment"
+    ]
 
 
 # --- 2. the outcome tells the truth ------------------------------------------
@@ -98,3 +110,89 @@ def test_the_digest_records_whether_the_post_landed(monkeypatch, tmp_path):
     }
     extra = {k: ci_fixer.runs_value(rec[k]) for k in agent.EXTRA_KEYS if rec.get(k)}
     assert "no Issues permission" in extra["digest_post"]
+
+
+# --- 4. every invocation leaves a row ----------------------------------------
+# A handler that returns early, or raises before its own _finish, used to record nothing at all:
+# no outcome to notice, nothing for the digest to count, no line in any cost figure.
+
+
+def test_a_failing_comment_still_records_a_row(monkeypatch, tmp_path):
+    """/pm: the answer cost tokens, so the row must survive a comment that 403s -- with its cost."""
+    monkeypatch.setattr(
+        github, "request", lambda *a, **k: {"number": 9, "user": {"login": "Robobc"}}
+    )
+    monkeypatch.setattr(server, "clone", lambda work: work)
+
+    class FakeConsult:
+        def __init__(self, *a):
+            self.tracker = type(
+                "T",
+                (),
+                {
+                    "comment": lambda *a: boom(
+                        "GitHub POST /issues/9/comments -> 403"
+                    )(),
+                    "ops": [],
+                },
+            )()
+            self.AGENT, self.work = "product_manager", tmp_path
+
+        def execute(self):
+            return {"outcome": "consult_answered", "answer": "here is the answer"}
+
+        def record(self, rec, dry_run=True):
+            self.recorded = rec
+            return {"run_id": "x", "outcome": rec["outcome"], "reason": rec["reason"]}
+
+    monkeypatch.setattr(server, "Consult", FakeConsult)
+    line = server._pm_comment(9, "a question", "ghs_x")
+    assert line["run_id"] == "x"  # a row, where there used to be none
+    assert line["outcome"] == "consult_not_posted"  # and it does not claim it posted
+    assert "403" in line["reason"]
+
+
+def test_a_handler_that_raises_before_finish_still_leaves_a_row(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        server, "_dispatch", lambda role, p: boom("clone failed: network")()
+    )
+    line = server.handle({"role": "developer"})
+    assert line["run_id"] and line["agent"] == "developer"
+    assert line["outcome"] == "failed" and "clone failed" in line["reason"]
+
+
+def test_an_early_return_still_leaves_a_row_and_keeps_its_fields(monkeypatch, tmp_path):
+    """The skips that returned a bare dict: no task, no write access, a refused author."""
+    monkeypatch.setattr(
+        server,
+        "_dispatch",
+        lambda role, p: {
+            "outcome": "skipped",
+            "reason": "author_not_allowed:someone",
+            "decisions": [{"id": "P-abc123"}],
+        },
+    )
+    line = server.handle({"role": "issue_command", "issue": {"number": 77}})
+    assert line["run_id"] and line["outcome"] == "skipped"
+    assert line["trigger"] == "77"  # the issue it was asked on
+    assert line["decisions"] == [{"id": "P-abc123"}]  # the handler's own fields survive
+
+
+def test_a_reply_with_no_outcome_is_recorded_as_a_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(server, "_dispatch", lambda role, p: {"issue": 121})
+    assert server.handle({"role": "digest"})["outcome"] == "failed"
+
+
+def test_a_handler_that_recorded_its_own_row_is_not_recorded_twice(monkeypatch):
+    rows = []
+    monkeypatch.setattr(
+        server, "_dispatch", lambda role, p: rows.append(1) or {"run_id": "own"}
+    )
+    assert server.handle({"role": "pr_reviewer"})["run_id"] == "own"
+    assert rows == [1]
+
+
+def test_the_digest_counts_the_rows_this_net_creates():
+    from factory import digest
+
+    assert "issue_command" in digest.AGENTS

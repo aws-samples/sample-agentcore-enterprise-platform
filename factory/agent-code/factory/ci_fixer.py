@@ -60,7 +60,8 @@ class BudgetExceeded(Exception):
 # caught whose result went into a sub-field instead of the record. record() writes them to the
 # row, so a swallowed failure can never leave a row claiming plain success.
 # shortcut: process-wide, like github.MISSING_PERMISSIONS; fine while _busy allows one run at a
-# time. Reset in Run.__init__, which every run passes through exactly once.
+# time. server.handle clears it per invocation -- not Run.__init__, because one run can build two
+# agents (the merge handler refreshes the PM) and the second must not erase the first's errors.
 SWALLOWED: list[str] = []
 
 
@@ -142,7 +143,6 @@ class Run:
         self.repo, self.work = repo, work
         self.id = str(run_obj["id"])
         self.started = time.time()
-        SWALLOWED.clear()  # this run's errors only; one agent is built per run
         self.models: dict = {}
         self.fallbacks: list[str] = []
         self.used_input = 0

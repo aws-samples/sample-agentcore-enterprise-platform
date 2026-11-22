@@ -256,15 +256,20 @@ def preflight(role: str) -> dict | None:
     return None
 
 
-def _record_skip(role: str, trigger: str, rec: dict) -> dict:
-    """A run row for a run that never started: same table, same shape, no clone and no model call."""
-    work = Path("/tmp/factory") / "preflight"
+def _record_row(role: str, trigger: str, rec: dict) -> dict:
+    """A run row for a run no agent recorded: a pre-flight skip, an early return, or a raise.
+
+    Same table and shape, with no clone and no model call. The handler's own fields are kept in the
+    reply; only what Run.EXTRA_KEYS names reaches the row, which is enough to count the outcome.
+    """
+    work = Path("/tmp/factory") / "unrecorded"
     work.mkdir(parents=True, exist_ok=True)
     agent = Run(
         {"id": trigger, "repository": {"full_name": REPO}}, work, work, None, REGION
     )
     agent.AGENT, agent.branch = role, ""
-    return _finish(agent, rec, True, ())
+    # An outcome is what makes a row countable; a reply carrying none is itself a reporting failure.
+    return {**rec, **_finish(agent, {"outcome": "failed", **rec}, True, ())}
 
 
 def clone(work: Path) -> Path:
@@ -608,7 +613,17 @@ def _pm_comment(number: int, text: str, token: str) -> dict:
     agent = Consult(clone(work), work, REGION, REPO, token, str(number), text, True)
     rec = _safe(agent.execute)
     if rec.get("outcome") == "consult_answered":
-        agent.tracker.comment(number, "Factory PM:\n\n" + rec["answer"])
+        # The answer cost tokens, so this agent must record its own row: letting the comment raise
+        # past _finish lost the row entirely, and the net in handle() would bill a fresh agent $0.
+        posted = _safe(
+            lambda: (
+                agent.tracker.comment(number, "Factory PM:\n\n" + rec["answer"])
+                or {"outcome": "comment_posted"}
+            )
+        )
+        if posted.get("outcome") == "failed":
+            rec["outcome"] = "consult_not_posted"
+            rec["reason"] = f"answer written, not posted: {posted['reason']}"[:500]
     return _finish(
         agent,
         rec,
@@ -691,21 +706,33 @@ def _post_digest(summary: dict) -> dict:
 
 
 def _trigger(payload: dict) -> str:
-    """What the skipped run row points at: the same id validate() gives the real run."""
+    """What an unrecorded run row points at: the id validate() gives the real run, or the issue."""
     try:
         return str(validate(payload).get("id", "") or payload.get("role", ""))
     except (ValueError, KeyError, TypeError):
-        return str(payload.get("role", ""))
+        number = (payload.get("issue") or {}).get("number")  # the issue-command roles
+        return str(number if number else payload.get("role", ""))
 
 
 def handle(payload: dict) -> dict:
     role = payload.get("role")
+    ci_fixer.SWALLOWED.clear()  # one invocation is one run, whatever agents it builds
     # Pre-flight: a run that cannot finish is skipped here, before clone() and any model call.
     # The bench reviews a local patch and never writes to GitHub, so it needs no permission.
     if "bench" not in payload and (skip := preflight(role)):
-        return _record_skip(role, _trigger(payload), skip)
+        return _record_row(role, _trigger(payload), skip)
+    out = _safe(lambda: _dispatch(role, payload))
+    # Every invocation leaves exactly one row. A handler that returned early (no task, no write
+    # access, a refused author) or raised before its own _finish (a clone, a token mint, a comment
+    # that 403s) recorded nothing, and an unrecorded run can be neither noticed nor counted.
+    return out if "run_id" in out else _record_row(role, _trigger(payload), out)
+
+
+def _dispatch(role: str, payload: dict) -> dict:
     if role == "issue_command":
-        return _safe(lambda: handle_issue_command(payload))
+        return handle_issue_command(
+            payload
+        )  # handle() wraps this; no second _safe needed
     if role == "pr_reviewer":
         return handle_review(payload)
     if role == "product_manager":
