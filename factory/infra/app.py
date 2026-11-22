@@ -23,6 +23,13 @@ from cicd_stack import SoftwareFactoryCicdStack
 from factory_stacks import SoftwareFactoryDataStack, SoftwareFactoryStack
 
 GITHUB_REPO = "aws-samples/sample-agentcore-enterprise-platform"
+# This repository has immutable OIDC subject claims turned on, so its tokens carry the numeric
+# org and repo ids rather than the plain name. Read the live value with
+#   gh api /repos/aws-samples/sample-agentcore-enterprise-platform/actions/oidc/customization/sub
+# A trust policy written against `repo:<owner>/<name>` is refused outright.
+GITHUB_SUBJECT_PREFIX = (
+    "repo:aws-samples@8931462/sample-agentcore-enterprise-platform@1330929050"
+)
 
 app = cdk.App()
 env = cdk.Environment(
@@ -63,6 +70,7 @@ SoftwareFactoryCicdStack(
     app,
     "SoftwareFactoryCicd",
     github_repo=GITHUB_REPO,
+    subject_prefix=GITHUB_SUBJECT_PREFIX,
     env=env,
     synthesizer=cdk.CliCredentialsStackSynthesizer(),
     description="Software factory: GitHub Actions OIDC trust and the two pipeline roles",

@@ -51,6 +51,7 @@ class SoftwareFactoryCicdStack(cdk.Stack):
         construct_id: str,
         *,
         github_repo: str,
+        subject_prefix: str | None = None,
         deploy_environment: str = "deploy",
         diff_branches: tuple[str, ...] = ("factory/main-v2",),
         bootstrap_qualifier: str = "hnb659fds",
@@ -58,6 +59,17 @@ class SoftwareFactoryCicdStack(cdk.Stack):
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
         self.github_repo = github_repo
+        # Every OIDC subject starts with this. Plain `repo:<owner>/<name>` is the default, but
+        # a repository with immutable subject claims turned on sends
+        # `repo:<owner>@<orgId>/<name>@<repoId>` instead, and a trust policy written against
+        # the plain form is simply refused -- `Not authorized to perform
+        # sts:AssumeRoleWithWebIdentity`, with no hint as to which condition missed. Read the
+        # live value with
+        #   gh api /repos/<owner>/<name>/actions/oidc/customization/sub
+        # and pass its sub_claim_prefix. The immutable form is the stronger one: the numeric
+        # ids cannot be reused, so renaming or recreating the repository does not inherit the
+        # trust.
+        self.subject_prefix = subject_prefix or f"repo:{github_repo}"
         self.assets_bucket = (
             f"cdk-{bootstrap_qualifier}-assets-{self.account}-{self.region}"
         )
@@ -125,8 +137,8 @@ class SoftwareFactoryCicdStack(cdk.Stack):
     # ---------------------------------------------------------------- roles
 
     def _diff_role(self, provider_arn: str, diff_branches: tuple[str, ...]) -> iam.Role:
-        subjects = [f"repo:{self.github_repo}:pull_request"] + [
-            f"repo:{self.github_repo}:ref:refs/heads/{b}" for b in diff_branches
+        subjects = [f"{self.subject_prefix}:pull_request"] + [
+            f"{self.subject_prefix}:ref:refs/heads/{b}" for b in diff_branches
         ]
         role = iam.Role(
             self,
@@ -171,7 +183,7 @@ class SoftwareFactoryCicdStack(cdk.Stack):
             role_name="software-factory-gha-deploy",
             assumed_by=self._web_identity(
                 provider_arn,
-                [f"repo:{self.github_repo}:environment:{deploy_environment}"],
+                [f"{self.subject_prefix}:environment:{deploy_environment}"],
             ),
             max_session_duration=cdk.Duration.hours(1),
             description=(

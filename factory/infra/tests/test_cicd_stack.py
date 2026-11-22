@@ -16,10 +16,12 @@ from cicd_stack import SoftwareFactoryCicdStack
 ACCOUNT = "045129524125"
 REGION = "us-east-1"
 REPO = "aws-samples/sample-agentcore-enterprise-platform"
+# The live repository has immutable OIDC subject claims on, so this is the real prefix its
+# tokens carry, not `repo:<owner>/<name>`.
+PREFIX = "repo:aws-samples@8931462/sample-agentcore-enterprise-platform@1330929050"
 
 
-@pytest.fixture(scope="module")
-def template() -> dict:
+def _synth(**kwargs) -> dict:
     app = cdk.App()
     stack = SoftwareFactoryCicdStack(
         app,
@@ -27,8 +29,14 @@ def template() -> dict:
         github_repo=REPO,
         env=cdk.Environment(account=ACCOUNT, region=REGION),
         synthesizer=cdk.CliCredentialsStackSynthesizer(),
+        **kwargs,
     )
     return app.synth().get_stack_artifact(stack.artifact_id).template
+
+
+@pytest.fixture(scope="module")
+def template() -> dict:
+    return _synth(subject_prefix=PREFIX)
 
 
 def _roles(template: dict) -> dict:
@@ -90,8 +98,30 @@ def test_both_github_roles_pin_the_audience_and_the_exact_subject(template):
         subs = subs if isinstance(subs, list) else [subs]
         assert subs, name
         for sub in subs:
-            assert sub.startswith(f"repo:{REPO}:"), f"{name} trusts {sub}"
+            assert sub.startswith(f"{PREFIX}:"), f"{name} trusts {sub}"
             assert "*" not in sub, f"{name} trusts {sub}"
+
+
+def test_the_subject_prefix_is_the_immutable_one_this_repository_actually_sends(
+    template,
+):
+    """A plain `repo:<owner>/<name>` prefix is refused by STS with no usable diagnostic."""
+    for name in ("software-factory-gha-diff", "software-factory-gha-deploy"):
+        subs = _roles(template)[name]["AssumeRolePolicyDocument"]["Statement"][0][
+            "Condition"
+        ]["StringEquals"]["token.actions.githubusercontent.com:sub"]
+        for sub in subs if isinstance(subs, list) else [subs]:
+            assert sub.startswith("repo:aws-samples@8931462/"), sub
+            assert "/sample-agentcore-enterprise-platform@1330929050:" in sub, sub
+
+
+def test_the_prefix_defaults_to_the_plain_form_when_not_given():
+    """Another repository without immutable claims still gets a working trust."""
+    template = _synth()
+    subs = _roles(template)["software-factory-gha-deploy"]["AssumeRolePolicyDocument"][
+        "Statement"
+    ][0]["Condition"]["StringEquals"]["token.actions.githubusercontent.com:sub"]
+    assert subs == [f"repo:{REPO}:environment:deploy"]
 
 
 def test_deploy_role_is_reachable_only_from_the_deploy_environment(template):
@@ -99,7 +129,7 @@ def test_deploy_role_is_reachable_only_from_the_deploy_environment(template):
     sub = trust["Statement"][0]["Condition"]["StringEquals"][
         "token.actions.githubusercontent.com:sub"
     ]
-    assert sub == [f"repo:{REPO}:environment:deploy"]
+    assert sub == [f"{PREFIX}:environment:deploy"]
 
 
 def test_diff_role_can_write_nothing(template):
