@@ -501,11 +501,15 @@ def handle_developer(payload: dict) -> dict:
     taken = taken_tasks(open_prs, github.factory_task_branches(REPO, token))
     duplicate = None
     if task is None:
-        task = next_task(
-            issues.open_issues(REPO, token, issues.READY),
-            taken,
-            attempted_tasks(session),
-        )
+        ready = issues.open_issues(REPO, token, issues.READY)
+        mine = [i for i in ready if config.author_allowed(i["author"])]
+        task = next_task(mine, taken, attempted_tasks(session))
+        if task is None and ready and not mine:
+            # Every candidate was someone else's issue: say so instead of "none labelled ready".
+            return {
+                "outcome": "skipped",
+                "reason": f"author_not_allowed:{ready[0]['author']}",
+            }
     elif str(task["gid"]) in taken:
         duplicate = next(
             (
@@ -596,6 +600,10 @@ def _can_write(login: str, token: str) -> bool:
 
 def _pm_comment(number: int, text: str, token: str) -> dict:
     """/pm: a consult answer, posted as a comment on the issue it was asked on."""
+    issue = github.request("GET", f"/repos/{REPO}/issues/{number}", token)
+    author = (issue.get("user") or {}).get("login", "")
+    if not config.author_allowed(author):  # the PM comments only on allowlisted issues
+        return {"outcome": "skipped", "reason": f"author_not_allowed:{author}"}
     work = Path("/tmp/factory") / "pm"
     agent = Consult(clone(work), work, REGION, REPO, token, str(number), text, True)
     rec = _safe(agent.execute)
@@ -614,6 +622,11 @@ def _take_issue(number: int, token: str) -> dict:
     issue = github.request("GET", f"/repos/{REPO}/issues/{number}", token)
     if "pull_request" in issue or issue["state"] != "open":
         return {"outcome": "skipped", "reason": "not an open issue"}
+    author = (issue.get("user") or {}).get("login", "")
+    # A maintainer's /dev or factory:ready label does not widen the allowlist: the issue's own
+    # author decides. Nothing is posted, so the issue is left exactly as it was.
+    if not config.author_allowed(author):
+        return {"outcome": "skipped", "reason": f"author_not_allowed:{author}"}
     task = {
         "gid": str(number),
         "title": issue["title"],
