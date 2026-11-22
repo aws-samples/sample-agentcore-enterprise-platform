@@ -59,6 +59,14 @@ ROLES = {
     },
 }
 
+# Issue authors the factory acts on. The developer takes an issue, and the PM reconciles or
+# comments on one, only when its author is here -- a maintainer's factory:ready label or /dev
+# comment does not widen it. Adding a teammate is an edit to this list.
+# Not applied to PR reviews, the CI fixer or the merge handler: those judge code, not a request.
+AUTHORS = {
+    "aws-samples/sample-agentcore-enterprise-platform": ["Robobc"],
+}
+
 ERRORS: list[str] = []  # config problems, surfaced on every run row this process writes
 
 # A fail-closed row can call nothing, spend nothing and post nowhere.
@@ -104,3 +112,17 @@ def publish(name: str, repo: str = "") -> bool:
     """True only when the role has a row naming a switch AND that switch says "true"."""
     env = role(name, repo)["publish_env"]
     return bool(env) and os.environ.get(env) == "true"
+
+
+def author_allowed(login: str, repo: str = "") -> bool:
+    """May the factory act on an issue this login opened?
+
+    Fail closed: a missing or empty list is nobody, so the factory does nothing rather than
+    everything. GitHub logins are case-insensitive, so the comparison is too.
+    """
+    repo = repo or REPO
+    allowed = AUTHORS.get(repo) or []
+    if not allowed:
+        ERRORS.append(f"no author allowlist for {repo}: no issue is acted on")
+        return False
+    return str(login).lower() in {a.lower() for a in allowed}

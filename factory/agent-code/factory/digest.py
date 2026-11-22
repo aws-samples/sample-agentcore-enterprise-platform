@@ -8,7 +8,16 @@ from boto3.dynamodb.conditions import Key
 
 from factory.ci_fixer import Run
 
-AGENTS = ("ci_fixer", "pr_reviewer", "product_manager", "developer", "merge_handler")
+# issue_command: rows for an invocation no agent recorded (a refused author, no write access, or a
+# raise before _finish). Without it those rows exist but no digest line counts them.
+AGENTS = (
+    "ci_fixer",
+    "pr_reviewer",
+    "product_manager",
+    "developer",
+    "merge_handler",
+    "issue_command",
+)
 OPENED = {"fix_pr_opened", "pr_opened"}
 # (label, agent whose spend counts, agent and outcome that count the units). Reviews are split below.
 UNIT_COSTS = (("per CI fix PR opened", "ci_fixer", "ci_fixer", "fix_pr_opened"),)

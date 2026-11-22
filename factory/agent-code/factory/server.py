@@ -37,6 +37,12 @@ from factory.reviewer import Review, build_review
 REPO = config.REPO
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 MAX_BODY = 5 * 1024 * 1024
+# Issue-comment commands. Kept in step with ingress.py's own parser, which is only one of the
+# producers that reach validate(); the names are what handle_issue_command dispatches on.
+ISSUE_COMMANDS = {"pm", "dev", "ready", "approve", "reject"}
+MAX_COMMAND_TEXT = 4000  # ingress.MAX_PM_TEXT
+_PROPOSAL_IDS = re.compile(r"(all|P-[0-9a-f]{6})( P-[0-9a-f]{6})*")
+_LOGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}(\[bot\])?")
 # Each role's GitHub writes need the switch its config row names, on top of the App secret.
 # A role with no config row cannot publish: config.publish fails closed (see config.py).
 PUBLISH = config.publish("ci_fixer")
@@ -195,6 +201,31 @@ def validate(payload: dict) -> dict:
         if number <= 0:
             raise ValueError("pull_request.number must be positive")
         return {"id": f"merge-{number}"}
+    if payload.get("role") == "issue_command":
+        # The ingress parses these, but it is one producer among several (a human invoke is
+        # another), so every field the handler reads is re-checked here independently.
+        name = payload.get("command")
+        if name not in ISSUE_COMMANDS:
+            raise ValueError(f"command must be one of {sorted(ISSUE_COMMANDS)}")
+        number = int(payload["issue"]["number"])
+        if number <= 0:
+            raise ValueError("issue.number must be positive")
+        login = str((payload.get("actor") or {}).get("login", ""))
+        if not _LOGIN.fullmatch(login):
+            raise ValueError("actor.login must be a GitHub login")
+        args = payload.get("args", "")
+        if not isinstance(args, str) or len(args) > MAX_COMMAND_TEXT:
+            raise ValueError(f"args must be a string of at most {MAX_COMMAND_TEXT}")
+        if name == "pm" and not args.strip():
+            raise ValueError("/pm needs a question")
+        if name in ("approve", "reject"):
+            if not _PROPOSAL_IDS.fullmatch(args):
+                raise ValueError("approve/reject take 'all' or P-xxxxxx ids")
+            if name == "reject" and args == "all":
+                raise ValueError("/reject all is refused: reject proposals by id")
+        if payload.get("repository", {}).get("full_name", REPO) != REPO:
+            raise ValueError("command is not from the configured repository")
+        return {"id": f"{name}-{number}"}
     if payload.get("role") != "ci_fixer":
         raise ValueError(f"unsupported role {payload.get('role')!r}")
     run = payload["workflow_run"]
@@ -256,15 +287,20 @@ def preflight(role: str) -> dict | None:
     return None
 
 
-def _record_skip(role: str, trigger: str, rec: dict) -> dict:
-    """A run row for a run that never started: same table, same shape, no clone and no model call."""
-    work = Path("/tmp/factory") / "preflight"
+def _record_row(role: str, trigger: str, rec: dict) -> dict:
+    """A run row for a run no agent recorded: a pre-flight skip, an early return, or a raise.
+
+    Same table and shape, with no clone and no model call. The handler's own fields are kept in the
+    reply; only what Run.EXTRA_KEYS names reaches the row, which is enough to count the outcome.
+    """
+    work = Path("/tmp/factory") / "unrecorded"
     work.mkdir(parents=True, exist_ok=True)
     agent = Run(
         {"id": trigger, "repository": {"full_name": REPO}}, work, work, None, REGION
     )
     agent.AGENT, agent.branch = role, ""
-    return _finish(agent, rec, True, ())
+    # An outcome is what makes a row countable; a reply carrying none is itself a reporting failure.
+    return {**rec, **_finish(agent, {"outcome": "failed", **rec}, True, ())}
 
 
 def clone(work: Path) -> Path:
@@ -501,11 +537,15 @@ def handle_developer(payload: dict) -> dict:
     taken = taken_tasks(open_prs, github.factory_task_branches(REPO, token))
     duplicate = None
     if task is None:
-        task = next_task(
-            issues.open_issues(REPO, token, issues.READY),
-            taken,
-            attempted_tasks(session),
-        )
+        ready = issues.open_issues(REPO, token, issues.READY)
+        mine = [i for i in ready if config.author_allowed(i["author"])]
+        task = next_task(mine, taken, attempted_tasks(session))
+        if task is None and ready and not mine:
+            # Every candidate was someone else's issue: say so instead of "none labelled ready".
+            return {
+                "outcome": "skipped",
+                "reason": f"author_not_allowed:{ready[0]['author']}",
+            }
     elif str(task["gid"]) in taken:
         duplicate = next(
             (
@@ -596,11 +636,25 @@ def _can_write(login: str, token: str) -> bool:
 
 def _pm_comment(number: int, text: str, token: str) -> dict:
     """/pm: a consult answer, posted as a comment on the issue it was asked on."""
+    issue = github.request("GET", f"/repos/{REPO}/issues/{number}", token)
+    author = (issue.get("user") or {}).get("login", "")
+    if not config.author_allowed(author):  # the PM comments only on allowlisted issues
+        return {"outcome": "skipped", "reason": f"author_not_allowed:{author}"}
     work = Path("/tmp/factory") / "pm"
     agent = Consult(clone(work), work, REGION, REPO, token, str(number), text, True)
     rec = _safe(agent.execute)
     if rec.get("outcome") == "consult_answered":
-        agent.tracker.comment(number, "Factory PM:\n\n" + rec["answer"])
+        # The answer cost tokens, so this agent must record its own row: letting the comment raise
+        # past _finish lost the row entirely, and the net in handle() would bill a fresh agent $0.
+        posted = _safe(
+            lambda: (
+                agent.tracker.comment(number, "Factory PM:\n\n" + rec["answer"])
+                or {"outcome": "comment_posted"}
+            )
+        )
+        if posted.get("outcome") == "failed":
+            rec["outcome"] = "consult_not_posted"
+            rec["reason"] = f"answer written, not posted: {posted['reason']}"[:500]
     return _finish(
         agent,
         rec,
@@ -614,6 +668,11 @@ def _take_issue(number: int, token: str) -> dict:
     issue = github.request("GET", f"/repos/{REPO}/issues/{number}", token)
     if "pull_request" in issue or issue["state"] != "open":
         return {"outcome": "skipped", "reason": "not an open issue"}
+    author = (issue.get("user") or {}).get("login", "")
+    # A maintainer's /dev or factory:ready label does not widen the allowlist: the issue's own
+    # author decides. Nothing is posted, so the issue is left exactly as it was.
+    if not config.author_allowed(author):
+        return {"outcome": "skipped", "reason": f"author_not_allowed:{author}"}
     task = {
         "gid": str(number),
         "title": issue["title"],
@@ -678,21 +737,33 @@ def _post_digest(summary: dict) -> dict:
 
 
 def _trigger(payload: dict) -> str:
-    """What the skipped run row points at: the same id validate() gives the real run."""
+    """What an unrecorded run row points at: the id validate() gives the real run, or the issue."""
     try:
         return str(validate(payload).get("id", "") or payload.get("role", ""))
     except (ValueError, KeyError, TypeError):
-        return str(payload.get("role", ""))
+        number = (payload.get("issue") or {}).get("number")  # the issue-command roles
+        return str(number if number else payload.get("role", ""))
 
 
 def handle(payload: dict) -> dict:
     role = payload.get("role")
+    ci_fixer.SWALLOWED.clear()  # one invocation is one run, whatever agents it builds
     # Pre-flight: a run that cannot finish is skipped here, before clone() and any model call.
     # The bench reviews a local patch and never writes to GitHub, so it needs no permission.
     if "bench" not in payload and (skip := preflight(role)):
-        return _record_skip(role, _trigger(payload), skip)
+        return _record_row(role, _trigger(payload), skip)
+    out = _safe(lambda: _dispatch(role, payload))
+    # Every invocation leaves exactly one row. A handler that returned early (no task, no write
+    # access, a refused author) or raised before its own _finish (a clone, a token mint, a comment
+    # that 403s) recorded nothing, and an unrecorded run can be neither noticed nor counted.
+    return out if "run_id" in out else _record_row(role, _trigger(payload), out)
+
+
+def _dispatch(role: str, payload: dict) -> dict:
     if role == "issue_command":
-        return _safe(lambda: handle_issue_command(payload))
+        return handle_issue_command(
+            payload
+        )  # handle() wraps this; no second _safe needed
     if role == "pr_reviewer":
         return handle_review(payload)
     if role == "product_manager":

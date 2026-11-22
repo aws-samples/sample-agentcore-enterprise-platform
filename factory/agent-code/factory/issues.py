@@ -48,6 +48,7 @@ def open_issues(repo: str, token: str, label: str | None = None) -> list[dict]:
                 "number": i["number"],
                 "title": i["title"],
                 "body": i.get("body") or "",
+                "author": (i.get("user") or {}).get("login", ""),
                 "labels": [x["name"] for x in i.get("labels", [])],
                 "url": i["html_url"],
                 "created_at": i["created_at"],

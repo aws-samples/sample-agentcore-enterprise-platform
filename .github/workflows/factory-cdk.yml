@@ -1,0 +1,226 @@
+# Deploy the software factory's own infrastructure from GitHub, with a human gate.
+#
+# Triggers, and why these and not workflow_run:
+#   pull_request      - posts a cdk diff as a job summary. Read-only AWS role.
+#   push              - diff only, so main-v2 always has a current picture.
+#   workflow_dispatch - the only path that can deploy, and only after the `deploy`
+#                       environment's required reviewer approves.
+#
+# ABCA (sample-autonomous-cloud-coding-agents) reaches for `workflow_run` so that fork pull
+# requests can still mint an OIDC id-token, and its own header calls that trigger dangerous.
+# We do not need it: every factory pull request comes from a branch in this repository. A fork
+# pull request simply gets no AWS credentials and the diff job says so instead of failing. That
+# removes the whole class of workflow_run problems rather than mitigating it.
+#
+# Untrusted input (titles, bodies, branch names from a fork) never reaches a `run:` block. The
+# only interpolations below are repository-controlled values, and each one is passed through
+# `env:` and quoted, so nothing from an event payload is parsed by a shell.
+name: Factory CDK
+
+on:
+  pull_request:
+    paths:
+      - 'factory/infra/**'
+      - 'requirements.txt'
+      - '.github/workflows/factory-cdk.yml'
+  push:
+    branches: [factory/main-v2]
+    paths:
+      - 'factory/infra/**'
+      - 'requirements.txt'
+      - '.github/workflows/factory-cdk.yml'
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Deploy after the diff (needs approval on the deploy environment)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: factory-cdk-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  # Pinned on purpose. preflight.sh fails the job when aws-cdk-lib outgrows this CLI, which
+  # is the exact mismatch that has cost us two debugging sessions. Bump both together.
+  # aws-cdk-lib 2.278 writes cloud-assembly schema 55, which needs CLI >= 2.1149.0.
+  CDK_CLI_VERSION: '2.1149.0'
+  COORDINATOR_ROLE: robcata
+  PYTHON_VERSION: '3.13'
+  NODE_VERSION: '22'
+
+jobs:
+  diff:
+    name: cdk diff
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # A fork pull request gets a read-only token with no id-token permission, so OIDC
+      # cannot work and there is nothing to be done about it in this trigger. Say so rather
+      # than failing, and never fall back to a long-lived key.
+      - name: Can this run reach AWS
+        id: trust
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          THIS_REPO: ${{ github.repository }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$HEAD_REPO" != "$THIS_REPO" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install CDK CLI and app dependencies
+        run: |
+          npm install -g "aws-cdk@${CDK_CLI_VERSION}"
+          python -m pip install --quiet --upgrade pip
+          python -m pip install --quiet -r requirements.txt
+
+      - name: Assume the read-only diff role
+        if: steps.trust.outputs.ok == 'true'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::045129524125:role/software-factory-gha-diff
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: factory-cdk-diff
+
+      # Gate 1: a CLI that cannot read this app's manifest stops here, before any AWS call.
+      - name: Preflight (CDK CLI reads the app manifest)
+        working-directory: factory/infra
+        run: ./preflight.sh -c "coordinator_role=${COORDINATOR_ROLE}"
+
+      # --method=template is deliberate. The default diff uploads the template and creates a
+      # read-only change set, which needs s3:PutObject and cloudformation:CreateChangeSet --
+      # real write permissions on a role that any pull request can assume. The template diff
+      # shows every property change; it just cannot annotate "may be replaced". The deploy
+      # job, which already holds those permissions, prints the accurate change-set diff
+      # before it applies anything.
+      - name: cdk diff
+        if: steps.trust.outputs.ok == 'true'
+        working-directory: factory/infra
+        run: |
+          set -o pipefail
+          # --app reuses the assembly preflight already synthesised, so the app does not run
+          # twice and the diff is of exactly what the gate checked.
+          cdk diff --app cdk.out --method=template 2>&1 | tee diff.txt || true
+          {
+            echo '## cdk diff'
+            echo
+            echo 'Template diff (no replacement annotations -- see the deploy run for those).'
+            echo
+            echo '```'
+            tail -c 900000 diff.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Explain the skipped diff
+        if: steps.trust.outputs.ok != 'true'
+        run: |
+          {
+            echo '## cdk diff skipped'
+            echo
+            echo 'This pull request comes from a fork, so GitHub issues no OIDC id-token and'
+            echo 'the workflow cannot reach AWS. A maintainer can push the branch to this'
+            echo 'repository to get a diff. The synth and preflight checks above still ran.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: cdk deploy (needs approval)
+    needs: diff
+    # Only a manual dispatch that explicitly asks to deploy. Merging to factory/main-v2 shows
+    # a diff and nothing more. To deploy on merge instead, add
+    #   || (github.event_name == 'push' && github.ref == 'refs/heads/factory/main-v2')
+    # but only once the `deploy` environment has its required reviewers: GitHub creates a
+    # missing environment on first use with no protection rules at all.
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy
+    runs-on: ubuntu-latest
+    # Gate 2: the human gate. Required reviewers on this environment hold the job until
+    # someone approves it, and the OIDC subject the deploy role trusts is
+    # `repo:<this repo>:environment:deploy`, so the role is unreachable from any other job.
+    environment: deploy
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install CDK CLI and app dependencies
+        run: |
+          npm install -g "aws-cdk@${CDK_CLI_VERSION}"
+          python -m pip install --quiet --upgrade pip
+          python -m pip install --quiet -r requirements.txt
+
+      - name: Assume the deploy role
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::045129524125:role/software-factory-gha-deploy
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: factory-cdk-deploy
+
+      - name: Preflight (CDK CLI reads the app manifest)
+        working-directory: factory/infra
+        run: ./preflight.sh -c "coordinator_role=${COORDINATOR_ROLE}"
+
+      # The accurate diff, change-set based, so "may be replaced" is visible in the run log
+      # before anything is applied. Cancel the run here if it shows a replacement you did not
+      # expect.
+      - name: cdk diff (change set, with replacement info)
+        working-directory: factory/infra
+        run: |
+          set -o pipefail
+          cdk diff SoftwareFactoryData SoftwareFactory --app cdk.out 2>&1 | tee diff.txt || true
+          {
+            echo '## cdk diff about to be applied'
+            echo
+            echo '```'
+            tail -c 900000 diff.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # SoftwareFactoryCicd is absent on purpose: the pipeline must not be able to change the
+      # trust and the roles that let it in. That stack is deployed from a workstation.
+      # --role-arn is what keeps the bootstrap's AdministratorAccess cfn-exec role out of the
+      # picture: CloudFormation applies this change set as software-factory-cdk-exec.
+      - name: cdk deploy
+        working-directory: factory/infra
+        run: |
+          cdk deploy SoftwareFactoryData SoftwareFactory \
+            --app cdk.out \
+            --role-arn "arn:aws:iam::045129524125:role/software-factory-cdk-exec" \
+            --require-approval never \
+            --progress events

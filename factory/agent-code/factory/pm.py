@@ -280,6 +280,13 @@ class ProductManager(Run):
                 **parse_notes(i["body"]),
             }
             for i in issues.open_issues(self.repo_name, self.token)
+            # The board is the only thing plan_board will act on: a reconcile op naming a gid
+            # that is not here is dropped as an unknown task. So filtering here is what keeps
+            # everyone else's issues untouched -- no close, no relabel, no comment. The
+            # factory's own issues stay in, or the PM would rebuild its backlog every run.
+            if config.author_allowed(i["author"], self.repo_name)
+            or issues.PM in i["labels"]
+            or issues.MARKER in i["body"]
         ]
         for task in tasks:
             task["code_evidence"] = self.evidence(task["title"] + "\n" + task["notes"])
