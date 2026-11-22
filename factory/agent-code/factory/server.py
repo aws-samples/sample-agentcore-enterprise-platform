@@ -37,6 +37,12 @@ from factory.reviewer import Review, build_review
 REPO = config.REPO
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 MAX_BODY = 5 * 1024 * 1024
+# Issue-comment commands. Kept in step with ingress.py's own parser, which is only one of the
+# producers that reach validate(); the names are what handle_issue_command dispatches on.
+ISSUE_COMMANDS = {"pm", "dev", "ready", "approve", "reject"}
+MAX_COMMAND_TEXT = 4000  # ingress.MAX_PM_TEXT
+_PROPOSAL_IDS = re.compile(r"(all|P-[0-9a-f]{6})( P-[0-9a-f]{6})*")
+_LOGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}(\[bot\])?")
 # Each role's GitHub writes need the switch its config row names, on top of the App secret.
 # A role with no config row cannot publish: config.publish fails closed (see config.py).
 PUBLISH = config.publish("ci_fixer")
@@ -195,6 +201,31 @@ def validate(payload: dict) -> dict:
         if number <= 0:
             raise ValueError("pull_request.number must be positive")
         return {"id": f"merge-{number}"}
+    if payload.get("role") == "issue_command":
+        # The ingress parses these, but it is one producer among several (a human invoke is
+        # another), so every field the handler reads is re-checked here independently.
+        name = payload.get("command")
+        if name not in ISSUE_COMMANDS:
+            raise ValueError(f"command must be one of {sorted(ISSUE_COMMANDS)}")
+        number = int(payload["issue"]["number"])
+        if number <= 0:
+            raise ValueError("issue.number must be positive")
+        login = str((payload.get("actor") or {}).get("login", ""))
+        if not _LOGIN.fullmatch(login):
+            raise ValueError("actor.login must be a GitHub login")
+        args = payload.get("args", "")
+        if not isinstance(args, str) or len(args) > MAX_COMMAND_TEXT:
+            raise ValueError(f"args must be a string of at most {MAX_COMMAND_TEXT}")
+        if name == "pm" and not args.strip():
+            raise ValueError("/pm needs a question")
+        if name in ("approve", "reject"):
+            if not _PROPOSAL_IDS.fullmatch(args):
+                raise ValueError("approve/reject take 'all' or P-xxxxxx ids")
+            if name == "reject" and args == "all":
+                raise ValueError("/reject all is refused: reject proposals by id")
+        if payload.get("repository", {}).get("full_name", REPO) != REPO:
+            raise ValueError("command is not from the configured repository")
+        return {"id": f"{name}-{number}"}
     if payload.get("role") != "ci_fixer":
         raise ValueError(f"unsupported role {payload.get('role')!r}")
     run = payload["workflow_run"]
