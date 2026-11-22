@@ -106,7 +106,9 @@ def summarize(rows_by_agent: dict[str, list[dict]], day: str) -> dict:
 
 class Digest(Run):
     AGENT = "digest"
-    EXTRA_KEYS = ("summary",)
+    # digest_post: whether the comment reached the issue, and why not when it did not. Without it
+    # the row said digest_written and kept no trace that the post had failed.
+    EXTRA_KEYS = ("summary", "digest_post")
 
     def __init__(self, work, region: str, repo_name: str, day: str | None = None):
         day = (

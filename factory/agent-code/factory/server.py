@@ -19,7 +19,7 @@ from pathlib import Path
 
 import boto3
 
-from factory import config, github, issues
+from factory import ci_fixer, config, github, issues
 from factory.ci_fixer import Run
 from factory.consult import Consult
 from factory.developer import (
@@ -439,11 +439,19 @@ def _finish(agent, rec: dict, dry_run: bool, keys: tuple) -> dict:
 
 
 def _safe(fn) -> dict:
+    """Catch so the run still produces a row -- and record what was caught.
+
+    Some callers store this result in a sub-field (the digest's digest_post) instead of making it
+    the record, which used to erase the failure entirely. Appending here, rather than at each call
+    site, means no caller can drop the evidence: record() writes it to the row as swallowed_errors.
+    """
     try:
         return fn()
     except Exception as e:  # noqa: BLE001 - every failure must still produce a run row
         traceback.print_exc()
-        return {"outcome": "failed", "reason": f"{type(e).__name__}: {e}"[:500]}
+        reason = f"{type(e).__name__}: {e}"[:500]
+        ci_fixer.SWALLOWED.append(reason)
+        return {"outcome": "failed", "reason": reason}
 
 
 def handle_consult(payload: dict) -> dict:
@@ -699,7 +707,12 @@ def handle(payload: dict) -> dict:
         agent = Digest(work, REGION, REPO, payload.get("day"))
         rec = _safe(agent.execute)
         if rec.get("outcome") == "digest_written":
-            rec["digest_post"] = _safe(lambda: _post_digest(rec["summary"]))
+            rec["digest_post"] = post = _safe(lambda: _post_digest(rec["summary"]))
+            if post.get("outcome") == "failed":
+                # The summary was computed and stored, but nobody can read it on the issue.
+                # An outcome that claims success for a partial result is the bug being fixed.
+                rec["outcome"] = "digest_not_posted"
+                rec["reason"] = f"digest written, not posted: {post['reason']}"[:500]
         return _finish(agent, rec, False, ("summary", "digest_post"))
     run = validate(payload)
     work = Path("/tmp/factory") / str(run["id"])

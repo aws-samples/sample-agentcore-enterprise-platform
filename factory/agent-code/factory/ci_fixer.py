@@ -56,6 +56,14 @@ class BudgetExceeded(Exception):
     pass
 
 
+# Errors that happened during the run but did not become its outcome: anything server._safe
+# caught whose result went into a sub-field instead of the record. record() writes them to the
+# row, so a swallowed failure can never leave a row claiming plain success.
+# shortcut: process-wide, like github.MISSING_PERMISSIONS; fine while _busy allows one run at a
+# time. Reset in Run.__init__, which every run passes through exactly once.
+SWALLOWED: list[str] = []
+
+
 def runs_value(v):
     """One run-record extra, as the runs table should hold it.
 
@@ -134,6 +142,7 @@ class Run:
         self.repo, self.work = repo, work
         self.id = str(run_obj["id"])
         self.started = time.time()
+        SWALLOWED.clear()  # this run's errors only; one agent is built per run
         self.models: dict = {}
         self.fallbacks: list[str] = []
         self.used_input = 0
@@ -769,6 +778,10 @@ class Run:
             # Fail-closed config never posts silently: the reason rides on every row.
             **({"config_errors": sorted(set(config.ERRORS))} if config.ERRORS else {}),
         }
+        # Errors caught during the run that did not become its outcome. The one that DID become
+        # the outcome is already in line["reason"], so it is not repeated here.
+        if swallowed := [e for e in dict.fromkeys(SWALLOWED) if e != line["reason"]]:
+            line["swallowed_errors"] = swallowed
         with open(self.work / "factory-runs.jsonl", "a") as f:
             f.write(json.dumps(line) + "\n")
         if table := os.environ.get("FACTORY_RUNS_TABLE"):
