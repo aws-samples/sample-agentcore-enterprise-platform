@@ -15,12 +15,13 @@ from pathlib import Path
 
 from boto3.dynamodb.conditions import Attr, Key
 
-from factory import issues
+from factory import config, issues
 from factory.ci_fixer import BudgetExceeded, Run, sh, tool
 from factory.pm import parse_notes
 
-PLAN_MODEL = "us.anthropic.claude-sonnet-5-5"
-CODE_MODEL = "us.anthropic.claude-fable-5-2"
+_CFG = config.role("developer")
+PLAN_MODEL = _CFG["models"].get("plan", "")
+CODE_MODEL = _CFG["models"].get("code", "")
 MAX_OPEN_PRS = 2
 MAX_ATTEMPTS = 3
 _FAIL = re.compile(r"^(?:FAILED|ERROR) (\S+)", re.MULTILINE)
@@ -64,7 +65,7 @@ def new_failures(head_out: str, base_out: str) -> list[str]:
 
 class Developer(Run):
     AGENT = "developer"
-    TOKEN_CAP = 600_000
+    TOKEN_CAP = _CFG["token_cap"]
     EXTRA_KEYS = (
         "task",
         "plan",

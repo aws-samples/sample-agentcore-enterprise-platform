@@ -11,15 +11,16 @@ import re
 import subprocess
 from pathlib import Path
 
+from factory import config
 from factory.ci_fixer import PRICES, BudgetExceeded, Run
 from factory.context import CHARS_PER_TOKEN, build_pack
 
-SOL = "us.openai.gpt-6.1-sol"
-ASTRA = "us.openai.gpt-6-astra"
+_CFG = config.role("pr_reviewer")
+SOL = _CFG["models"].get("first_pass", "")
+ASTRA = _CFG["models"].get("deep_pass", "")
 LARGE_DIFF = 800  # changed lines; above this the two-pass path runs (Sol on all hunks, Astra on the riskiest)
-LARGE_REVIEW_USD = (
-    0.20  # target cost of a large review; the Astra pass gets what the Sol pass leaves
-)
+# Target cost of a large review; the Astra pass gets what the Sol pass leaves.
+LARGE_REVIEW_USD = _CFG["cost_cap_usd"]
 SOL_GROUP_CHARS = 120_000  # ~34k tokens of hunks per first-pass call
 LARGE_PACK_TOKENS = (
     6_000  # context pack for the large path's first pass (small path: 15k)
@@ -251,7 +252,7 @@ def build_review(
 
 class Review(Run):
     AGENT = "pr_reviewer"
-    TOKEN_CAP = 250_000
+    TOKEN_CAP = _CFG["token_cap"]
     cost_cap: float | None = (
         None  # per-review override of LARGE_REVIEW_USD (one-off large reviews)
     )

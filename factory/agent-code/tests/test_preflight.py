@@ -32,7 +32,8 @@ def grant(monkeypatch, missing: list[str]) -> None:
 def test_missing_permission_skips_before_any_model_call(monkeypatch):
     grant(monkeypatch, ["issues:write", "workflows:write"])
     rec = server.handle({"role": "developer"})
-    assert rec["outcome"] == "skipped"
+    # Its own outcome, so the digest counts it as a line rather than an ordinary skip.
+    assert rec["outcome"] == "skipped_missing_permission"
     assert rec["reason"] == "missing_permission:issues:write"
     assert rec["agent"] == "developer"
     assert rec["input_tokens_total"] == 0
@@ -60,7 +61,7 @@ def test_an_unreachable_repo_skips_with_a_named_reason(monkeypatch):
         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("GitHub GET /repos -> 404")),
     )
     skip = server.preflight("product_manager")
-    assert skip["outcome"] == "skipped"
+    assert skip["outcome"] == "skipped_repo_unreachable"
     assert skip["reason"].startswith("repo_unreachable: RuntimeError")
 
 

@@ -19,7 +19,7 @@ from pathlib import Path
 
 import boto3
 
-from factory import github, issues
+from factory import config, github, issues
 from factory.ci_fixer import Run
 from factory.consult import Consult
 from factory.developer import (
@@ -34,19 +34,15 @@ from factory.digest import render as render_digest
 from factory.pm import ProductManager
 from factory.reviewer import Review, build_review
 
-REPO = os.environ.get(
-    "FACTORY_REPO", "aws-samples/sample-agentcore-enterprise-platform"
-)
+REPO = config.REPO
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 MAX_BODY = 5 * 1024 * 1024
-# Pushing branches and opening PRs needs an explicit switch on top of the App secret.
-PUBLISH = os.environ.get("FACTORY_PUBLISH", "false") == "true"
-# Reviews are posted only with their own switch, separate from CI-fix PRs.
-REVIEW_PUBLISH = os.environ.get("FACTORY_REVIEW_PUBLISH", "false") == "true"
-# Developer PRs need their own switch; otherwise the branch stays local.
-DEV_PUBLISH = os.environ.get("FACTORY_DEV_PUBLISH", "false") == "true"
-# PM (and consult) issue writes need their own switch; otherwise the run records what it would do.
-PM_PUBLISH = os.environ.get("FACTORY_PM_PUBLISH", "false") == "true"
+# Each role's GitHub writes need the switch its config row names, on top of the App secret.
+# A role with no config row cannot publish: config.publish fails closed (see config.py).
+PUBLISH = config.publish("ci_fixer")
+REVIEW_PUBLISH = config.publish("pr_reviewer")
+DEV_PUBLISH = config.publish("developer")
+PM_PUBLISH = config.publish("product_manager")
 _busy = threading.Lock()  # one run per session; each session is its own microVM
 _state = {"last_update": int(time.time())}
 
@@ -246,12 +242,17 @@ def preflight(role: str) -> dict | None:
         github.request("GET", f"/repos/{REPO}", token)
     except Exception as e:  # noqa: BLE001 - any failure here means we must not start the run
         return {
-            "outcome": "skipped",
+            "outcome": "skipped_repo_unreachable",
             "reason": f"repo_unreachable: {type(e).__name__}: {e}"[:300],
         }
     lacks = [p for p in need if p in missing]
     if lacks:
-        return {"outcome": "skipped", "reason": "missing_permission:" + ",".join(lacks)}
+        # Its own outcome, not plain "skipped": the digest counts outcomes per role, so this
+        # becomes a line of its own instead of blending into ordinary skips.
+        return {
+            "outcome": "skipped_missing_permission",
+            "reason": "missing_permission:" + ",".join(lacks),
+        }
     return None
 
 

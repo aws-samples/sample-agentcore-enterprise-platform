@@ -23,9 +23,12 @@ from pathlib import Path
 import boto3
 from botocore.config import Config
 
-TRIAGE_MODEL = os.environ.get("FACTORY_TRIAGE_MODEL", "us.anthropic.claude-sonnet-5-5")
-FIX_MODEL = os.environ.get("FACTORY_FIX_MODEL", "us.anthropic.claude-opus-5-5")
-INPUT_TOKEN_CAP = int(os.environ.get("FACTORY_INPUT_TOKEN_CAP", "200000"))
+from factory import config
+
+_CFG = config.role("ci_fixer")
+TRIAGE_MODEL = _CFG["models"].get("triage", "")
+FIX_MODEL = _CFG["models"].get("fix", "")
+INPUT_TOKEN_CAP = _CFG["token_cap"]
 MAX_ATTEMPTS = 2
 # USD per 1M tokens (input, output): AWS Pricing API, service AmazonBedrockFoundationModels, us-east-1,
 # "standard" on-demand rates (geographic us.* profiles; global profiles are 10% cheaper), read 2026-11-17.
@@ -160,6 +163,8 @@ class Run:
         self, model: str, system: list[dict], messages: list[dict], max_tokens: int
     ) -> str:
         """One Converse call with usage accounting; returns the reply text."""
+        if not model:  # fail closed: a role with no config row has no model to call
+            raise ValueError(f"no model configured; config: {config.ERRORS or 'ok'}")
         size = sum(len(b.get("text", "")) for b in system) + sum(
             len(c.get("text", "")) for m in messages for c in m["content"]
         )
@@ -761,6 +766,8 @@ class Run:
                 if self.fallbacks
                 else {}
             ),
+            # Fail-closed config never posts silently: the reason rides on every row.
+            **({"config_errors": sorted(set(config.ERRORS))} if config.ERRORS else {}),
         }
         with open(self.work / "factory-runs.jsonl", "a") as f:
             f.write(json.dumps(line) + "\n")

@@ -15,11 +15,14 @@ from pathlib import Path
 
 from boto3.dynamodb.conditions import Key
 
-from factory import github, issues
+from factory import config, github, issues
 from factory.ci_fixer import BudgetExceeded, Run, sh
 
-PM_MODEL = "us.anthropic.claude-opus-5-5"
-BACKLOG_MODEL = "us.anthropic.claude-fable-5-2"  # initial full-repo backlog build only
+_CFG = config.role("product_manager")
+PM_MODEL = _CFG["models"].get("main", "")
+BACKLOG_MODEL = _CFG["models"].get(
+    "backlog", ""
+)  # initial full-repo backlog build only
 READY_CAP = 5
 
 
@@ -158,7 +161,7 @@ def plan_board(
 
 class ProductManager(Run):
     AGENT = "product_manager"
-    TOKEN_CAP = 400_000
+    TOKEN_CAP = _CFG["token_cap"]
     EXTRA_KEYS = (
         "issue_ops",
         "proposal",
