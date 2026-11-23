@@ -105,6 +105,16 @@ class Tracker:
                 if "-> 404" not in str(e):
                     raise
 
+    def move(self, number, state: str, comment: str = "") -> None:
+        """A developer state as labels, plus an optional comment (asana.Board.move moves a section)."""
+        n = int(number)
+        if state == "Agent: in progress":
+            self.label(n, add=[IN_PROGRESS], remove=[READY])
+        elif state == "Needs scoping":
+            self.label(n, add=[NEEDS_SCOPING], remove=[READY, IN_PROGRESS])
+        if comment:
+            self.comment(n, comment)
+
     def close(self, number: int, text: str) -> None:
         self.comment(number, text)
         self._do(

@@ -3,7 +3,8 @@
 Sonnet re-checks scope and plans; Fable writes the change; the repo's own checks (pytest tests/,
 make lint-cicd, cdk synth) decide. A check already red on main does not block, as long as the change
 adds no new failure. Edits are limited to the files the plan names; workflow files only for CI tasks;
-factory/ never. Tasks are GitHub issues labelled factory:ready; label and comment changes go through issues.Tracker.
+factory/ never. Tasks are GitHub issues labelled factory:ready (issues.Tracker) or, in Asana mode, tasks an
+allowlisted person moved to Ready for agent (asana.Board); either way the task state goes through tracker.move.
 Without FACTORY_DEV_PUBLISH=true nothing is pushed: the branch, diff and would-be PR go to the runs table.
 """
 
@@ -15,7 +16,7 @@ from pathlib import Path
 
 from boto3.dynamodb.conditions import Attr, Key
 
-from factory import config, issues
+from factory import asana, config, issues
 from factory.ci_fixer import BudgetExceeded, Run, sh, tool
 from factory.pm import parse_notes
 
@@ -87,7 +88,7 @@ class Developer(Run):
         work: Path,
         region: str,
         repo_name: str,
-        tracker: issues.Tracker,
+        tracker: "issues.Tracker | asana.Board",
     ):
         run_obj = {
             "id": f"task-{task['gid']}",
@@ -354,8 +355,8 @@ class Developer(Run):
                 for c in change.get("criteria", [])
             )
             body = (
-                f"Closes #{self.task['gid']}: **{self.task['title']}**\n\n"
-                f"{change.get('summary', '')}\n\n## Acceptance criteria\n{criteria}\n\n## Checks run by the factory\n"
+                pr_task_line(self.task, isinstance(self.tracker, asana.Board))
+                + f"{change.get('summary', '')}\n\n## Acceptance criteria\n{criteria}\n\n## Checks run by the factory\n"
                 + "\n".join(f"- `{k}`: {v}" for k, v in results.items())
             )
             self.pr = {"title": title, "body": body}
@@ -374,16 +375,8 @@ class Developer(Run):
         return rec
 
     def move(self, state: str, comment: str = "") -> None:
-        """The issue's label for a developer state, plus an optional comment."""
-        n = int(self.task["gid"])
-        if state == "Agent: in progress":
-            self.tracker.label(n, add=[issues.IN_PROGRESS], remove=[issues.READY])
-        elif state == "Needs scoping":
-            self.tracker.label(
-                n, add=[issues.NEEDS_SCOPING], remove=[issues.READY, issues.IN_PROGRESS]
-            )
-        if comment:
-            self.tracker.comment(n, comment)
+        """The task's developer state: labels on an issue, or a section on the Asana board."""
+        self.tracker.move(self.task["gid"], state, comment)
 
     def ship(self, token: str) -> dict:
         """Push factory/task/<gid>, open the PR, move the task to In review."""
@@ -395,6 +388,27 @@ class Developer(Run):
             self.move("In review", f"PR: {out['pr_url']}")
             out["outcome"] = "pr_opened"
         return out
+
+
+def pr_task_line(task: dict, on_asana: bool) -> str:
+    """The PR body's first line. The repo is public and the board is not: an Asana task is named by
+    title only (the branch factory/task/<gid> carries the link), and the spec never goes in the PR."""
+    if on_asana:
+        return f"**{task['title']}**\n\nAsana-Task: {task['gid']}\n\n"
+    return f"Closes #{task['gid']}: **{task['title']}**\n\n"
+
+
+def next_asana_task(
+    ready: list[dict], taken: set[str] = frozenset(), tried: dict | None = None
+) -> dict | None:
+    """Oldest-moved Ready for agent task not in flight and not already attempted since a human last acted on it."""
+    tried = tried or {}
+    for t in sorted(ready, key=lambda t: t.get("moved_at") or ""):
+        gid = str(t["gid"])
+        if gid in taken or (gid in tried and tried[gid] >= asana.human_activity(t)):
+            continue
+        return asana.developer_task(t)
+    return None
 
 
 def taken_tasks(open_prs: list[dict], branches: set[str]) -> set[str]:

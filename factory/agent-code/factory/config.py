@@ -19,6 +19,8 @@ import os
 REPO = os.environ.get(
     "FACTORY_REPO", "aws-samples/sample-agentcore-enterprise-platform"
 )
+# Where tasks live: "github" (issues and labels) or "asana" (the private board, see asana.py).
+TRACKER = os.environ.get("FACTORY_TRACKER", "github")
 
 SONNET = "us.anthropic.claude-sonnet-5-5"
 OPUS = "us.anthropic.claude-opus-5-5"
@@ -54,6 +56,12 @@ ROLES = {
             "token_cap": 400_000,
             "publish_env": "FACTORY_PM_PUBLISH",
         },
+        # Asana only: turns a task in Needs design into a spec for a human to approve.
+        "designer": {
+            "models": {"spec": OPUS},
+            "token_cap": 150_000,
+            "publish_env": "FACTORY_PM_PUBLISH",
+        },
         "merge_handler": {"publish_env": ""},  # reads a merged PR; no model, no write
         "digest": {"publish_env": ""},  # summarises the runs table; no model call
     },
@@ -66,6 +74,12 @@ ROLES = {
 AUTHORS = {
     "aws-samples/sample-agentcore-enterprise-platform": ["Robobc"],
 }
+
+# Asana user gids whose moves and comments the factory acts on (Asana mode). From the deploy
+# context (-c asana_users=gid,gid), like the project gid, so neither lives in this public repo.
+ASANA_USERS = [
+    u.strip() for u in os.environ.get("FACTORY_ASANA_USERS", "").split(",") if u.strip()
+]
 
 ERRORS: list[str] = []  # config problems, surfaced on every run row this process writes
 
@@ -126,3 +140,11 @@ def author_allowed(login: str, repo: str = "") -> bool:
         ERRORS.append(f"no author allowlist for {repo}: no issue is acted on")
         return False
     return str(login).lower() in {a.lower() for a in allowed}
+
+
+def asana_user_allowed(gid: str) -> bool:
+    """May the factory act on what this Asana user did? Fail closed: an empty list is nobody."""
+    if not ASANA_USERS:
+        ERRORS.append("FACTORY_ASANA_USERS is empty: no Asana task is acted on")
+        return False
+    return str(gid) in ASANA_USERS
