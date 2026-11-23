@@ -14,9 +14,8 @@ from datetime import UTC, datetime
 
 from boto3.dynamodb.conditions import Key
 
-from factory import issues
 from factory.ci_fixer import BudgetExceeded, parse_json
-from factory.pm import PM_MODEL, ProductManager, plan_board, task_notes
+from factory.pm import PM_MODEL, ProductManager, apply_plan, plan_board, task_notes
 
 TTL_S = 7 * 24 * 3600
 MAX_CONTEXT_CHARS = 300_000  # DynamoDB items cap at 400 KB
@@ -144,7 +143,7 @@ class Consult(ProductManager):
         )
         for t in new:
             t["body"] = task_notes(t)
-        issues.apply_plan(self.tracker, reconcile, new)
+        apply_plan(self.tracker, reconcile, new)
         return {
             "queued": len(self.tracker.ops),
             "issue_ops": self.tracker.ops,

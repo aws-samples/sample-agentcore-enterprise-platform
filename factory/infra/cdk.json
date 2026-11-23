@@ -6,6 +6,8 @@
     "factory_publish": "true",
     "factory_pm_publish": "true",
     "factory_review_publish": "true",
-    "factory_dev_publish": "true"
+    "factory_dev_publish": "true",
+    "factory_tracker": "asana",
+    "factory_paused": "true"
   }
 }

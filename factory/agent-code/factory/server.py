@@ -19,13 +19,15 @@ from pathlib import Path
 
 import boto3
 
-from factory import ci_fixer, config, github, issues
+from factory import asana, ci_fixer, config, github, issues
 from factory.ci_fixer import Run
 from factory.consult import Consult
+from factory.designer import Designer, attempted_designs, next_design
 from factory.developer import (
     Developer,
     MergeHandler,
     attempted_tasks,
+    next_asana_task,
     next_task,
     taken_tasks,
 )
@@ -191,6 +193,8 @@ def validate(payload: dict) -> dict:
         ):
             raise ValueError("task needs a numeric gid and a title")
         return {"id": f"task-{(task or {}).get('gid', 'next')}"}
+    if payload.get("role") == "designer":
+        return {"id": "design-next"}
     if payload.get("role") == "digest":
         day = payload.get("day")
         if day is not None and not re.fullmatch(r"\d{4}-\d\d-\d\d", str(day)):
@@ -255,6 +259,17 @@ ROLE_PERMISSIONS = {
 }
 
 
+# In Asana mode the board is written through the outbox, so no role needs the Issues permission;
+# the developer still pushes, and the designer never touches GitHub.
+ASANA_ROLE_PERMISSIONS = {
+    "pr_reviewer": ("pull_requests:write",),
+    "developer": ("contents:write",),
+    "ci_fixer": ("actions:read", "contents:write"),
+}
+# The roles that read the board. A missing or stale snapshot skips them before any clone or model call.
+ASANA_ROLES = {"product_manager", "developer", "designer"}
+
+
 def preflight(role: str) -> dict | None:
     """Is the repo reachable, and does the installation grant what this role writes?
 
@@ -262,7 +277,15 @@ def preflight(role: str) -> dict | None:
     Returns a skip record, or None to proceed. Without App creds the run is a dry run reading the
     public repo anonymously, which needs no permission, so there is nothing to check.
     """
-    need = ROLE_PERMISSIONS.get(role)
+    if asana.enabled() and role in ASANA_ROLES:
+        try:
+            asana.load_snapshot(boto3.Session(region_name=REGION))
+        except asana.StaleSnapshot as e:
+            return {
+                "outcome": "skipped_stale_snapshot",
+                "reason": f"stale_snapshot: {e}",
+            }
+    need = (ASANA_ROLE_PERMISSIONS if asana.enabled() else ROLE_PERMISSIONS).get(role)
     if not need:
         return None
     try:
@@ -390,6 +413,20 @@ def handle_review(payload: dict) -> dict:
         except Exception as e:  # noqa: BLE001 - every failure must still produce a run row
             traceback.print_exc()
             rec = {"outcome": "failed", "reason": f"{type(e).__name__}: {e}"[:500]}
+    if asana.enabled() and rec.get("outcome") in ("review_posted", "reviewed_dry_run"):
+        verdict = rec.get("verdict") or "reviewed"
+        rec.update(
+            _safe(
+                lambda: board_link(
+                    pr,
+                    token,
+                    bool(token and REVIEW_PUBLISH),
+                    "pr_reviewer",
+                    asana.IN_REVIEW,
+                    f"Review of PR #{number} ({verdict}): {str(rec.get('summary') or '')[:800]}\n{pr['html_url']}",
+                )
+            )
+        )
     line = agent.record(rec, dry_run=not (token and REVIEW_PUBLISH))
     print(json.dumps({"factory_run": line}), flush=True)
     return {
@@ -536,7 +573,17 @@ def handle_developer(payload: dict) -> dict:
     open_prs = github.open_factory_prs(REPO, token)
     taken = taken_tasks(open_prs, github.factory_task_branches(REPO, token))
     duplicate = None
-    if task is None:
+    if task is None and asana.enabled():
+        ready = asana.in_section(asana.load_snapshot(session)["tasks"], asana.READY)
+        mine = [t for t in ready if asana.allowed(t)]
+        task = next_asana_task(mine, taken, attempted_tasks(session))
+        if task is None and ready and not mine:
+            # Someone not on the allowlist moved every candidate: name them, build nothing.
+            return {
+                "outcome": "skipped",
+                "reason": f"mover_not_allowed:{ready[0].get('moved_by') or 'unknown'}",
+            }
+    elif task is None:
         ready = issues.open_issues(REPO, token, issues.READY)
         mine = [i for i in ready if config.author_allowed(i["author"])]
         task = next_task(mine, taken, attempted_tasks(session))
@@ -556,12 +603,18 @@ def handle_developer(payload: dict) -> dict:
             None,
         )
     if task is None:
-        return {
-            "outcome": "skipped",
-            "reason": f"no new open issue labelled {issues.READY}",
-        }
+        where = (
+            f"Asana task in {asana.READY!r}"
+            if asana.enabled()
+            else f"open issue labelled {issues.READY}"
+        )
+        return {"outcome": "skipped", "reason": f"no new {where}"}
     publish = bool(DEV_PUBLISH and token and not payload.get("dry_run"))
-    tracker = issues.Tracker(REPO, token, publish)
+    tracker = (
+        asana.Board(session, "developer", f"task-{task['gid']}", publish)
+        if asana.enabled()
+        else issues.Tracker(REPO, token, publish)
+    )
     work = Path("/tmp/factory") / f"task-{task['gid']}"
     agent = Developer(task, clone(work), work, REGION, REPO, tracker)
     if str(task["gid"]) in taken:
@@ -599,16 +652,129 @@ def handle_developer(payload: dict) -> dict:
     return _finish(agent, rec, not publish, keys)
 
 
+def handle_design(payload: dict) -> dict:
+    """Asana only: the next task in Needs design that an allowlisted person put there gets a spec."""
+    if not asana.enabled():
+        return {
+            "outcome": "skipped",
+            "reason": "designer runs only with FACTORY_TRACKER=asana",
+        }
+    session = boto3.Session(region_name=REGION)
+    todo = asana.in_section(asana.load_snapshot(session)["tasks"], asana.NEEDS_DESIGN)
+    mine = [t for t in todo if asana.allowed(t)]
+    task = next_design(mine, attempted_designs(session))
+    if task is None:
+        reason = (
+            f"mover_not_allowed:{todo[0].get('moved_by') or 'unknown'}"
+            if todo and not mine
+            else f"nothing new in {asana.NEEDS_DESIGN!r}"
+        )
+        return {"outcome": "skipped", "reason": reason}
+    board = asana.Board(session, "designer", f"design-{task['gid']}", PM_PUBLISH)
+    work = Path("/tmp/factory") / f"design-{task['gid']}"
+    agent = Designer(task, clone(work), work, REGION, REPO, board)
+    return _finish(
+        agent,
+        _safe(agent.execute),
+        not PM_PUBLISH,
+        ("spec", "question", "issue_ops", "task_gid"),
+    )
+
+
+def board_link(
+    pr: dict, token: str, publish: bool, agent: str, section: str, text: str
+) -> dict:
+    """Asana mode: put a PR's news on the task it names, and move the task to `section`.
+
+    Only for a PR whose author has write access to the repo: anyone can open a PR on a public
+    repo and write any gid in it, and the board is private. Only for a task on the board, open,
+    and in one of the factory's sections; a task elsewhere on the board is left alone.
+    """
+    gid = asana.task_ref(pr)
+    if not gid:
+        return {}
+    author = (pr.get("user") or {}).get("login", "")
+    if not (token and _can_write(author, token)):
+        return {"board": "skipped", "board_reason": f"@{author} has no write access"}
+    session = boto3.Session(region_name=REGION)
+    try:
+        task = next(
+            (t for t in asana.load_snapshot(session)["tasks"] if str(t["gid"]) == gid),
+            None,
+        )
+    except asana.StaleSnapshot as e:
+        return {"board": "skipped", "board_reason": str(e)}
+    if (
+        task is None
+        or task.get("completed")
+        or task.get("section") not in asana.SECTIONS
+    ):
+        return {
+            "board": "skipped",
+            "board_reason": f"task {gid} is not open in a factory section",
+        }
+    board = asana.Board(session, agent, f"pr-{pr['number']}", publish)
+    if task.get("section") != section:
+        board.move(gid, section)
+    board.comment(gid, text)
+    return {
+        "board": "queued" if publish else "dry_run",
+        "task_gid": gid,
+        "issue_ops": board.ops,
+    }
+
+
 def handle_merge(payload: dict) -> dict:
     token = _github_token()
     pr = github.get_pull(REPO, int(payload["pull_request"]["number"]), token)
+    if (
+        pr.get("merged_at")
+        and asana.enabled()
+        and not pr["head"]["ref"].startswith("factory/")
+    ):
+        # A teammate's PR: no factory run rows to mark, but its task is done.
+        work = Path("/tmp/factory") / f"merge-{pr['number']}"
+        work.mkdir(parents=True, exist_ok=True)
+        agent = Run(
+            {"id": f"merge-{pr['number']}", "repository": {"full_name": REPO}},
+            work,
+            work,
+            None,
+            REGION,
+        )
+        agent.AGENT, agent.branch = "merge_handler", pr["head"]["ref"]
+        link = board_link(
+            pr, token, True, "merge_handler", asana.DONE, f"Merged: {pr['html_url']}"
+        )
+        rec = {
+            "outcome": "merged_recorded" if link else "skipped",
+            "reason": "" if link else "names no Asana task",
+            **link,
+        }
+        return _finish(
+            agent, rec, False, ("board", "board_reason", "task_gid", "issue_ops")
+        )
     if not pr.get("merged_at") or not pr["head"]["ref"].startswith("factory/"):
         return {"outcome": "skipped", "reason": "not a merged factory PR"}
     agent = MergeHandler(
         pr, Path("/tmp/factory") / f"merge-{pr['number']}", REGION, REPO
     )
     agent.work.mkdir(parents=True, exist_ok=True)
-    out = _finish(agent, _safe(agent.execute), True, ("pr_url", "updated_runs"))
+    rec = _safe(agent.execute)
+    if asana.enabled() and rec.get("outcome") == "merged_recorded":
+        rec.update(
+            board_link(
+                pr,
+                token,
+                True,
+                "merge_handler",
+                asana.DONE,
+                f"Merged: {pr['html_url']}",
+            )
+        )
+    out = _finish(
+        agent, rec, True, ("pr_url", "updated_runs", "board", "task_gid", "issue_ops")
+    )
     out["product_manager"] = handle_pm(
         {}
     )  # a merge changes the repo: refresh the issues
@@ -709,6 +875,9 @@ def _decide(number: int, name: str, args: str, actor: str, token: str) -> dict:
 
 
 def handle_issue_command(payload: dict) -> dict:
+    if asana.enabled():
+        # The board is the control surface: a comment on a public issue starts nothing.
+        return {"outcome": "skipped", "reason": "tracker is asana: use the Asana board"}
     token = _github_token()
     actor, number = payload["actor"]["login"], int(payload["issue"]["number"])
     if not _can_write(actor, token):
@@ -719,6 +888,33 @@ def handle_issue_command(payload: dict) -> dict:
     if name in ("dev", "ready"):
         return _take_issue(number, token)
     return _decide(number, name, args, actor, token)
+
+
+def _post_digest_asana(summary: dict) -> dict:
+    """The digest as a comment on the board's 'Factory digest' task (the sync creates it on first run)."""
+    session = boto3.Session(region_name=REGION)
+    tasks = asana.load_snapshot(session)["tasks"]
+    task = next(
+        (
+            t
+            for t in tasks
+            if t["name"] == asana.DIGEST_TASK and asana.MARKER in (t.get("notes") or "")
+        ),
+        None,
+    )
+    token = _github_token()
+    prs = [p["number"] for p in github.open_factory_prs(REPO, token)]
+    text = render_digest(summary, [], prs)
+    board = asana.Board(session, "digest", f"digest-{summary.get('day', '')}", True)
+    if task is None:
+        board.create(
+            asana.BACKLOG,
+            asana.DIGEST_TASK,
+            "Daily factory digests, one comment per day.\n\n" + text,
+        )
+        return {"task": "created", "issue_ops": board.ops}
+    board.comment(task["gid"], text)
+    return {"task": task["gid"], "issue_ops": board.ops}
 
 
 def _post_digest(summary: dict) -> dict:
@@ -747,7 +943,9 @@ def _trigger(payload: dict) -> str:
 
 def handle(payload: dict) -> dict:
     role = payload.get("role")
-    ci_fixer.SWALLOWED.clear()  # one invocation is one run, whatever agents it builds
+    # One invocation is one run, whatever agents it builds.
+    ci_fixer.SWALLOWED.clear()
+    ci_fixer.REFUSED.clear()
     # Pre-flight: a run that cannot finish is skipped here, before clone() and any model call.
     # The bench reviews a local patch and never writes to GitHub, so it needs no permission.
     if "bench" not in payload and (skip := preflight(role)):
@@ -770,6 +968,8 @@ def _dispatch(role: str, payload: dict) -> dict:
         return handle_pm(payload)
     if role == "developer":
         return handle_developer(payload)
+    if role == "designer":
+        return handle_design(payload)
     if role == "merge_handler":
         return handle_merge(payload)
     if role == "digest":
@@ -778,7 +978,8 @@ def _dispatch(role: str, payload: dict) -> dict:
         agent = Digest(work, REGION, REPO, payload.get("day"))
         rec = _safe(agent.execute)
         if rec.get("outcome") == "digest_written":
-            rec["digest_post"] = post = _safe(lambda: _post_digest(rec["summary"]))
+            poster = _post_digest_asana if asana.enabled() else _post_digest
+            rec["digest_post"] = post = _safe(lambda: poster(rec["summary"]))
             if post.get("outcome") == "failed":
                 # The summary was computed and stored, but nobody can read it on the issue.
                 # An outcome that claims success for a partial result is the bug being fixed.

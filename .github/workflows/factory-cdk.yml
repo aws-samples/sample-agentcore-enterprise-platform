@@ -50,6 +50,10 @@ env:
   # aws-cdk-lib 2.278 writes cloud-assembly schema 55, which needs CLI >= 2.1149.0.
   CDK_CLI_VERSION: '2.1149.0'
   COORDINATOR_ROLE: robcata
+  # The Asana project and the user gids the factory acts for live in GitHub variables, not the
+  # repo (Settings > Secrets and variables > Actions > Variables).
+  ASANA_PROJECT: ${{ vars.FACTORY_ASANA_PROJECT }}
+  ASANA_USERS: ${{ vars.FACTORY_ASANA_USERS }}
   PYTHON_VERSION: '3.13'
   NODE_VERSION: '22'
 
@@ -109,7 +113,7 @@ jobs:
       # Gate 1: a CLI that cannot read this app's manifest stops here, before any AWS call.
       - name: Preflight (CDK CLI reads the app manifest)
         working-directory: factory/infra
-        run: ./preflight.sh -c "coordinator_role=${COORDINATOR_ROLE}"
+        run: ./preflight.sh -c "coordinator_role=${COORDINATOR_ROLE}" -c "asana_project=${ASANA_PROJECT}" -c "asana_users=${ASANA_USERS}"
 
       # --method=template is deliberate. The default diff uploads the template and creates a
       # read-only change set, which needs s3:PutObject and cloudformation:CreateChangeSet --
@@ -194,7 +198,7 @@ jobs:
 
       - name: Preflight (CDK CLI reads the app manifest)
         working-directory: factory/infra
-        run: ./preflight.sh -c "coordinator_role=${COORDINATOR_ROLE}"
+        run: ./preflight.sh -c "coordinator_role=${COORDINATOR_ROLE}" -c "asana_project=${ASANA_PROJECT}" -c "asana_users=${ASANA_USERS}"
 
       # The accurate diff, change-set based, so "may be replaced" is visible in the run log
       # before anything is applied. Cancel the run here if it shows a replacement you did not

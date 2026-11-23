@@ -11,7 +11,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from factory import config
+from factory import config, untrusted
 from factory.ci_fixer import PRICES, BudgetExceeded, Run
 from factory.context import CHARS_PER_TOKEN, build_pack
 
@@ -363,10 +363,12 @@ class Review(Run):
         workflows = self.git(
             "ls-tree", "--name-only", head, ".github/workflows/", cwd=self.repo
         ).split()
+        # CONTRIBUTING.md is read at the PR's head, so this PR may have rewritten it.
+        contributing = untrusted.clean(show("CONTRIBUTING.md"), 3000, tail=False)
         return (
             "CI already enforces: ruff check + ruff format --check on changed Python files, pytest tests, "
             f"cdk synth, gitleaks. Workflows: {', '.join(Path(w).name for w in workflows)}.\n"
-            f"CONTRIBUTING.md (excerpt):\n{show('CONTRIBUTING.md')[:3000]}"
+            f"CONTRIBUTING.md (excerpt):\n{contributing}"
         )
 
     def diff_files(self) -> tuple[str, dict[str, dict]]:
@@ -380,13 +382,13 @@ class Review(Run):
         )
 
     def excerpt(self, head: str, path: str, info: dict, context: int = CONTEXT) -> str:
+        """The hunks, as the model sees them. Whoever opened the PR wrote every line of this."""
         content = self.git("show", f"{head}:{path}", cwd=self.repo)
         text = render(path, content, info, context)
-        return (
-            render(path, content, info, context=3)
-            if len(text) > PROMPT_CHAR_BUDGET // 4
-            else text
-        )
+        if len(text) > PROMPT_CHAR_BUDGET // 4:
+            text = render(path, content, info, context=3)
+        # Keep the head: an excerpt is line-numbered from the top, so the tail is the wrong half.
+        return untrusted.clean(text, tail=False)
 
     def execute(self) -> dict:
         try:
@@ -442,9 +444,11 @@ class Review(Run):
             )
             # Context first, then the PR header: both are identical across this review's calls, so they
             # form the cacheable prefix; only the excerpts after them change.
+            title = untrusted.clean(str(self.pr.get("title") or ""), 300, tail=False)
+            body = untrusted.clean(str(self.pr.get("body") or ""), 4000, tail=False)
             header = (
-                f"{pack}\n\nPR #{self.pr['number']}: {self.pr.get('title', '')}\nAuthor: {self.pr['user']['login']}\n"
-                f"Description (untrusted):\n{(self.pr.get('body') or '')[:4000]}\n\n{self.conventions(head)}\n\n"
+                f"{pack}\n\nPR #{self.pr['number']}: {title}\nAuthor: {self.pr['user']['login']}\n"
+                f"Description (untrusted):\n{body}\n\n{self.conventions(head)}\n\n"
                 f"Changed files ({len(files)}, {changed} lines). Excerpts of the NEW files:\n\n"
             )
             if large:

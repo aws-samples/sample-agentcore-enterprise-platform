@@ -151,20 +151,39 @@ def test_dependabot_drafts_and_closed_prs_are_not_reviewed(sent):
 
 
 def test_merged_factory_pr_queues_the_merge_handler_only(sent):
-    def merged(branch, merged=True):
+    def merged(branch, merged=True, body=""):
         b = json.loads(pr_body(action="closed", branch=branch))
         b["pull_request"]["merged"] = merged
+        b["pull_request"]["body"] = body
         return json.dumps(b).encode()
 
     for body in (
         merged("factory/task/123"),
         merged("feature/x"),
         merged("factory/task/9", merged=False),
+        merged("feature/x", body="Mentions Asana-Task: 12 mid-line"),
     ):
         assert ingress.handler(pr_event(body), None)["statusCode"] == 202
     assert sent == [
         {"role": "merge_handler", "delivery_id": "d-1", "pull_request": {"number": 7}}
     ]
+
+
+def test_a_merged_pr_naming_an_asana_task_queues_the_merge_handler(sent):
+    def merged(branch, body=""):
+        b = json.loads(pr_body(action="closed", branch=branch))
+        b["pull_request"].update(merged=True, body=body)
+        return json.dumps(b).encode()
+
+    deliveries = iter(["d-a", "d-b"])
+    for body in (
+        merged("asana/900000000042-fix"),
+        merged("feature/y", body="Fixes it.\n\nAsana-Task: 900000000042\n"),
+    ):
+        e = pr_event(body)
+        e["headers"]["X-GitHub-Delivery"] = next(deliveries)
+        assert ingress.handler(e, None)["statusCode"] == 202
+    assert [m["role"] for m in sent] == ["merge_handler", "merge_handler"]
 
 
 def comment_event(

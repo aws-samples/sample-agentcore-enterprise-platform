@@ -90,6 +90,9 @@ def _enqueue(message: dict, group: str, dedupe_id: str) -> None:
 
 
 REVIEW_ACTIONS = {"opened", "synchronize", "reopened", "ready_for_review"}
+_ASANA_TASK = re.compile(
+    r"(?im)^\s*Asana-Task:\s*\d{6,20}\s*$|app\.asana\.com/\S*?/task/\d{6,20}"
+)
 
 # Commands a comment (or the factory:ready label) can start. Ingress only parses; the runtime checks
 # that the sender has write access, because this function holds no GitHub credential.
@@ -183,10 +186,16 @@ def _issue(payload: dict, event_name: str, delivery: str) -> dict:
 def _pull_request(payload: dict, delivery: str) -> dict:
     """Queue a review. factory/* PRs are reviewed too (agent-written code gets an agent review); Dependabot is not."""
     pr = payload.get("pull_request") or {}
+    ref = str((pr.get("head") or {}).get("ref", ""))
+    # A factory PR, or (Asana mode) a teammate's PR that names its task: the merge moves the task
+    # to Done. Same patterns as asana.task_ref; the runtime re-reads the PR and decides.
+    names_task = ref.startswith(("factory/", "asana/")) or bool(
+        _ASANA_TASK.search(str(pr.get("body") or ""))
+    )
     merged_factory_pr = (
         payload.get("action") == "closed"
         and pr.get("merged")
-        and str((pr.get("head") or {}).get("ref", "")).startswith("factory/")
+        and names_task
         and ((pr.get("base") or {}).get("repo") or {}).get("full_name") == REPO
     )
     if merged_factory_pr:

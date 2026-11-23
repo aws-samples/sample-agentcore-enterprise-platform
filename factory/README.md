@@ -18,6 +18,20 @@ While the `software-factory/github-app` secret is `{}`, the agent fixes and veri
 and the would-be PR in the run row instead of pushing. Without App credentials it cannot download job logs, so it
 re-runs the failing workflow check in its own container to get the failure.
 
+## Asana mode (`-c factory_tracker=asana`)
+
+The private Asana board replaces GitHub Issues as the control surface: specs and backlog stay in
+Asana, and only pull requests are public. A person moves a task into **Needs design** (the
+designer writes a spec), reads it in **Design review**, and approves it by moving it to **Ready for
+agent** (the developer builds it). Teammates' PRs that name a task get the reviewer's summary on
+it, and merging moves it to **Done**. AWS holds no Asana credential: a sync on the maintainer's
+workstation carries changes both ways through the Enterprise Asana MCP. See
+[`sync/README.md`](sync/README.md) for the flow, the rules and the install.
+
+Deploy context, kept out of the repo: `-c asana_project=<gid> -c asana_users=<gid>[,<gid>]`
+(GitHub variables `FACTORY_ASANA_PROJECT` and `FACTORY_ASANA_USERS` for the pipeline).
+`-c factory_paused=true` (set in `cdk.json`) keeps the queue trigger and every schedule off.
+
 ## Deploying from a workstation (still supported, and the fallback)
 
 ```bash

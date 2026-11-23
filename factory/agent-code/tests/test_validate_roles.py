@@ -27,6 +27,7 @@ PAYLOADS = {
     "pr_reviewer": {"role": "pr_reviewer", "pull_request": {"number": 7}},
     "product_manager": {"role": "product_manager"},
     "developer": {"role": "developer"},
+    "designer": {"role": "designer"},
     "merge_handler": {"role": "merge_handler", "pull_request": {"number": 7}},
     "digest": {"role": "digest"},
     "ci_fixer": {
