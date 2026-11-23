@@ -273,6 +273,20 @@ def test_exec_role_iam_reach_is_limited_to_factory_named_roles(template):
             ), action
 
 
+def test_exec_role_arns_use_each_service_s_own_separator(template):
+    """arn:aws:lambda:...:function:NAME has a colon; a slash there matches no function at all,
+    which is how the first pipeline deploy failed on lambda:UpdateFunctionCode."""
+    arns = []
+    for stmt in _statements(template, "software-factory-cdk-exec"):
+        res = stmt["Resource"]
+        arns += [
+            r for r in (res if isinstance(res, list) else [res]) if isinstance(r, str)
+        ]
+    lam = [a for a in arns if a.startswith("arn:aws:lambda:") and ":function" in a]
+    assert lam and all(":function:" in a for a in lam), lam
+    assert not any(":function/" in a for a in arns)
+
+
 def test_every_unscoped_statement_is_one_we_argued_for(template):
     """A new Resource:'*' has to be added here on purpose, not slip in."""
     allowed = {

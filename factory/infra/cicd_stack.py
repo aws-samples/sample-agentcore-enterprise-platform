@@ -325,11 +325,13 @@ class SoftwareFactoryCicdStack(cdk.Stack):
         prefixes the stack name -- hence ``SoftwareFactory*``.
         """
         region = "" if service == "iam" else self.region
-        base = f"arn:aws:{service}:{region}:{self.account}:{kind}"
+        # Lambda puts a colon after "function"; IAM a slash after "role".
+        sep = ":" if service == "lambda" else "/"
+        base = f"arn:aws:{service}:{region}:{self.account}:{kind}{sep}"
         return [
-            f"{base}/software-factory-*",
-            f"{base}/software_factory*",
-            f"{base}/SoftwareFactory*",
+            f"{base}software-factory-*",
+            f"{base}software_factory*",
+            f"{base}SoftwareFactory*",
         ]
 
     def _exec_statements(self) -> list[tuple[list[str], list[str]]]:
@@ -355,10 +357,13 @@ class SoftwareFactoryCicdStack(cdk.Stack):
                 ],
                 self._named("iam", "role"),
             ),
-            # --- DynamoDB: software-factory-runs / -dedupe / -conversations.
+            # --- DynamoDB: the software-factory-* tables. Creating a table also reads its
+            # contributor insights and resource policy. DeleteTable is left out on purpose.
             (
                 [
                     "dynamodb:CreateTable",
+                    "dynamodb:DescribeContributorInsights",
+                    "dynamodb:GetResourcePolicy",
                     "dynamodb:UpdateTable",
                     "dynamodb:DescribeTable",
                     "dynamodb:DescribeTimeToLive",
@@ -381,6 +386,11 @@ class SoftwareFactoryCicdStack(cdk.Stack):
                     "lambda:DeleteFunction",
                     "lambda:GetFunction",
                     "lambda:GetFunctionConfiguration",
+                    # Read by CloudFormation's update handler on every function update.
+                    "lambda:GetFunctionCodeSigningConfig",
+                    "lambda:GetFunctionRecursionConfig",
+                    "lambda:GetFunctionScalingConfig",
+                    "lambda:GetRuntimeManagementConfig",
                     "lambda:UpdateFunctionCode",
                     "lambda:UpdateFunctionConfiguration",
                     "lambda:AddPermission",
@@ -532,6 +542,9 @@ class SoftwareFactoryCicdStack(cdk.Stack):
                     "bedrock-agentcore:UpdateAgentRuntime",
                     "bedrock-agentcore:DeleteAgentRuntime",
                     "bedrock-agentcore:GetAgentRuntime",
+                    # An update moves the runtime's DEFAULT endpoint to the new version.
+                    "bedrock-agentcore:GetAgentRuntimeEndpoint",
+                    "bedrock-agentcore:UpdateAgentRuntimeEndpoint",
                     "bedrock-agentcore:TagResource",
                     "bedrock-agentcore:UntagResource",
                     "bedrock-agentcore:ListTagsForResource",
