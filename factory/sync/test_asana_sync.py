@@ -3,6 +3,7 @@
 cd factory && .venv/bin/python -m pytest sync -q
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -162,3 +163,95 @@ def test_a_task_created_in_place_was_moved_there_by_its_creator():
         ],
     )
     assert t["moved_by"] == "creator"
+
+
+# --- the REST board and the Lambda entry point ---------------------------------------------
+
+
+class _Resp:
+    def __init__(self, body):
+        self.body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self):
+        return json.dumps(self.body).encode()
+
+
+def test_rest_board_pages_and_sends_the_token_only_to_asana():
+    seen = []
+
+    def opener(req, timeout):
+        seen.append(req)
+        assert req.full_url.startswith("https://app.asana.com/api/1.0/")
+        assert req.unredirected_hdrs["Authorization"] == "Bearer tok"
+        if "offset=" not in req.full_url:
+            return _Resp(
+                {"data": [{"gid": "1", "name": "A"}], "next_page": {"offset": "o2"}}
+            )
+        return _Resp({"data": [{"gid": "2", "name": "B"}], "next_page": None})
+
+    b = s.RestBoard("tok", P, opener=opener)
+    assert b.sections() == {"A": "1", "B": "2"}
+    assert len(seen) == 2
+
+
+def test_rest_board_create_puts_the_task_in_its_section():
+    sent = []
+
+    def opener(req, timeout):
+        sent.append((req.get_method(), req.full_url, json.loads(req.data or b"{}")))
+        return _Resp({"data": {"gid": "900099"}})
+
+    assert (
+        s.RestBoard("tok", P, opener=opener).create_task("s-1", "New", "notes")
+        == "900099"
+    )
+    method, url, body = sent[0]
+    assert method == "POST" and url.endswith("/tasks")
+    assert body["data"]["memberships"] == [{"project": P, "section": "s-1"}]
+
+
+class _Ac:
+    def __init__(self, token):
+        self.token, self.calls = token, []
+
+    def get_workload_access_token_for_user_id(self, **kw):
+        self.calls.append(("wat", kw))
+        return {"workloadAccessToken": "wat"}
+
+    def get_resource_oauth2_token(self, **kw):
+        self.calls.append(("token", kw))
+        return (
+            {"accessToken": self.token}
+            if self.token
+            else {"authorizationUrl": "u", "sessionUri": "s"}
+        )
+
+
+def test_the_token_is_asked_for_the_fixed_vault_user_with_user_federation():
+    ac = _Ac("tok")
+    assert s.asana_token(ac, "wl", "http://localhost/x")["accessToken"] == "tok"
+    (_, wat), (_, tok) = ac.calls
+    assert wat == {"workloadName": "wl", "userId": s.TOKEN_USER}
+    assert tok["oauth2Flow"] == "USER_FEDERATION" and tok["scopes"] == s.SCOPES
+
+
+def test_without_consent_the_lambda_does_nothing(monkeypatch):
+    import types
+
+    fake = types.SimpleNamespace(
+        client=lambda name: _Ac(None),
+        resource=lambda name: pytest.fail(
+            "no table is touched before there is a token"
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "boto3", fake)
+    monkeypatch.setenv("FACTORY_ASANA_PROJECT", P)
+    monkeypatch.setenv("WORKLOAD_NAME", "wl")
+    monkeypatch.setenv("RETURN_URL", "http://localhost/x")
+    assert s.handler({}, None)["outcome"] == "needs_consent"

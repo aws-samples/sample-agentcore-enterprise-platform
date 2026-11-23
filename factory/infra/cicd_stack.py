@@ -283,6 +283,9 @@ class SoftwareFactoryCicdStack(cdk.Stack):
                     "logs:CreateLogGroup",
                     "logs:DeleteLogGroup",
                     "logs:DescribeLogGroups",
+                    # Read by CloudFormation's log-group handler after it creates one.
+                    "logs:DescribeIndexPolicies",
+                    "logs:GetDataProtectionPolicy",
                     "logs:PutRetentionPolicy",
                     "logs:DeleteRetentionPolicy",
                     "logs:TagResource",
@@ -328,6 +331,22 @@ class SoftwareFactoryCicdStack(cdk.Stack):
                 ],
                 [
                     f"arn:aws:bedrock-agentcore:{region}:{acct}:runtime/software_factory*"
+                ],
+            ),
+            # --- AgentCore workload identity the Asana sync runs as.
+            (
+                [
+                    "bedrock-agentcore:CreateWorkloadIdentity",
+                    "bedrock-agentcore:GetWorkloadIdentity",
+                    "bedrock-agentcore:UpdateWorkloadIdentity",
+                    "bedrock-agentcore:DeleteWorkloadIdentity",
+                    "bedrock-agentcore:TagResource",
+                    "bedrock-agentcore:UntagResource",
+                    "bedrock-agentcore:ListTagsForResource",
+                ],
+                [
+                    f"arn:aws:bedrock-agentcore:{region}:{acct}:workload-identity-directory/default",
+                    f"arn:aws:bedrock-agentcore:{region}:{acct}:workload-identity-directory/default/workload-identity/software-factory-*",
                 ],
             ),
             # --- Budget. Budgets ARNs carry no region.
