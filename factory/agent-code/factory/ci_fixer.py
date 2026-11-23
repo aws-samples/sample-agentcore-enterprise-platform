@@ -23,7 +23,7 @@ from pathlib import Path
 import boto3
 from botocore.config import Config
 
-from factory import config
+from factory import config, untrusted
 
 _CFG = config.role("ci_fixer")
 TRIAGE_MODEL = _CFG["models"].get("triage", "")
@@ -577,7 +577,10 @@ class Run:
                         )
                     }
                 )
-            out[path] = "\n".join(f"{i + 1:>5}| {lines[i]}" for i in keep)
+            # A file at the failing branch's head is the contributor's text, like the log.
+            out[path] = untrusted.clean(
+                "\n".join(f"{i + 1:>5}| {lines[i]}" for i in keep)
+            )
         return out
 
     def changed(self) -> list[str]:
@@ -610,6 +613,9 @@ class Run:
 
     # --- the loop ----------------------------------------------------------
     def execute(self, log_text: str) -> dict:
+        # The log is produced by running the pull request's own code, so a contributor controls
+        # every byte of it. One place covers both sources: GitHub's job log and a payload's.
+        log_text = untrusted.clean(log_text)
         rec = {"outcome": "failed", "reason": "", "check_passed": False}
         try:
             base = self.checkout()
@@ -782,6 +788,15 @@ class Run:
         # the outcome is already in line["reason"], so it is not repeated here.
         if swallowed := [e for e in dict.fromkeys(SWALLOWED) if e != line["reason"]]:
             line["swallowed_errors"] = swallowed
+        # A refused command is its own reason, greppable like missing_permission: and
+        # author_not_allowed:, so the digest's failure list names it instead of a generic failure.
+        if REFUSED:
+            line["refused_commands"] = sorted(set(REFUSED))
+            if "command_refused:" not in line["reason"]:
+                named = "; ".join(sorted(set(REFUSED)))
+                line["reason"] = f"command_refused:{named} {line['reason']}".strip()[
+                    :500
+                ]
         with open(self.work / "factory-runs.jsonl", "a") as f:
             f.write(json.dumps(line) + "\n")
         if table := os.environ.get("FACTORY_RUNS_TABLE"):
@@ -878,9 +893,87 @@ def tool(name: str) -> str:
     return str(p) if p.exists() else name
 
 
+# The build tools the roles legitimately run. Matched on the basename of argv[0], because the
+# interpreter and the pinned ruff and cdk arrive as absolute paths from tool() and cdk_cli().
+ALLOWED_COMMANDS = {
+    "cdk",
+    "gh",
+    "git",
+    "make",
+    "node",
+    "npm",
+    "pip",
+    "pip3",
+    "pytest",
+    "python",
+    "python3",
+    "ruff",
+    "uv",
+}
+# sh() never publishes: the push in publish() calls subprocess directly with its own fixed argv.
+# So git through here is read-only, which keeps a confused agent off config, hooks and remotes.
+GIT_READ_ONLY = {
+    "cat-file",
+    "describe",
+    "diff",
+    "grep",
+    "log",
+    "ls-files",
+    "ls-tree",
+    "merge-base",
+    "rev-parse",
+    "show",
+    "status",
+}
+# -c is arbitrary code for an interpreter and arbitrary config for git; the rest let a caller
+# hand work to another program. --unsafe-fixes lets a formatter change behaviour, not layout.
+DANGEROUS_FLAGS = {
+    "--exec",
+    "--exec-path",
+    "--receive-pack",
+    "--unsafe-fixes",
+    "--upload-pack",
+    "-c",
+}
+# A metacharacter is inert in our own argv (we never use a shell) but not in an argument another
+# program re-parses, such as the python invocation cdk --app runs for us.
+_SHELL_META = re.compile(r"[;&|`$\n\r]|\$\(|>>?|<")
+REFUSED: list[
+    str
+] = []  # commands the gate turned down this run; record() puts them on the row
+
+
+def refuse(cmd: list[str]) -> str:
+    """Why this argv is not allowed to run, or '' when it is."""
+    if not cmd:
+        return "empty command"
+    name = Path(str(cmd[0])).name
+    if name not in ALLOWED_COMMANDS:
+        return f"{name} is not an allowed command"
+    args = [str(a) for a in cmd[1:]]
+    if bad := sorted(set(args) & DANGEROUS_FLAGS):
+        return f"{name} with {', '.join(bad)}"
+    if name == "git" and (not args or args[0] not in GIT_READ_ONLY):
+        return f"git {args[0] if args else ''} is not a read-only subcommand".strip()
+    if meta := [a for a in args if _SHELL_META.search(a)]:
+        return f"{name} argument contains a shell metacharacter: {meta[0][:60]}"
+    return ""
+
+
 def sh(
     cmd: list[str], cwd: Path, work: Path, extra_env: dict | None = None
 ) -> subprocess.CompletedProcess:
+    """Run one allowlisted build command. Output is scrubbed before any caller can read it.
+
+    The gate is here because this is the one place a command an agent chose reaches the OS. A
+    refusal comes back as exit 126 -- the shell's "found but not executable" -- so a caller's
+    normal failure handling reports it, and REFUSED carries it to the run row.
+    """
+    if why := refuse(cmd):
+        REFUSED.append(why)
+        return subprocess.CompletedProcess(
+            cmd, 126, stdout=f"refused: {why}\n", stderr=None
+        )
     # Scrubbed env: no AWS_*, GH_*, tokens reach repo code under test.
     home = work / "home"
     home.mkdir(parents=True, exist_ok=True)
@@ -890,7 +983,7 @@ def sh(
         "LANG": "C.UTF-8",
         **(extra_env or {}),
     }
-    return subprocess.run(
+    r = subprocess.run(
         cmd,
         check=False,
         cwd=cwd,
@@ -901,6 +994,9 @@ def sh(
         stdin=subprocess.DEVNULL,
         timeout=1800,
     )
+    # The command ran the repository's own code, so its output is untrusted from here on.
+    r.stdout = untrusted.clean(r.stdout or "")
+    return r
 
 
 def parse_json(text: str) -> dict:

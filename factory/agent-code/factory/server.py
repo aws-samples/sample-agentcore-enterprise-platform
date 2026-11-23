@@ -747,7 +747,9 @@ def _trigger(payload: dict) -> str:
 
 def handle(payload: dict) -> dict:
     role = payload.get("role")
-    ci_fixer.SWALLOWED.clear()  # one invocation is one run, whatever agents it builds
+    # One invocation is one run, whatever agents it builds.
+    ci_fixer.SWALLOWED.clear()
+    ci_fixer.REFUSED.clear()
     # Pre-flight: a run that cannot finish is skipped here, before clone() and any model call.
     # The bench reviews a local patch and never writes to GitHub, so it needs no permission.
     if "bench" not in payload and (skip := preflight(role)):
