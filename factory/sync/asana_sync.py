@@ -2,13 +2,13 @@
 
 Every run (a systemd timer, every 15 minutes):
   1. reads the pending ops the agents queued in software-factory-asana-ops,
-  2. applies them to the board through the Enterprise Asana MCP (`enterprise-asana-mcp`, stdio),
-     under the maintainer's own Midway session,
+  2. applies them to the board through an Asana MCP server (stdio, `--mcp` or
+     FACTORY_ASANA_MCP), under the operator's own Asana session,
   3. writes the board, as one item, to software-factory-asana-snapshot for the agents to read.
 
 No Asana credential exists in AWS; the factory sees the board only through step 3 and changes it
-only through step 1. While Midway has expired the MCP refuses, the run exits non-zero, and after
-6 h the agents skip with stale_snapshot instead of acting on an old board. `mwinit` resumes it.
+only through step 1. When the operator's session expires the MCP server refuses, the run exits
+non-zero, and after 6 h the agents skip with stale_snapshot instead of acting on an old board.
 
 This side enforces the board rules again, whatever the outbox says, because the outbox is written
 by agents that read untrusted text:
@@ -24,6 +24,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import socket
 import subprocess
 import sys
@@ -97,7 +98,7 @@ class Mcp:
             line = self.proc.stdout.readline()
             if not line:
                 raise McpError(
-                    f"MCP server exited: {self.proc.stderr.read()[-600:]} (run mwinit?)"
+                    f"MCP server exited: {self.proc.stderr.read()[-600:]} (is the Asana session still valid?)"
                 )
             msg = json.loads(line)
             if msg.get("id") == self._id:
@@ -328,7 +329,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--region", default="us-east-1")
     p.add_argument("--ops-table", default="software-factory-asana-ops")
     p.add_argument("--snapshot-table", default="software-factory-asana-snapshot")
-    p.add_argument("--mcp", default="enterprise-asana-mcp")
+    p.add_argument(
+        "--mcp",
+        default=os.environ.get("FACTORY_ASANA_MCP"),
+        required=not os.environ.get("FACTORY_ASANA_MCP"),
+        help="command that starts the Asana MCP server on stdio",
+    )
     p.add_argument(
         "--dry-run",
         action="store_true",
@@ -336,7 +342,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = p.parse_args(argv)
 
-    mcp = Mcp([args.mcp])
+    mcp = Mcp(shlex.split(args.mcp))
     try:
         board = Board(mcp, args.project)
         if args.dry_run and not args.profile:

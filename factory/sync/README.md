@@ -1,9 +1,9 @@
-# Asana sync (workstation)
+# Asana sync
 
 The factory's only path to the Asana board. AWS holds no Asana credential: the agents queue board
 changes in `software-factory-asana-ops` and read the board from `software-factory-asana-snapshot`.
-This script, on the maintainer's workstation, moves both through the Enterprise Asana MCP under
-the maintainer's own Midway session. See `agent-code/factory/asana.py` for the board flow.
+This script, run by an operator, moves both through an Asana MCP server under the operator's own
+Asana session. See `agent-code/factory/asana.py` for the board flow.
 
 | Section | Who moves a task in | What the factory does |
 |---|---|---|
@@ -19,41 +19,22 @@ there is in `asana_users`. The sync refuses any op that moves or creates a task 
 sections, so the factory can never approve its own work.
 
 Teammates link a PR to its task with a branch named `asana/<task gid>-...` or a line
-`Asana-Task: <task gid>` in the PR body. The repo is public, so not the task URL.
+`Asana-Task: <task gid>` in the PR body.
 
-## Install
+## Run
 
-Needs `enterprise-asana-mcp` (`aim mcp install enterprise-asana-mcp`), `isengardcli`, `uv`, and
-the `SoftwareFactory` stack deployed with `-c factory_tracker=asana`.
-
-```bash
-mkdir -p ~/.config/software-factory ~/.config/systemd/user
-echo "FACTORY_ASANA_PROJECT=<project gid>" > ~/.config/software-factory/asana-sync.env
-cat > ~/.config/software-factory/aws-config <<CFG
-[profile factory-operator]
-credential_process = $HOME/.toolbox/bin/isengardcli credentials 045129524125 --role robcata --awscli
-[profile factory-asana-sync]
-role_arn = arn:aws:iam::045129524125:role/software-factory-asana-sync
-source_profile = factory-operator
-region = us-east-1
-CFG
-cp factory/sync/software-factory-asana-sync.{service,timer} ~/.config/systemd/user/
-systemctl --user daemon-reload && systemctl --user enable --now software-factory-asana-sync.timer
-```
-
-Without a systemd user session, cron works the same:
-`*/15 * * * * cd ~/repos/sample-agentcore-enterprise-platform && set -a && . ~/.config/software-factory/asana-sync.env && AWS_CONFIG_FILE=~/.config/software-factory/aws-config AWS_PROFILE=factory-asana-sync PATH=$HOME/.toolbox/bin:$HOME/.local/bin:$PATH uv run -q --no-project -p 3.13 --with boto3 python factory/sync/asana_sync.py`
-
-## Operate
+Needs Python 3.13 with boto3, an Asana MCP server that speaks stdio, and AWS credentials that can
+assume the `software-factory-asana-sync` role (stack output `AsanaSyncRoleArn`).
 
 ```bash
-python factory/sync/asana_sync.py --project <gid> --dry-run              # the board only, no AWS
-AWS_PROFILE=factory-asana-sync python factory/sync/asana_sync.py --dry-run  # plus the pending ops, writes nothing
-journalctl --user -u software-factory-asana-sync -n 20                  # last runs
+export FACTORY_ASANA_PROJECT=<project gid> FACTORY_ASANA_MCP="<command that starts the MCP server>"
+python factory/sync/asana_sync.py --dry-run                       # the board only, no AWS
+AWS_PROFILE=<sync profile> python factory/sync/asana_sync.py --dry-run  # plus pending ops, writes nothing
+AWS_PROFILE=<sync profile> python factory/sync/asana_sync.py      # apply ops, refresh the snapshot
 ```
 
-Midway lasts about 20 hours. When it expires the MCP refuses, the sync exits 2, and six hours
-later the agents skip with `stale_snapshot` rather than act on an old board. Run `mwinit` and the
-next timer tick catches up; queued ops wait in the table meanwhile.
+Schedule the last command every 15 minutes (a systemd timer or cron). If the operator's session
+expires the sync exits 2; queued ops wait in the table, and six hours later the agents skip with
+`stale_snapshot` rather than act on an old board. Renew the session and the next run catches up.
 
-Tests: `cd factory && .venv/bin/python -m pytest sync -q`.
+Tests: `python -m pytest factory/sync -q`.
