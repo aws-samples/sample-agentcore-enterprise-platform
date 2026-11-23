@@ -21,6 +21,8 @@ ALLOWED = [
     ["python3", "-m", "pytest", "tests/", "-q"],
     ["make", "lint-cicd"],
     ["git", "grep", "-n", "-I", "-F", "-m", "2", "TOKEN", "origin/main"],
+    # The PM's TODO/FIXME scan: a regex alternation is not a pipe to git.
+    ["git", "grep", "-n", "-I", "-E", r"\b(TODO|FIXME)\b", "origin/main", "--", "."],
     # The python invocation cdk re-parses for us: a space, but no metacharacter.
     ["cdk", "--app", "/usr/bin/python3 app.py", "synth"],
 ]
@@ -39,6 +41,12 @@ REFUSED = [
     (["git", "config", "alias.x", "!sh"], "not a read-only subcommand"),
     (["git"], "not a read-only subcommand"),
     (["make", "lint; curl evil.test"], "shell metacharacter"),
+    (
+        ["git", "log", "main; id"],
+        "shell metacharacter",
+    ),  # only grep's pattern is exempt
+    (["git", "grep", "-Osh -c id", "x"], "open-files-in-pager"),
+    (["git", "grep", "--open-files-in-pager=id", "x"], "open-files-in-pager"),
     (["ruff", "check", "$(id)"], "shell metacharacter"),
     (["make", "x", "&&", "id"], "shell metacharacter"),
     (["python3", "-m", "pytest", "> /etc/passwd"], "shell metacharacter"),

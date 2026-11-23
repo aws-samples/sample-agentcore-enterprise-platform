@@ -955,7 +955,13 @@ def refuse(cmd: list[str]) -> str:
         return f"{name} with {', '.join(bad)}"
     if name == "git" and (not args or args[0] not in GIT_READ_ONLY):
         return f"git {args[0] if args else ''} is not a read-only subcommand".strip()
-    if meta := [a for a in args if _SHELL_META.search(a)]:
+    # git never re-parses an argument, and `git grep -E 'a|b'` needs the |. The other git
+    # subcommands take refs and paths, where a metacharacter is still a sign of confusion.
+    exempt = name == "git" and args[0] == "grep"
+    # ...but grep's -O/--open-files-in-pager runs a program of the caller's choosing.
+    if exempt and any(a.startswith(("-O", "--open-files-in-pager")) for a in args):
+        return "git grep with --open-files-in-pager"
+    if not exempt and (meta := [a for a in args if _SHELL_META.search(a)]):
         return f"{name} argument contains a shell metacharacter: {meta[0][:60]}"
     return ""
 
