@@ -25,7 +25,7 @@ Asana, and only pull requests are public. A person moves a task into **Needs des
 designer writes a spec), reads it in **Design review**, and approves it by moving it to **Ready for
 agent** (the developer builds it). Teammates' PRs that name a task get the reviewer's summary on
 it, and merging moves it to **Done**. AWS holds no Asana credential: a sync on the maintainer's
-workstation carries changes both ways through the Enterprise Asana MCP. See
+workstation carries changes both ways through an Asana MCP server. See
 [`sync/README.md`](sync/README.md) for the flow, the rules and the install.
 
 Deploy context, kept out of the repo: `-c asana_project=<gid> -c asana_users=<gid>[,<gid>]`.

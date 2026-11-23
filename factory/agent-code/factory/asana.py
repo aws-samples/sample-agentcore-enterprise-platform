@@ -3,8 +3,8 @@
 The cloud never calls Asana. Two DynamoDB tables carry everything:
 
   inbox   software-factory-asana-snapshot: one item per project, the whole board, written by the
-          workstation sync (factory/sync/asana_sync.py) through the Enterprise Asana MCP under the
-          maintainer's own Midway session. Agents read tasks only from here.
+          workstation sync (factory/sync/asana_sync.py) through an Asana MCP server under the
+          operator's own Asana session. Agents read tasks only from here.
   outbox  software-factory-asana-ops: the changes an agent wants (create, move, comment, complete).
           The sync applies them and sets their status. With publish off an op is written as
           dry_run, which the sync never applies, so a dry run is still reviewable in the table.
@@ -97,7 +97,7 @@ def load_snapshot(session, project: str = "") -> dict:
     at = item.get("snapshot_at", "")
     if datetime.fromisoformat(at) < datetime.now(UTC) - MAX_SNAPSHOT_AGE:
         raise StaleSnapshot(
-            f"Asana snapshot from {at} is older than 6 h: run mwinit and the sync"
+            f"Asana snapshot from {at} is older than 6 h: is the sync running?"
         )
     tasks = item.get("tasks") or []
     item["tasks"] = json.loads(tasks) if isinstance(tasks, str) else list(tasks)
