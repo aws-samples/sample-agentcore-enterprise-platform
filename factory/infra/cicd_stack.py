@@ -1,26 +1,11 @@
-"""GitHub Actions trust for the software factory's own deploys.
+"""The CloudFormation execution role for the software factory's deploys.
 
-Three principals, each with one job:
+``software-factory-cdk-exec`` is the role CloudFormation acts as while it applies a change set
+to the factory stacks. Only ``cloudformation.amazonaws.com`` in this account can assume it, so
+its permissions are reachable only by an operator who may pass it to CloudFormation.
 
-* ``software-factory-gha-diff``  - what a pull request gets. Read-only: it can read the two
-  stacks' templates and nothing else. No write action anywhere in the account.
-* ``software-factory-gha-deploy`` - what the ``deploy`` GitHub environment gets, and only that
-  environment. It can start a CloudFormation change set on the two factory stacks, upload CDK
-  assets, and hand ``software-factory-cdk-exec`` to CloudFormation. It holds no permission to
-  create or change any resource directly.
-* ``software-factory-cdk-exec``  - the role CloudFormation itself acts as while it applies a
-  change set. Only ``cloudformation.amazonaws.com`` can assume it, so the only way to use its
-  permissions is to change one of the two stacks the deploy role can reach.
-
-This stack deliberately lives OUTSIDE the set the deploy role may touch: the pipeline cannot
-deploy ``SoftwareFactoryCicd``, so it cannot widen its own grant. Deploy this stack from a
-workstation.
-
-Why not the CDK bootstrap roles: ``cdk-hnb659fds-cfn-exec-role-*`` carries AdministratorAccess,
-so granting the pipeline ``sts:AssumeRole`` on the bootstrap deploy role would hand GitHub an
-administrator path to the whole account. The stacks therefore use
-``CliCredentialsStackSynthesizer`` (no role assumption at all) and the workflow passes
-``--role-arn`` pointing at ``software-factory-cdk-exec``.
+Nothing outside the account is trusted: there is no GitHub OIDC provider and no role that a
+CI system can assume. Deploys run from an operator workstation.
 """
 
 import aws_cdk as cdk
@@ -28,13 +13,6 @@ from aws_cdk import (
     aws_iam as iam,
 )
 from constructs import Construct
-
-GITHUB_OIDC_URL = "https://token.actions.githubusercontent.com"
-GITHUB_OIDC_HOST = "token.actions.githubusercontent.com"
-STS_AUDIENCE = "sts.amazonaws.com"
-
-# The stacks the pipeline is allowed to change. SoftwareFactoryCicd is absent on purpose.
-DEPLOYABLE_STACKS = ("SoftwareFactory", "SoftwareFactoryData")
 
 # The one managed policy the factory stacks attach to a role. Restricting
 # iam:AttachRolePolicy to this ARN is what stops the exec role from attaching
@@ -50,26 +28,10 @@ class SoftwareFactoryCicdStack(cdk.Stack):
         scope: Construct,
         construct_id: str,
         *,
-        github_repo: str,
-        subject_prefix: str | None = None,
-        deploy_environment: str = "deploy",
-        diff_branches: tuple[str, ...] = ("factory/main-v2",),
         bootstrap_qualifier: str = "hnb659fds",
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
-        self.github_repo = github_repo
-        # Every OIDC subject starts with this. Plain `repo:<owner>/<name>` is the default, but
-        # a repository with immutable subject claims turned on sends
-        # `repo:<owner>@<orgId>/<name>@<repoId>` instead, and a trust policy written against
-        # the plain form is simply refused -- `Not authorized to perform
-        # sts:AssumeRoleWithWebIdentity`, with no hint as to which condition missed. Read the
-        # live value with
-        #   gh api /repos/<owner>/<name>/actions/oidc/customization/sub
-        # and pass its sub_claim_prefix. The immutable form is the stronger one: the numeric
-        # ids cannot be reused, so renaming or recreating the repository does not inherit the
-        # trust.
-        self.subject_prefix = subject_prefix or f"repo:{github_repo}"
         self.assets_bucket = (
             f"cdk-{bootstrap_qualifier}-assets-{self.account}-{self.region}"
         )
@@ -77,193 +39,8 @@ class SoftwareFactoryCicdStack(cdk.Stack):
             f"arn:aws:ssm:{self.region}:{self.account}:parameter"
             f"/cdk-bootstrap/{bootstrap_qualifier}/version"
         )
-
-        provider_arn = self._oidc_provider_arn()
         self.exec_role = self._exec_role()
-        self.diff_role = self._diff_role(provider_arn, diff_branches)
-        self.deploy_role = self._deploy_role(provider_arn, deploy_environment)
-
-        cdk.CfnOutput(self, "DiffRoleArn", value=self.diff_role.role_arn)
-        cdk.CfnOutput(self, "DeployRoleArn", value=self.deploy_role.role_arn)
         cdk.CfnOutput(self, "CfnExecRoleArn", value=self.exec_role.role_arn)
-
-    # ---------------------------------------------------------------- trust
-
-    def _oidc_provider_arn(self) -> str:
-        """One provider per account. Pass -c github_oidc_provider_arn=... to reuse an existing one.
-
-        CfnOIDCProvider, not the L2 OpenIdConnectProvider: the L2 is backed by a custom
-        resource whose Lambda holds iam:*OpenIDConnectProvider* on '*' for the life of the
-        account. For a resource CloudFormation supports natively that is a standing privilege
-        bought for nothing.
-        """
-        existing = self.node.try_get_context("github_oidc_provider_arn")
-        if existing:
-            return existing
-        provider = iam.CfnOIDCProvider(
-            self,
-            "GitHubOidc",
-            url=GITHUB_OIDC_URL,
-            client_id_list=[STS_AUDIENCE],
-            # IAM validates token.actions.githubusercontent.com against its own trusted-CA
-            # store and ignores these, so a rotated GitHub certificate cannot break the
-            # trust. The list is here because older CloudFormation regions still want one.
-            thumbprint_list=[
-                "6938fd4d98bab03faadb97b34396831e3780aea1",
-                "1c58a3a8518e8759bf075b76b750d4f2df264fcd",
-            ],
-        )
-        return provider.attr_arn
-
-    def _web_identity(
-        self, provider_arn: str, subjects: list[str]
-    ) -> iam.WebIdentityPrincipal:
-        """A token is accepted only when BOTH the audience and the exact subject match.
-
-        ``sub`` carries the repository, so a fork or a second repository produces a different
-        subject and is refused. StringEquals, not StringLike: no wildcard that a branch named
-        ``factory/main-v2-evil`` could satisfy.
-        """
-        return iam.WebIdentityPrincipal(
-            provider_arn,
-            {
-                "StringEquals": {
-                    f"{GITHUB_OIDC_HOST}:aud": STS_AUDIENCE,
-                    f"{GITHUB_OIDC_HOST}:sub": subjects,
-                }
-            },
-        )
-
-    # ---------------------------------------------------------------- roles
-
-    def _diff_role(self, provider_arn: str, diff_branches: tuple[str, ...]) -> iam.Role:
-        subjects = [f"{self.subject_prefix}:pull_request"] + [
-            f"{self.subject_prefix}:ref:refs/heads/{b}" for b in diff_branches
-        ]
-        role = iam.Role(
-            self,
-            "GhaDiff",
-            role_name="software-factory-gha-diff",
-            assumed_by=self._web_identity(provider_arn, subjects),
-            max_session_duration=cdk.Duration.hours(1),
-            description="GitHub Actions: cdk diff on a pull request. Read-only.",
-        )
-        role.add_to_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "cloudformation:DescribeStacks",
-                    "cloudformation:DescribeStackEvents",
-                    "cloudformation:DescribeStackResources",
-                    "cloudformation:GetTemplate",
-                    "cloudformation:ListStackResources",
-                    "cloudformation:GetStackPolicy",
-                ],
-                resources=self._stack_arns(),
-            )
-        )
-        # GetTemplateSummary is called with the template body the CLI just synthesised, so it
-        # names no stack and accepts no ARN. It reads nothing from the account.
-        role.add_to_policy(
-            iam.PolicyStatement(
-                actions=["cloudformation:GetTemplateSummary"], resources=["*"]
-            )
-        )
-        role.add_to_policy(
-            iam.PolicyStatement(
-                actions=["ssm:GetParameter", "ssm:GetParameters"],
-                resources=[self.bootstrap_version_param],
-            )
-        )
-        return role
-
-    def _deploy_role(self, provider_arn: str, deploy_environment: str) -> iam.Role:
-        role = iam.Role(
-            self,
-            "GhaDeploy",
-            role_name="software-factory-gha-deploy",
-            assumed_by=self._web_identity(
-                provider_arn,
-                [f"{self.subject_prefix}:environment:{deploy_environment}"],
-            ),
-            max_session_duration=cdk.Duration.hours(1),
-            description=(
-                f"GitHub Actions: cdk deploy of {'/'.join(DEPLOYABLE_STACKS)} after approval "
-                f"on the '{deploy_environment}' environment"
-            ),
-        )
-        # Change the two factory stacks. No DeleteStack: this pipeline updates, it never
-        # removes a stack, and SoftwareFactoryData holds the run history.
-        role.add_to_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "cloudformation:CreateStack",
-                    "cloudformation:UpdateStack",
-                    "cloudformation:CreateChangeSet",
-                    "cloudformation:ExecuteChangeSet",
-                    "cloudformation:DeleteChangeSet",
-                    "cloudformation:DescribeChangeSet",
-                    "cloudformation:DescribeStacks",
-                    "cloudformation:DescribeStackEvents",
-                    "cloudformation:DescribeStackResources",
-                    "cloudformation:GetTemplate",
-                    "cloudformation:ListStackResources",
-                    "cloudformation:GetStackPolicy",
-                    "cloudformation:RollbackStack",
-                    "cloudformation:ContinueUpdateRollback",
-                    "cloudformation:TagResource",
-                    "cloudformation:UntagResource",
-                ],
-                resources=self._stack_arns(),
-            )
-        )
-        role.add_to_policy(
-            iam.PolicyStatement(
-                actions=["cloudformation:GetTemplateSummary"], resources=["*"]
-            )
-        )
-        # The only role it may hand to CloudFormation, and only to CloudFormation.
-        role.add_to_policy(
-            iam.PolicyStatement(
-                actions=["iam:PassRole"],
-                resources=[self.exec_role.role_arn],
-                conditions={
-                    "StringEquals": {
-                        "iam:PassedToService": "cloudformation.amazonaws.com"
-                    }
-                },
-            )
-        )
-        # CDK file assets (lambda bundles, the nested template) into the bootstrap bucket.
-        role.add_to_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "s3:PutObject",
-                    "s3:GetObject",
-                    "s3:GetBucketLocation",
-                    "s3:ListBucket",
-                    "s3:AbortMultipartUpload",
-                    "s3:ListBucketMultipartUploads",
-                    "s3:ListMultipartUploadParts",
-                ],
-                resources=[
-                    f"arn:aws:s3:::{self.assets_bucket}",
-                    f"arn:aws:s3:::{self.assets_bucket}/*",
-                ],
-            )
-        )
-        role.add_to_policy(
-            iam.PolicyStatement(
-                actions=["ssm:GetParameter", "ssm:GetParameters"],
-                resources=[self.bootstrap_version_param],
-            )
-        )
-        return role
-
-    def _stack_arns(self) -> list[str]:
-        return [
-            f"arn:aws:cloudformation:{self.region}:{self.account}:stack/{name}/*"
-            for name in DEPLOYABLE_STACKS
-        ]
 
     # ------------------------------------------------- CloudFormation's own role
 
@@ -271,7 +48,7 @@ class SoftwareFactoryCicdStack(cdk.Stack):
         """What CloudFormation may do while applying a change set to the factory stacks.
 
         Broad per service, but every resource is name-scoped to the factory, and the only
-        caller is CloudFormation acting on a stack the deploy role is allowed to name.
+        caller is CloudFormation, on behalf of an operator allowed to pass this role.
         """
         role = iam.Role(
             self,

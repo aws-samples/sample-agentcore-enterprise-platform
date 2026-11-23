@@ -6,8 +6,7 @@ From a workstation (still supported, and the fallback when CI is unavailable):
     cdk diff --all -c coordinator_role=<role>
     cdk deploy --all -c coordinator_role=<role>
 
-From GitHub Actions: see .github/workflows/factory-cdk.yml. SoftwareFactoryCicd holds the
-GitHub trust and is deployed from a workstation only -- the pipeline cannot change its own grant.
+Deploys run from a workstation only; nothing outside the account is trusted to deploy.
 """
 
 import os
@@ -21,15 +20,6 @@ sys.path.insert(
 
 from cicd_stack import SoftwareFactoryCicdStack
 from factory_stacks import SoftwareFactoryDataStack, SoftwareFactoryStack
-
-GITHUB_REPO = "aws-samples/sample-agentcore-enterprise-platform"
-# This repository has immutable OIDC subject claims turned on, so its tokens carry the numeric
-# org and repo ids rather than the plain name. Read the live value with
-#   gh api /repos/aws-samples/sample-agentcore-enterprise-platform/actions/oidc/customization/sub
-# A trust policy written against `repo:<owner>/<name>` is refused outright.
-GITHUB_SUBJECT_PREFIX = (
-    "repo:aws-samples@8931462/sample-agentcore-enterprise-platform@1330929050"
-)
 
 app = cdk.App()
 env = cdk.Environment(
@@ -69,11 +59,9 @@ SoftwareFactoryStack(
 SoftwareFactoryCicdStack(
     app,
     "SoftwareFactoryCicd",
-    github_repo=GITHUB_REPO,
-    subject_prefix=GITHUB_SUBJECT_PREFIX,
     env=env,
     synthesizer=cdk.CliCredentialsStackSynthesizer(),
-    description="Software factory: GitHub Actions OIDC trust and the two pipeline roles",
+    description="Software factory: the CloudFormation execution role",
 )
 cdk.Tags.of(app).add("Project", "SoftwareFactory")
 app.synth()
