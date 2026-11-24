@@ -96,7 +96,7 @@ def next_design(todo: list[dict], tried: dict[str, str]) -> dict | None:
     The factory's own comment changes the task's modified_at, so that is not the clock: a
     human's move or comment is (asana.human_activity). Otherwise every spec would trigger another.
     """
-    for t in sorted(todo, key=lambda t: t.get("moved_at") or ""):
+    for t in sorted(todo, key=asana.work_order):
         gid = str(t["gid"])
         if gid in tried and tried[gid] >= asana.human_activity(t):
             continue
@@ -138,7 +138,8 @@ class Designer(Run):
                 if f in (self.task.get("notes") or "") + " ".join(after)
             }
             prompt = (
-                f"Task title: {self.task['name']}\n\nTask notes:\n{(self.task.get('notes') or '')[:6000]}\n\n"
+                f"Task title: {self.task['name']}\n"
+                + f"Type: {self.task.get('type') or 'unset'}; priority: {self.task.get('priority') or 'unset'}\n\nTask notes:\n{(self.task.get('notes') or '')[:6000]}\n\n"
                 + (f"Previous spec:\n{spec[:6000]}\n\n" if spec else "")
                 + (
                     "Maintainer comments since then:\n"

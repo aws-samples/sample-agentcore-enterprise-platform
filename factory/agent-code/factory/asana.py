@@ -109,6 +109,37 @@ def allowed(task: dict) -> bool:
     return config.asana_user_allowed(task.get("moved_by") or "")
 
 
+# The project's Type field, as conventional-commit types for the developer's PR title.
+COMMIT_TYPE = {
+    "Feature": "feat",
+    "Bug": "fix",
+    "Docs": "docs",
+    "Debt": "refactor",
+    "Security": "fix",
+    "Test": "test",
+}
+
+
+def priority_rank(task: dict) -> int:
+    """P0 first, then P1, P2; a task with no priority comes last."""
+    p = str(task.get("priority") or "")
+    return int(p[1]) if len(p) > 1 and p[0] == "P" and p[1].isdigit() else 9
+
+
+def work_order(task: dict) -> tuple:
+    """Highest priority first, then the task a human moved earliest."""
+    return (priority_rank(task), task.get("moved_at") or "")
+
+
+def commit_title(title: str, task_type: str) -> str:
+    """The PR title with the Type's conventional-commit prefix, replacing any the model chose."""
+    kind = COMMIT_TYPE.get(task_type or "")
+    if not kind:
+        return title
+    rest = re.sub(r"^[a-z]+(\([^)]*\))?!?:\s*", "", title.strip())
+    return f"{kind}: {rest}"[:72]
+
+
 def in_section(tasks: list[dict], section: str) -> list[dict]:
     return [t for t in tasks if t.get("section") == section and not t.get("completed")]
 
@@ -299,6 +330,8 @@ def developer_task(t: dict) -> dict:
     return {
         "gid": str(t["gid"]),
         "title": t["name"],
+        "type": t.get("type") or "",
+        "priority": t.get("priority") or "",
         "notes": text,
         "url": "",
         **fields,

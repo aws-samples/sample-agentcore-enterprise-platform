@@ -344,3 +344,33 @@ def test_issue_comments_start_nothing_in_asana_mode():
 
 def test_in_asana_mode_no_role_needs_the_issues_permission():
     assert not any("issues:write" in p for p in server.ASANA_ROLE_PERMISSIONS.values())
+
+
+# --- the project's Type and Priority fields --------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "title,kind,want",
+    [
+        ("feat: add a kill switch", "Bug", "fix: add a kill switch"),
+        ("chore(ci): tidy", "Docs", "docs: tidy"),
+        ("Add a kill switch", "Feature", "feat: Add a kill switch"),
+        ("feat: keep as is", "", "feat: keep as is"),
+        ("feat: keep as is", "Unknown", "feat: keep as is"),
+    ],
+)
+def test_the_pr_title_takes_the_task_type_s_prefix(title, kind, want):
+    assert asana.commit_title(title, kind) == want
+
+
+def test_the_highest_priority_task_goes_first_then_the_oldest():
+    old_p2 = task("1", priority="P2·S3", moved_at="2026-11-01T00:00:00+00:00")
+    new_p0 = task("2", priority="P0·S1", moved_at="2026-11-20T00:00:00+00:00")
+    none = task("3", moved_at="2026-10-01T00:00:00+00:00")
+    assert next_asana_task([old_p2, none, new_p0])["gid"] == "2"
+    assert (
+        next_design([dict(t, section=asana.NEEDS_DESIGN) for t in (old_p2, none)], {})[
+            "gid"
+        ]
+        == "1"
+    )
