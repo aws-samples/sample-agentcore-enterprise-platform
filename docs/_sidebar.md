@@ -10,6 +10,7 @@ Design
 - [Architecture](ARCHITECTURE.md)
 - [Multi-account federation](MULTI_ACCOUNT.md)
 - [Security controls](SECURITY_CONTROLS.md)
+- [Posture tiers](POSTURE_TIERS.md)
 - [Identity](IDENTITY.md)
 - [Enterprise IdP federation](ENTERPRISE_IDP.md)
 

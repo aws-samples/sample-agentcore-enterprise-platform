@@ -23,6 +23,9 @@ Every security control below is off by default. Turn them on with feature flags,
 `security-focused` profile which enables the account/workload set together (including
 `enable_security`, the KMS CMK + CloudTrail stack that item 7 depends on).
 
+To compare what the workshop, secure and production postures turn on, see the generated
+[`POSTURE_TIERS.md`](POSTURE_TIERS.md) table.
+
 Two unrelated flags elsewhere in `app.py` *do* default on — `enable_transaction_search`
 (an account- and region-level CloudWatch/X-Ray setting, on because tracing does not work
 without it) and `enable_a2a`. On the Terraform side, `enable_scp_memory_enforce_cmk` and
