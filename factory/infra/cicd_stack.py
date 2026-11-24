@@ -153,6 +153,8 @@ class SoftwareFactoryCicdStack(cdk.Stack):
                     "dynamodb:UntagResource",
                     "dynamodb:ListTagsOfResource",
                     "dynamodb:DescribeKinesisStreamingDestination",
+                    # The runs table's stream (resource table/<name>/stream/*).
+                    "dynamodb:DescribeStream",
                 ],
                 [f"arn:aws:dynamodb:{region}:{acct}:table/software-factory-*"],
             ),

@@ -78,7 +78,6 @@ from aws_cdk import (
     custom_resources as cr,
 )
 from constructs import Construct
-
 from infra_utils.platform_config import allowed_model_resources
 from infra_utils.runtime_network import build_network_config
 
@@ -114,6 +113,8 @@ class SoftwareFactoryDataStack(cdk.Stack):
             ),
             sort_key=dynamodb.Attribute(name="sk", type=dynamodb.AttributeType.STRING),
             billing=dynamodb.Billing.on_demand(),
+            # Every run writes one row; the notifier reads new rows from this stream.
+            dynamo_stream=dynamodb.StreamViewType.NEW_IMAGE,
             point_in_time_recovery_specification=dynamodb.PointInTimeRecoverySpecification(
                 point_in_time_recovery_enabled=True
             ),
@@ -197,6 +198,15 @@ class SoftwareFactoryDataStack(cdk.Stack):
             string_value=self.node.try_get_context("installation_id") or "none",
             description="GitHub App installation id the webhook ingress accepts",
         )
+        # Chat webhook URL for run notifications. "none" = off. The operator sets the value; it
+        # never appears in the template.
+        self.notify_webhook = sm.Secret(
+            self,
+            "NotifyWebhook",
+            secret_name="software-factory/slack-webhook",
+            description="Chat workflow webhook URL for factory notifications; 'none' = off",
+            secret_string_value=cdk.SecretValue.unsafe_plain_text("none"),
+        )
         # Empty placeholder until the user creates the GitHub App; the agent runs dry-run while empty.
         self.github_app = sm.Secret(
             self,
@@ -241,6 +251,7 @@ class SoftwareFactoryStack(cdk.Stack):
         self._cost_alarms(self._budget())
         self._readonly_role(data, coordinator_role_name)
         self._asana_sync_role(data, coordinator_role_name)
+        self._notifier(data)
         # -c asana_sync=cloud (Asana mode): the sync runs here as a Lambda, with the Asana OAuth
         # token AgentCore Identity keeps; the workstation sync stays available as a fallback.
         if self.tracker == "asana" and ctx("asana_sync", "workstation") == "cloud":
@@ -895,6 +906,46 @@ class SoftwareFactoryStack(cdk.Stack):
             treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
         )
         alarm.add_alarm_action(cw_actions.SnsAction(topic))
+
+    def _notifier(self, data: SoftwareFactoryDataStack) -> None:
+        """New run rows -> one chat message each for the runs a person should know about."""
+        fn = _lambda.Function(
+            self,
+            "Notifier",
+            function_name="software-factory-notifier",
+            runtime=_lambda.Runtime.PYTHON_3_13,
+            handler="notifier.handler",
+            code=_lambda.Code.from_asset(os.path.join(HERE, "lambdas")),
+            timeout=cdk.Duration.seconds(30),
+            memory_size=128,
+            environment={
+                "WEBHOOK_SECRET": data.notify_webhook.secret_name,
+                "DEDUPE_TABLE": data.dedupe.table_name,
+                "FACTORY_ASANA_PROJECT": self.asana_project,
+            },
+            log_group=self._log_group(
+                "NotifierLogs", "/aws/lambda/software-factory-notifier"
+            ),
+        )
+        data.notify_webhook.grant_read(fn)
+        fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["dynamodb:PutItem"], resources=[data.dedupe.table_arn]
+            )
+        )
+        fn.add_event_source(
+            sources.DynamoEventSource(
+                data.runs,
+                starting_position=_lambda.StartingPosition.LATEST,
+                batch_size=10,
+                retry_attempts=2,
+                filters=[
+                    _lambda.FilterCriteria.filter(
+                        {"eventName": _lambda.FilterRule.is_equal("INSERT")}
+                    )
+                ],
+            )
+        )
 
     def _asana_cloud_sync(self, data: SoftwareFactoryDataStack) -> None:
         """Every 15 min: apply queued board ops and refresh the snapshot through the Asana API.
