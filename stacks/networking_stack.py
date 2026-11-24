@@ -28,20 +28,28 @@ class NetworkingStack(cdk.Stack):
         migration_ca_bundle_secret_name: str = "",
         log_retention_days: int = 30,
         retain_data: bool = False,
+        availability_zones: list[str] | None = None,
         **kwargs,
     ):
         super().__init__(scope, id, **kwargs)
 
         prefix = f"{project_name}-{environment}"
         migration_private_dependencies = migration_private_dependencies or []
+        # Pinned AZ names (chosen from AgentCore's supported zone ids) replace
+        # max_azs: CDK treats the two as mutually exclusive.
+        az_kwargs = (
+            {"availability_zones": availability_zones}
+            if availability_zones
+            else {"max_azs": 2}
+        )
 
         self.vpc = ec2.Vpc(
             self,
             "VPC",
             vpc_name=f"{prefix}-vpc",
             ip_addresses=ec2.IpAddresses.cidr(vpc_cidr),
-            max_azs=2,
             nat_gateways=1,
+            **az_kwargs,
             subnet_configuration=[
                 ec2.SubnetConfiguration(
                     name="Public", subnet_type=ec2.SubnetType.PUBLIC, cidr_mask=24
