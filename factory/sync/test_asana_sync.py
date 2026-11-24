@@ -255,3 +255,19 @@ def test_without_consent_the_lambda_does_nothing(monkeypatch):
     monkeypatch.setenv("WORKLOAD_NAME", "wl")
     monkeypatch.setenv("RETURN_URL", "http://localhost/x")
     assert s.handler({}, None)["outcome"] == "needs_consent"
+
+
+def test_task_row_reads_type_and_priority():
+    row = s.task_row(
+        {
+            "gid": "1",
+            "name": "n",
+            "custom_fields": [
+                {"name": "Type", "display_value": "Bug"},
+                {"name": "Priority", "display_value": "P1·S2"},
+                {"name": "Other", "display_value": "x"},
+            ],
+        },
+        P,
+    )
+    assert (row["type"], row["priority"]) == ("Bug", "P1·S2")

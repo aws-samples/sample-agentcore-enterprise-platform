@@ -143,7 +143,10 @@ class Mcp:
         self.proc.terminate()
 
 
-FIELDS = "name,notes,completed,modified_at,created_at,created_by,memberships.section.name,memberships.project.gid"
+FIELDS = (
+    "name,notes,completed,modified_at,created_at,created_by,memberships.section.name,"
+    "memberships.project.gid,custom_fields.name,custom_fields.display_value"
+)
 
 
 def task_row(t: dict, project: str) -> dict:
@@ -156,9 +159,16 @@ def task_row(t: dict, project: str) -> dict:
         ),
         None,
     )
+    fields = {
+        f.get("name"): f.get("display_value") or ""
+        for f in t.get("custom_fields") or []
+        if f.get("name") in ("Type", "Priority")
+    }
     return {
         "gid": t["gid"],
         "name": t.get("name", ""),
+        "type": fields.get("Type", ""),
+        "priority": fields.get("Priority", ""),
         "notes": (t.get("notes") or "")[:8000],
         "section": section,
         "completed": bool(t.get("completed")),

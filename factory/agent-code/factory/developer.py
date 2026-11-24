@@ -340,6 +340,7 @@ class Developer(Run):
                 return rec
             self.git("add", "-A")
             title = change.get("pr_title") or f"feat: {self.task['title']}"[:72]
+            title = asana.commit_title(title, self.task.get("type", ""))
             self.git(
                 "-c",
                 "user.name=software-factory[bot]",
@@ -403,7 +404,7 @@ def next_asana_task(
 ) -> dict | None:
     """Oldest-moved Ready for agent task not in flight and not already attempted since a human last acted on it."""
     tried = tried or {}
-    for t in sorted(ready, key=lambda t: t.get("moved_at") or ""):
+    for t in sorted(ready, key=asana.work_order):
         gid = str(t["gid"])
         if gid in taken or (gid in tried and tried[gid] >= asana.human_activity(t)):
             continue
