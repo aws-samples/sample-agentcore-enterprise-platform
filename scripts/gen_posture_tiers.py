@@ -30,7 +30,7 @@ SECTION_PREFIXES = (
     "audit",
     "cedar",
     "cloudtrail",
-    "deployment_mode",
+    "deployment.mode",
     "egress",
     "encryption",
     "gateway",
