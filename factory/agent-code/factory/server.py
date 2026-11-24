@@ -775,9 +775,10 @@ def handle_merge(payload: dict) -> dict:
     out = _finish(
         agent, rec, True, ("pr_url", "updated_runs", "board", "task_gid", "issue_ops")
     )
-    out["product_manager"] = handle_pm(
-        {}
-    )  # a merge changes the repo: refresh the issues
+    if not asana.enabled():  # a merge changes the repo: refresh the issues
+        out["product_manager"] = handle_pm({})
+    # On the Asana board the daily PM run is the refresh: a run per merge meant parallel runs
+    # proposing the same tasks when several PRs merged together.
     return out
 
 
