@@ -51,7 +51,13 @@ def session_id(message: dict, record: dict) -> str:
     role = message.get("role")
     if role == "merge_handler":
         sid = f"factory-merge-{int(message['pull_request']['number'])}"
-    elif role in ("product_manager", "developer", "digest", "issue_command"):
+    elif role in (
+        "product_manager",
+        "developer",
+        "designer",
+        "digest",
+        "issue_command",
+    ):
         # Scheduled/manual: one session per SQS message (its id is unique per delivery).
         sid = f"factory-{role}-{record['messageId']}"[:100]
     elif role == "pr_reviewer":

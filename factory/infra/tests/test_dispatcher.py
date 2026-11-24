@@ -135,3 +135,9 @@ def test_issue_command_gets_a_role_session_not_a_workflow_lookup():
     message = {"role": "issue_command", "issue": {"number": 7}}
     sid = dispatcher.session_id(message, {"messageId": "m-1"})
     assert sid.startswith("factory-issue_command-m-1")
+
+
+def test_every_scheduled_role_gets_a_session_without_a_workflow_run():
+    for role in ("product_manager", "developer", "designer", "digest"):
+        sid = dispatcher.session_id({"role": role}, {"messageId": "m-1"})
+        assert sid.startswith(f"factory-{role}-") and len(sid) >= 33

@@ -374,3 +374,21 @@ def test_the_highest_priority_task_goes_first_then_the_oldest():
         ]
         == "1"
     )
+
+
+def test_the_pm_sees_only_the_factory_sections_and_comments_at_most_five_times():
+    snap = {
+        "tasks": [
+            dict(task("1", section="Epics"), created_by=ME),
+            dict(task("2", section="Reference: platform layers"), created_by=ME),
+            dict(task("3", section=asana.BACKLOG), created_by=ME),
+        ]
+    }
+    assert [t["gid"] for t in asana.snapshot_tasks_for_pm(snap)] == ["3"]
+    b = asana.Board(None, "product_manager", "r", publish=True, project="p")
+    reconcile = [
+        {"task": str(i), "section": asana.NEEDS_SCOPING, "comment": "c"}
+        for i in range(12)
+    ]
+    asana.apply_plan(b, reconcile, [])
+    assert len(b.ops) == asana.MAX_PM_COMMENTS

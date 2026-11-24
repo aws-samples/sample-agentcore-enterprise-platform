@@ -265,13 +265,17 @@ class Board:
         )
 
 
+MAX_PM_COMMENTS = 5
+
+
 def apply_plan(board: Board, reconcile: list[dict], new: list[dict]) -> None:
     """plan_board's output on the board. Nothing the PM proposes skips a human:
 
     new tasks land in Design review (or Backlog for the large ones), never in Ready for agent;
-    "done" and "needs scoping" verdicts are comments the human acts on, not moves.
+    "done" and "needs scoping" verdicts are comments the human acts on, not moves. At most
+    MAX_PM_COMMENTS per run, so one run cannot bury the board in notes.
     """
-    for r in reconcile:
+    for r in reconcile[:MAX_PM_COMMENTS]:
         prefix = {
             DONE: "looks delivered; move it to Done if you agree. ",
             NEEDS_SCOPING: "may need rescoping. ",
@@ -284,12 +288,16 @@ def apply_plan(board: Board, reconcile: list[dict], new: list[dict]) -> None:
 
 
 def snapshot_tasks_for_pm(snapshot: dict) -> list[dict]:
-    """The PM's view of the board: open tasks an allowlisted person created, plus the factory's own."""
+    """The PM's view of the board: open tasks in the factory's sections that an allowlisted
+    person created, plus the factory's own. The team's other sections (an Epics roadmap,
+    reference cards) are context for people, not work, so the PM leaves them alone."""
     from factory.pm import parse_notes  # pm imports this module
 
     out = []
     for t in snapshot["tasks"]:
         if t.get("completed") or t.get("name") == DIGEST_TASK:
+            continue
+        if t.get("section") not in SECTIONS:
             continue
         ours = MARKER in (t.get("notes") or "")
         if not (ours or config.asana_user_allowed(t.get("created_by") or "")):
