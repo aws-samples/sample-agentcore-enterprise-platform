@@ -271,3 +271,24 @@ def test_task_row_reads_type_and_priority():
         P,
     )
     assert (row["type"], row["priority"]) == ("Bug", "P1·S2")
+
+
+def test_a_transient_failure_is_retried_and_a_real_one_is_not():
+    calls = []
+
+    def flaky():
+        calls.append(1)
+        if len(calls) < 3:
+            raise s.McpError("status: 424 - Vendor API communication failure")
+        return "ok"
+
+    assert s.with_retry(flaky, sleep=lambda w: None) == "ok" and len(calls) == 3
+    calls.clear()
+
+    def broken():
+        calls.append(1)
+        raise s.McpError("status: 400 - invalid task")
+
+    with pytest.raises(s.McpError):
+        s.with_retry(broken, sleep=lambda w: None)
+    assert len(calls) == 1
