@@ -15,6 +15,29 @@ customer production approval.
 | Production mode | **Implemented; not launch-approved** | Fail-closed controls and retained lifecycle synthesize and have automated tests. No production deployment, restore rehearsal, or operational readiness approval |
 | Regions other than `us-east-1` | **Customer validation required** | Service and model availability vary. Web search is enabled automatically only in its declared launch Regions. Run `doctor`, build, and full verification in the selected Region |
 
+### Region tables used by `design`
+
+`design` runs static Region checks (`region_findings` in
+`infra_utils/platform_config.py`). These checks make no AWS calls, and every
+message names the Region:
+
+- **Zones (error):** networking is on and the Region has no
+  `SUPPORTED_ZONE_IDS` entry in `infra_utils/runtime_network.py`.
+- **Models (warning):** `agents.model_id` or an `agents.allowed_models`
+  entry is either not in `INFERENCE_PROFILES_BY_GEO` or uses a profile
+  prefix other than the Region's geo (`REGION_GEO`). `global.` profiles are
+  accepted everywhere.
+- **Web search (warning):** `gateway.web_search: on` is set outside
+  `WEB_SEARCH_REGIONS`.
+
+The model and web search tables drift from AWS offerings, which is why
+findings from them are warnings. `doctor` and `verify` remain the
+authoritative live checks. To update the tables, edit them in
+`infra_utils/platform_config.py`. When AWS adds a profile, add its base model
+id (without the geo prefix) to each geo set that offers it. Add new Regions to
+`REGION_GEO`. Run `python -m pytest tests/test_region_validation.py -q`
+afterwards.
+
 ## Identity
 
 | Path | v0.1.0 status | Evidence and boundary |
