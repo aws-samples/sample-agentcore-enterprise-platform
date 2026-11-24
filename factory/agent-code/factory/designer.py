@@ -157,7 +157,9 @@ class Designer(Run):
                 + "\n\nRepo files:\n"
                 + "\n".join(files)[:50000]
             )
-            d = self.ask(SPEC_MODEL, DESIGN_SYS, prompt, 4000)
+            d = self.ask(
+                SPEC_MODEL, DESIGN_SYS, prompt, 12000
+            )  # large specs were cut off mid-JSON at 4000
             if not d.get("clear", True):
                 q = str(d.get("question") or "the task is not clear enough to design")[
                     :600
