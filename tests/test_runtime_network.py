@@ -37,7 +37,7 @@ class FakeLookupError(Exception):
     pass
 
 
-def _factory(zones, caller=ACCOUNT, fail=False):
+def _factory(zones, caller=ACCOUNT, fail=False, existing_subnet_zone_ids=None):
     calls = []
 
     class Sts:
@@ -57,6 +57,19 @@ def _factory(zones, caller=ACCOUNT, fail=False):
                         "OptInStatus": "opt-in-not-required",
                     }
                     for name, zone_id in zones.items()
+                ]
+            }
+
+        def describe_vpcs(self, **kwargs):
+            if existing_subnet_zone_ids is None:
+                return {"Vpcs": []}
+            return {"Vpcs": [{"VpcId": "vpc-1"}]}
+
+        def describe_subnets(self, **kwargs):
+            return {
+                "Subnets": [
+                    {"AvailabilityZoneId": zone_id}
+                    for zone_id in existing_subnet_zone_ids or []
                 ]
             }
 
@@ -218,6 +231,45 @@ def test_unsupported_default_zones_are_pinned():
     )
     assert zones == ["us-east-1c", "us-east-1d"]
     assert name_to_id == UNSUPPORTED_FIRST
+
+
+def test_skip_flag_name():
+    assert SKIP_AZ_PINNING_ENV == "AGENTCORE_SKIP_AZ_PINNING"
+
+
+def test_existing_vpc_in_unsupported_zones_warns_to_redeploy():
+    factory, _ = _factory(
+        UNSUPPORTED_FIRST, existing_subnet_zone_ids=["use1-az3", "use1-az5"]
+    )
+    warnings = []
+    zones, _ = resolve_vpc_zones(
+        "us-east-1",
+        ACCOUNT,
+        factory,
+        (FakeLookupError,),
+        environ={},
+        warn=warnings.append,
+        vpc_name="p-test-vpc",
+    )
+    assert zones == ["us-east-1c", "us-east-1d"]
+    assert len(warnings) == 1
+    for text in ("p-test-vpc", "use1-az3", "use1-az5", "Destroy", "TROUBLESHOOTING"):
+        assert text in warnings[0]
+
+
+def test_fresh_deployment_does_not_warn():
+    factory, _ = _factory(UNSUPPORTED_FIRST)
+    warnings = []
+    resolve_vpc_zones(
+        "us-east-1",
+        ACCOUNT,
+        factory,
+        (FakeLookupError,),
+        environ={},
+        warn=warnings.append,
+        vpc_name="p-test-vpc",
+    )
+    assert warnings == []
 
 
 def test_zone_id_table_is_well_formed():

@@ -409,12 +409,14 @@ if enable_networking:
     # supports only some ids. Pin the VPC to supported ids at synth time only
     # when the default pick is unsupported. Lookup failures, an account
     # mismatch, or too few supported zones fail the synth on purpose
-    # (FACTORY_SKIP_AZ_PINNING=1 allows an offline synth to keep max_azs=2).
+    # (AGENTCORE_SKIP_AZ_PINNING=1 allows an offline synth to keep max_azs=2).
+    # An existing VPC in unsupported AZs gets a destroy-and-redeploy warning.
     networking_azs, _az_map = resolve_vpc_zones(
         region,
         account,
         lambda service: boto3.client(service, region_name=region),
         (NoCredentialsError, ClientError, EndpointConnectionError),
+        vpc_name=f"{prefix}-vpc",
     )
     if networking_azs:
         print(

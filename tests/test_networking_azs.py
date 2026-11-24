@@ -15,7 +15,7 @@ from stacks.networking_stack import NetworkingStack
 @pytest.fixture(autouse=True)
 def _offline_synth(monkeypatch):
     # Offline synth: allow the max_azs fallback instead of failing closed.
-    monkeypatch.setenv("FACTORY_SKIP_AZ_PINNING", "1")
+    monkeypatch.setenv("AGENTCORE_SKIP_AZ_PINNING", "1")
 
 
 def _synth(**kwargs):

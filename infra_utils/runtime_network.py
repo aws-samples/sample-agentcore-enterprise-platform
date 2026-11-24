@@ -16,7 +16,7 @@ import os
 
 # Set to 1 only for offline synths: a failed AZ lookup then keeps max_azs=2
 # instead of failing the synth.
-SKIP_AZ_PINNING_ENV = "FACTORY_SKIP_AZ_PINNING"
+SKIP_AZ_PINNING_ENV = "AGENTCORE_SKIP_AZ_PINNING"
 
 # AgentCore supports VPC connectivity only in specific Availability Zones, and
 # an AZ *name* (us-east-1a) maps to a different AZ *id* (use1-az1) in every
@@ -144,6 +144,7 @@ def resolve_vpc_zones(
     environ=None,
     warn=print,
     count: int = 2,
+    vpc_name: str = "",
 ) -> tuple[list[str] | None, dict[str, str]]:
     """AZ names to pin the VPC to, plus the account's name -> id mapping.
 
@@ -151,7 +152,10 @@ def resolve_vpc_zones(
     unknown region, or default zones that are already supported (so existing
     deployments synthesize an identical template). The caller account must
     match ``target_account``, otherwise the mapping would be another
-    account's. A failed lookup raises unless FACTORY_SKIP_AZ_PINNING=1.
+    account's. A failed lookup raises unless AGENTCORE_SKIP_AZ_PINNING=1.
+    When pinning applies and an existing VPC named ``vpc_name`` already has
+    subnets in unsupported zone ids, a warning tells the operator to destroy
+    and redeploy the networking stack (no automatic migration).
     """
     if region not in SUPPORTED_ZONE_IDS:
         return None, {}
@@ -199,7 +203,43 @@ def resolve_vpc_zones(
         return None, {}
     if default_zones_supported(region, name_to_id, count):
         return None, name_to_id
-    return select_supported_zone_names(region, name_to_id, count), name_to_id
+    chosen = select_supported_zone_names(region, name_to_id, count)
+    if vpc_name:
+        stale = lookup(
+            "inspect the existing VPC subnets (ec2 describe-subnets)",
+            lambda: existing_unsupported_zone_ids(
+                client_factory("ec2"), region, vpc_name
+            ),
+        )
+        if stale:
+            warn(
+                f"WARNING: existing VPC {vpc_name} has subnets in zone ids "
+                f"{', '.join(stale)}, which AgentCore VPC mode does not "
+                f"support. This synth moves the subnets to {', '.join(chosen)}; "
+                "CloudFormation cannot move them in place. Destroy the "
+                "networking stack (after any failed runtime/gateway stacks "
+                "that import its subnets) and deploy it again. It holds no "
+                "data and the runtime never started. See "
+                "docs/TROUBLESHOOTING.md. There is no automatic migration."
+            )
+    return chosen, name_to_id
+
+
+def existing_unsupported_zone_ids(ec2_client, region: str, vpc_name: str) -> list[str]:
+    """Unsupported zone ids used by subnets of the VPC tagged ``vpc_name``.
+
+    Returns [] when no such VPC exists (a fresh deployment).
+    """
+    vpcs = ec2_client.describe_vpcs(
+        Filters=[{"Name": "tag:Name", "Values": [vpc_name]}]
+    ).get("Vpcs", [])
+    if not vpcs:
+        return []
+    subnets = ec2_client.describe_subnets(
+        Filters=[{"Name": "vpc-id", "Values": [v["VpcId"] for v in vpcs]}]
+    ).get("Subnets", [])
+    zone_ids = [s["AvailabilityZoneId"] for s in subnets]
+    return sorted(set(unsupported_zone_ids(region, zone_ids)))
 
 
 def zone_name_to_id(ec2_client) -> dict[str, str]:
