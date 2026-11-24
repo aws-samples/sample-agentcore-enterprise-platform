@@ -41,6 +41,8 @@ from factory.reviewer import Review, build_review
 REPO = config.REPO
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 MAX_BODY = 5 * 1024 * 1024
+# Builds run in parallel now; this bounds how many factory PRs wait for a human at once.
+MAX_OPEN_FACTORY_PRS = int(os.environ.get("FACTORY_MAX_OPEN_PRS", "5"))
 # Issue-comment commands. Kept in step with ingress.py's own parser, which is only one of the
 # producers that reach validate(); the names are what handle_issue_command dispatches on.
 ISSUE_COMMANDS = {"pm", "dev", "ready", "approve", "reject"}
@@ -187,6 +189,14 @@ def validate(payload: dict) -> dict:
         ):
             raise ValueError("rulings must be a list of at most 50 objects")
         return {"id": "pm"}
+    if payload.get("role") in ("developer", "designer") and "task_gid" in payload:
+        gid = str(payload["task_gid"])
+        if not re.fullmatch(r"\d{1,20}", gid):
+            raise ValueError("task_gid must be a numeric board task id")
+        if payload.get("revise") not in (None, True, False):
+            raise ValueError("revise must be a boolean")
+        prefix = "design" if payload["role"] == "designer" else "task"
+        return {"id": f"{prefix}-{gid}"}
     if payload.get("role") == "developer":
         task = payload.get("task")
         if task is not None and not (
@@ -596,9 +606,10 @@ def handle_revision(
     session, token: str, open_prs: list[dict], payload: dict
 ) -> dict | None:
     """A follow-up commit on a factory PR for the comments on its task; None when there are none."""
-    pick = next_revision(
-        asana.load_snapshot(session)["tasks"], open_prs, attempted_tasks(session)
-    )
+    tasks = asana.load_snapshot(session)["tasks"]
+    if payload.get("task_gid"):
+        tasks = [t for t in tasks if str(t["gid"]) == str(payload["task_gid"])]
+    pick = next_revision(tasks, open_prs, attempted_tasks(session))
     if pick is None:
         return None
     t, pr_row, asks = pick
@@ -646,7 +657,27 @@ def handle_developer(payload: dict) -> dict:
     open_prs = github.open_factory_prs(REPO, token)
     taken = taken_tasks(open_prs, github.factory_task_branches(REPO, token))
     duplicate = None
-    if task is None and asana.enabled():
+    if task is None and asana.enabled() and payload.get("task_gid"):
+        # The planner named one task. A revision, or a build if it is (still) ready.
+        if payload.get("revise"):
+            rev = handle_revision(session, token, open_prs, payload)
+            return rev or {
+                "outcome": "skipped",
+                "reason": "no unanswered comment on an open PR",
+            }
+        ready = asana.in_section(asana.load_snapshot(session)["tasks"], asana.READY)
+        pick = [
+            t
+            for t in ready
+            if str(t["gid"]) == str(payload["task_gid"]) and asana.allowed(t)
+        ]
+        if not pick:
+            return {
+                "outcome": "skipped",
+                "reason": f"task {payload['task_gid']} is not ready for agent",
+            }
+        task = asana.developer_task(pick[0])
+    elif task is None and asana.enabled():
         ready = asana.in_section(asana.load_snapshot(session)["tasks"], asana.READY)
         mine = [t for t in ready if asana.allowed(t)]
         task = next_asana_task(mine, taken, attempted_tasks(session))
@@ -709,9 +740,14 @@ def handle_developer(payload: dict) -> dict:
             "duplicate_of": duplicate,
         }
     elif (
-        publish and sum(p["branch"].startswith("factory/task/") for p in open_prs) >= 2
+        publish
+        and sum(p["branch"].startswith("factory/task/") for p in open_prs)
+        >= MAX_OPEN_FACTORY_PRS
     ):
-        rec = {"outcome": "skipped", "reason": "2 agent PRs already open"}
+        rec = {
+            "outcome": "skipped",
+            "reason": f"{MAX_OPEN_FACTORY_PRS} agent PRs already open",
+        }
     else:
         rec = _safe(agent.execute)
         if publish and rec.get("outcome") == "branch_ready_dry_run":
@@ -747,7 +783,11 @@ def handle_design(payload: dict) -> dict:
     session = boto3.Session(region_name=REGION)
     todo = asana.in_section(asana.load_snapshot(session)["tasks"], asana.NEEDS_DESIGN)
     mine = [t for t in todo if asana.allowed(t)]
-    task = next_design(mine, attempted_designs(session))
+    if payload.get("task_gid"):  # the planner names the task; it must still qualify
+        mine = [t for t in mine if str(t["gid"]) == str(payload["task_gid"])]
+        task = mine[0] if mine else None
+    else:
+        task = next_design(mine, attempted_designs(session))
     if task is None:
         reason = (
             f"mover_not_allowed:{todo[0].get('moved_by') or 'unknown'}"
