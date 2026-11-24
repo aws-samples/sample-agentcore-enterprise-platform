@@ -104,7 +104,8 @@ def flatten(data: object, prefix: str = "") -> dict[str, object]:
         return out
     for name, value in data.items():
         key = f"{prefix}.{name}" if prefix else str(name)
-        if isinstance(value, dict) and value:
+        if isinstance(value, dict):
+            # An empty mapping (`security: {}`) sets nothing: its keys keep their defaults.
             out.update(flatten(value, key))
         else:
             out[key] = value
@@ -131,6 +132,8 @@ def _scalar(value: object) -> str:
         return "true" if value else "false"
     if value is None:
         return "null"
+    if value == "":
+        return '""'
     if isinstance(value, dict):
         if not value:
             return "{}"

@@ -20,13 +20,12 @@ Each posture tier maps to one preset: **workshop** is `presets/greenfield.yaml`,
 | **`observability.alarms`** | **— (default)** | **— (default)** | **`true`** |
 | **`observability.log_retention_days`** | **— (default)** | **— (default)** | **`90`** |
 | `observability.transaction_search` | `true` | `true` | `true` |
-| **`security`** | **`{}`** | **— (default)** | **— (default)** |
 | **`security.cedar.enabled`** | **— (default)** | **`true`** | **`true`** |
 | **`security.cedar.mode`** | **— (default)** | **`LOG_ONLY`** | **`ENFORCE`** |
 | **`security.cloudtrail_alerting`** | **— (default)** | **`true`** | **`true`** |
 | **`security.egress_filter`** | **— (default)** | **`true`** | **`true`** |
 | **`security.networking`** | **— (default)** | **`true`** | **`true`** |
-| **`security.org_id`** | **— (default)** | **``** | **`o-example1234`** |
+| **`security.org_id`** | **— (default)** | **`""`** | **`o-example1234`** |
 | **`security.require_guardrails`** | **— (default)** | **`true`** | **`true`** |
 | **`security.resource_policies`** | **— (default)** | **`true`** | **`true`** |
 | **`security.traceability`** | **— (default)** | **`true`** | **`true`** |
