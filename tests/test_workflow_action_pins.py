@@ -16,10 +16,47 @@ WORKFLOWS = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
 SHA = re.compile(r"^[0-9a-f]{40}$")
 PINNED_LINE = re.compile(r"uses:\s*([^@\s]+)@([0-9a-f]{40})\b(.*)$")
 
+# Mutable tag refs that predate this gate. Each still needs its commit SHA
+# resolved (git ls-remote) and pinned. This list may only shrink: a new tag
+# ref, or a pinned ref swapped back to a tag, fails the gate, and a ref that
+# gets pinned must be removed from here.
+KNOWN_UNPINNED = {
+    "ash-full-repository-scan.yml": {
+        "actions/checkout@v7",
+        "actions/setup-python@v7",
+        "actions/upload-artifact@v7",
+        "actions/github-script@v9",
+    },
+    "ash-security-comment.yml": {"actions/github-script@v9"},
+    "ash-security-scan.yml": {
+        "actions/checkout@v7",
+        "actions/setup-python@v7",
+        "actions/upload-artifact@v7",
+    },
+    "contract-parity.yml": {
+        "actions/checkout@v7",
+        "actions/setup-python@v7",
+        "actions/setup-node@v6",
+    },
+    "control-library.yml": {
+        "actions/checkout@v7",
+        "actions/setup-python@v7",
+        "hashicorp/setup-terraform@v4",
+    },
+    "label.yml": {"actions/labeler@v7"},
+    "python-lint.yml": {"actions/checkout@v7", "actions/setup-python@v7"},
+    "shell-checks.yml": {"actions/checkout@v7", "actions/setup-python@v7"},
+}
+
 
 def _uses(doc):
     for job in (doc.get("jobs") or {}).values():
-        for step in (job or {}).get("steps") or []:
+        if not isinstance(job, dict):
+            continue
+        # Job-level uses: reusable workflows (local or owner/repo/...@ref).
+        if "uses" in job:
+            yield str(job["uses"])
+        for step in job.get("steps") or []:
             if isinstance(step, dict) and "uses" in step:
                 yield str(step["uses"])
 
@@ -59,16 +96,35 @@ def test_same_action_uses_same_sha():
     assert not drift, drift
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="tag refs still need real SHAs resolved via git ls-remote",
-)
+def test_uses_includes_job_level_reusable_workflows():
+    doc = {
+        "jobs": {
+            "build": {"uses": "owner/repo/.github/workflows/build.yml@main"},
+            "lint": {"steps": [{"uses": "actions/checkout@v7"}, {"run": "true"}]},
+        }
+    }
+    assert list(_uses(doc)) == [
+        "owner/repo/.github/workflows/build.yml@main",
+        "actions/checkout@v7",
+    ]
+
+
+def test_known_unpinned_names_existing_workflows():
+    names = {p.name for p in WORKFLOWS}
+    missing = sorted(set(KNOWN_UNPINNED) - names)
+    assert not missing, missing
+
+
 @pytest.mark.parametrize("path", WORKFLOWS, ids=lambda p: p.name)
 def test_remote_actions_pinned_to_sha(path):
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-    unpinned = [
+    unpinned = {
         ref
         for ref in _uses(doc)
         if _remote(ref) and not SHA.match(ref.partition("@")[2])
-    ]
-    assert not unpinned, unpinned
+    }
+    allowed = KNOWN_UNPINNED.get(path.name, set())
+    new = sorted(unpinned - allowed)
+    assert not new, f"pin to a full 40-hex commit SHA: {new}"
+    stale = sorted(allowed - unpinned)
+    assert not stale, f"now pinned; remove from KNOWN_UNPINNED: {stale}"
