@@ -132,6 +132,8 @@ pip install -r requirements.txt
 # Pick a profile: writes platform.yaml, validates it, prints the stacks it produces
 ./scripts/deploy.sh design --profile greenfield
 # Other profiles: migration | multi-agent | platform-team | security-focused | production
+# Or compose the axes (posture wins for security:, journey owns agents:):
+#   ./scripts/deploy.sh design --journey migration --topology federated --posture hardened
 
 # Edit platform.yaml (accounts, IdP and identity.mode, framework, controls...)
 # and re-run `design` to re-validate. Every key: docs/PLATFORM_YAML.md
