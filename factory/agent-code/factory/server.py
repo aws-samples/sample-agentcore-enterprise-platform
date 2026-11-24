@@ -19,16 +19,18 @@ from pathlib import Path
 
 import boto3
 
-from factory import asana, ci_fixer, config, github, issues
+from factory import asana, ci_fixer, config, github, issues, untrusted
 from factory.ci_fixer import Run
 from factory.consult import Consult
 from factory.designer import Designer, attempted_designs, next_design
 from factory.developer import (
     Developer,
     MergeHandler,
+    Reviser,
     attempted_tasks,
     next_asana_task,
     next_task,
+    revision_requests,
     taken_tasks,
 )
 from factory.digest import Digest
@@ -369,6 +371,16 @@ def handle_bench(payload: dict) -> dict:
     return {**line, **{k: rec[k] for k in keys if rec.get(k)}}
 
 
+def as_own_pr(review: dict, pr: dict) -> dict:
+    """GitHub refuses REQUEST_CHANGES from the PR's own author, and the factory's App opens its
+    own PRs. There the verdict becomes a COMMENT that says so at the top, so it is still seen."""
+    user = pr.get("user") or {}
+    if review.get("event") != "REQUEST_CHANGES" or user.get("type") != "Bot":
+        return review
+    head = "**Changes requested** (posted as a comment: GitHub does not let an app request changes on its own PR)."
+    return {**review, "event": "COMMENT", "body": f"{head}\n\n{review.get('body', '')}"}
+
+
 def handle_review(payload: dict) -> dict:
     """Review a PR from its diff only. Dry run unless FACTORY_REVIEW_PUBLISH=true."""
     if "bench" in payload:
@@ -406,9 +418,10 @@ def handle_review(payload: dict) -> dict:
         try:
             rec = agent.execute()
             if token and REVIEW_PUBLISH and rec["outcome"] == "reviewed_dry_run":
+                review = as_own_pr(rec["review"], pr)
                 rec.update(
                     outcome="review_posted",
-                    pr_url=github.post_review(REPO, number, token, rec["review"]),
+                    pr_url=github.post_review(REPO, number, token, review),
                 )
         except Exception as e:  # noqa: BLE001 - every failure must still produce a run row
             traceback.print_exc()
@@ -566,6 +579,66 @@ def handle_pm(payload: dict) -> dict:
     )
 
 
+def next_revision(tasks: list[dict], open_prs: list[dict], tried: dict) -> tuple | None:
+    """(task, pr, requests) for the task in review with the oldest unanswered maintainer comment."""
+    best = None
+    for t in asana.in_section(tasks, asana.IN_REVIEW):
+        pr = next(
+            (p for p in open_prs if p["branch"] == f"factory/task/{t['gid']}"), None
+        )
+        asks = revision_requests(t, tried.get(str(t["gid"]), "")) if pr else []
+        if asks and (best is None or asana.work_order(t) < asana.work_order(best[0])):
+            best = (t, pr, asks)
+    return best
+
+
+def handle_revision(
+    session, token: str, open_prs: list[dict], payload: dict
+) -> dict | None:
+    """A follow-up commit on a factory PR for the comments on its task; None when there are none."""
+    pick = next_revision(
+        asana.load_snapshot(session)["tasks"], open_prs, attempted_tasks(session)
+    )
+    if pick is None:
+        return None
+    t, pr_row, asks = pick
+    full = github.get_pull(REPO, int(pr_row["number"]), token)
+    reviews = [
+        untrusted.clean(str(r.get("body") or ""), 4000, tail=False)
+        for r in github.request(
+            "GET", f"/repos/{REPO}/pulls/{pr_row['number']}/reviews", token
+        )[-3:]
+        if r.get("body")
+    ]
+    pr = {
+        "number": pr_row["number"],
+        "head_sha": full["head"]["sha"],
+        "files": pr_row["files"],
+        "url": full["html_url"],
+    }
+    publish = bool(DEV_PUBLISH and token and not payload.get("dry_run"))
+    task = asana.developer_task(t)
+    tracker = asana.Board(
+        session, "developer", f"task-{t['gid']}-{int(time.time())}", publish
+    )
+    work = Path("/tmp/factory") / f"task-{t['gid']}"
+    agent = Reviser(task, pr, asks, reviews, clone(work), work, REGION, REPO, tracker)
+    rec = _safe(agent.execute)
+    if publish and rec.get("outcome") == "revision_ready_dry_run":
+        rec.update(_safe(lambda: agent.ship(token)))
+    rec["issue_ops"] = tracker.ops
+    keys = (
+        "checks",
+        "pr_title",
+        "pr_body",
+        "pr_url",
+        "files_changed",
+        "refused",
+        "issue_ops",
+    )
+    return _finish(agent, rec, not publish, keys)
+
+
 def handle_developer(payload: dict) -> dict:
     token = _github_token()
     session = boto3.Session(region_name=REGION)
@@ -602,6 +675,14 @@ def handle_developer(payload: dict) -> dict:
             ),
             None,
         )
+    # Nothing new to build: a maintainer's comment on a task in review is the next job.
+    if (
+        task is None
+        and asana.enabled()
+        and not payload.get("task")
+        and (rev := handle_revision(session, token, open_prs, payload)) is not None
+    ):
+        return rev
     if task is None:
         where = (
             f"Asana task in {asana.READY!r}"

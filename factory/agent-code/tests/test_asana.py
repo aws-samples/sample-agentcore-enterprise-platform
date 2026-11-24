@@ -422,3 +422,44 @@ def test_an_in_repo_branch_reaches_the_board_and_a_fork_needs_write_access(monke
         _pr("someone/fork", "someone"), "tok", False, "merge_handler", asana.DONE, "x"
     )
     assert out["board"] == "skipped" and seen == ["someone"]
+
+
+# --- revisions from comments on a task in review ----------------------------------------------
+
+
+def test_only_maintainer_comments_after_the_last_run_ask_for_a_revision():
+    from factory.developer import revision_requests
+
+    t = task(
+        "900010",
+        section=asana.IN_REVIEW,
+        comments=[
+            {"by": ME, "at": "2026-11-24T10:00:00+00:00", "text": "old request"},
+            {
+                "by": TEAMMATE,
+                "at": "2026-11-24T12:00:00+00:00",
+                "text": "not allowlisted",
+            },
+            {
+                "by": ME,
+                "at": "2026-11-24T12:05:00+00:00",
+                "text": f"{asana.MARKER} Developer agent: PR",
+            },
+            {"by": ME, "at": "2026-11-24T12:10:00+00:00", "text": "rename the helper"},
+        ],
+    )
+    assert revision_requests(t, "2026-11-24T11:00:00+00:00") == ["rename the helper"]
+    assert revision_requests(t, "2026-11-24T12:30:00+00:00") == []
+
+
+def test_a_revision_needs_an_open_factory_pr_and_a_new_comment():
+    ask = [{"by": ME, "at": "2026-11-24T12:10:00+00:00", "text": "rename it"}]
+    with_pr = task("900011", section=asana.IN_REVIEW, comments=ask)
+    no_pr = task("900012", section=asana.IN_REVIEW, comments=ask)
+    prs = [{"number": 7, "branch": "factory/task/900011", "files": ["a.py"]}]
+    t, pr, asks = server.next_revision([no_pr, with_pr], prs, {})
+    assert t["gid"] == "900011" and pr["number"] == 7 and asks == ["rename it"]
+    assert (
+        server.next_revision([with_pr], prs, {"900011": "2026-11-24T13:00:00+00:00"})
+        is None
+    )

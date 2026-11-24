@@ -134,3 +134,10 @@ def test_post_sends_the_text_field():
 
     notifier.post("https://hooks.slack.com/x", "hi", opener=opener)
     assert seen["body"] == {"text": "hi"}
+
+
+def test_a_pushed_revision_is_announced():
+    text, _ = notifier.message(
+        notifier.row_of(rec(agent="developer", outcome="revision_pushed")), P
+    )
+    assert "Revision pushed" in text

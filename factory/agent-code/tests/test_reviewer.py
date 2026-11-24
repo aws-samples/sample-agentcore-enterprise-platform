@@ -2,8 +2,9 @@
 
 from pathlib import Path
 
-from factory import reviewer
 from factory.reviewer import build_review, parse_diff, render
+
+from factory import reviewer
 
 DIFF = """diff --git a/app.py b/app.py
 index 1..2 100644
@@ -201,7 +202,6 @@ def test_astra_only_for_the_named_risk_areas():
 
 def test_publish_payload_is_validated():
     import pytest
-
     from factory.server import validate
 
     ok = {
@@ -514,3 +514,15 @@ def test_body_verdict_line_never_contradicts_the_event():
         "REQUEST_CHANGES",
     )
     assert line_and_event([], "changes needed") == ("no findings", "COMMENT")
+
+
+def test_changes_on_the_factory_s_own_pr_are_posted_as_a_comment():
+    from factory.server import as_own_pr
+
+    review = {"event": "REQUEST_CHANGES", "body": "b", "comments": []}
+    own = as_own_pr(
+        review, {"user": {"login": "robobc-software-factory[bot]", "type": "Bot"}}
+    )
+    assert own["event"] == "COMMENT" and own["body"].startswith("**Changes requested**")
+    human = as_own_pr(review, {"user": {"login": "someone", "type": "User"}})
+    assert human["event"] == "REQUEST_CHANGES"

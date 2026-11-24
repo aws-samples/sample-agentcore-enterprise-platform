@@ -29,6 +29,11 @@ EVENTS = {
     ("developer", "pr_opened"): (":rocket:", "PR opened"),
     ("developer", "checks_failed"): (":x:", "The developer's change failed the checks"),
     ("developer", "needs_scoping"): (":thinking_face:", "The developer needs scoping"),
+    ("developer", "revision_pushed"): (":repeat:", "Revision pushed for your comments"),
+    ("developer", "revision_failed"): (
+        ":x:",
+        "The developer could not address your comments",
+    ),
     ("pr_reviewer", "review_posted"): (":mag:", "Review posted"),
     ("ci_fixer", "fix_pr_opened"): (":wrench:", "CI fix PR opened"),
     ("merge_handler", "merged_recorded"): (":white_check_mark:", "Merged"),

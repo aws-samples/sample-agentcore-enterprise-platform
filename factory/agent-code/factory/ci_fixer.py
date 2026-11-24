@@ -470,6 +470,28 @@ class Run:
             self.ruff = str(target / "bin" / "ruff")
         return version or "bundled"
 
+    def push(self, token: str) -> str:
+        """Push HEAD to self.branch, never forced. Returns '' or git's error."""
+        # Token via env, never argv or .git/config, and only for github.com.
+        basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+        env = {
+            "PATH": os.environ["PATH"],
+            "HOME": os.environ.get("HOME", "/tmp"),
+            "GIT_TERMINAL_PROMPT": "0",
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+            "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {basic}",
+        }
+        push = subprocess.run(
+            ["git", "push", "origin", f"HEAD:refs/heads/{self.branch}"],
+            cwd=self.wt,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return push.stderr.strip()[-300:] if push.returncode else ""
+
     def publish(self, token: str) -> dict:
         """Push the verified fix as factory/ci-fix/<run_id> and open a PR into the base branch."""
         from factory import github
@@ -498,29 +520,8 @@ class Run:
                     "outcome": "no_fix",
                     "reason": f"verified fix does not apply cleanly to {BASE_BRANCH}",
                 }
-        # Token via env, never argv or .git/config, and only for github.com.
-        basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
-        env = {
-            "PATH": os.environ["PATH"],
-            "HOME": os.environ.get("HOME", "/tmp"),
-            "GIT_TERMINAL_PROMPT": "0",
-            "GIT_CONFIG_COUNT": "1",
-            "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
-            "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {basic}",
-        }
-        push = subprocess.run(
-            ["git", "push", "origin", f"HEAD:refs/heads/{self.branch}"],
-            cwd=self.wt,
-            env=env,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if push.returncode:
-            return {
-                "outcome": "no_fix",
-                "reason": f"push refused: {push.stderr.strip()[-300:]}",
-            }
+        if err := self.push(token):
+            return {"outcome": "no_fix", "reason": f"push refused: {err}"}
         repo = self.run["repository"]["full_name"]
         url = github.open_pull_request(
             repo, token, self.branch, BASE_BRANCH, self.pr["title"], self.pr["body"]
