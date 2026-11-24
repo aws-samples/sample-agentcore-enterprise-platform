@@ -13,6 +13,7 @@ import os
 import shutil
 import subprocess  # nosec B404 — running our own scripts, no shell
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,14 @@ SCRIPT = REPO / "scripts" / "usecase.py"
 _spec = importlib.util.spec_from_file_location("usecase", SCRIPT)
 usecase = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(usecase)
+
+
+@pytest.fixture
+def tmp_path():
+    # Repo-local scratch dir: the system temp dir may be unavailable.
+    path = Path(tempfile.mkdtemp(prefix=".tmp-", dir=Path(__file__).resolve().parent))
+    yield path
+    shutil.rmtree(path, ignore_errors=True)
 
 
 @pytest.fixture

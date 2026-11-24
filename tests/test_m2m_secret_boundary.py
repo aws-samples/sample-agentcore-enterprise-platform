@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 import json
+import shutil
+import tempfile
 from pathlib import Path
 
 import aws_cdk as cdk
+import pytest
 
 from stacks.auth_stack import AuthStack
 from stacks.identity_stack import IdentityStack
+
+
+@pytest.fixture
+def tmp_path():
+    # Repo-local scratch dir: the system temp dir may be unavailable.
+    path = Path(tempfile.mkdtemp(prefix=".tmp-", dir=Path(__file__).resolve().parent))
+    yield path
+    shutil.rmtree(path, ignore_errors=True)
 
 
 def _synthesized_templates(tmp_path, *, retain_legacy_export=False):

@@ -1,6 +1,9 @@
 """Unit tests for infra_utils.policy_loader."""
 
 import json
+import shutil
+import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -10,6 +13,15 @@ from infra_utils.policy_loader import (
     load_control_json,
     load_control_text,
 )
+
+
+@pytest.fixture
+def tmp_path():
+    # Repo-local scratch dir: the system temp dir may be unavailable.
+    path = Path(tempfile.mkdtemp(prefix=".tmp-", dir=Path(__file__).resolve().parent))
+    yield path
+    shutil.rmtree(path, ignore_errors=True)
+
 
 # ── Against the real control-library ──
 

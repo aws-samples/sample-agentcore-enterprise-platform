@@ -19,6 +19,7 @@ platform.yaml is optional — every existing flag keeps working without it.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import ipaddress
 import json
@@ -26,7 +27,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -86,6 +87,352 @@ def placeholders_allowed() -> bool:
 def _refuse_placeholders(messages: list[str]) -> None:
     if messages and not placeholders_allowed():
         raise ValueError("\n".join(messages))
+
+
+# ── Layered presets: journey x topology x posture ──
+# The eight flat presets bundle three independent choices. These layers are
+# those choices factored apart; presets/*.yaml stay as golden references and
+# tests/test_preset_layers.py proves every shortcut composes to the same
+# design. Merge rules: layers apply journey -> topology -> posture; mappings
+# merge recursively, scalars and lists are replaced by the later layer, so
+# posture wins for security:. The agents: subtree is owned by the journey:
+# a later layer may only fill agents keys the journey leaves unset, never
+# change one. Shortcut overlays apply last and may set any key.
+_ENTRA_PLACEHOLDER_IDENTITY = {
+    "idp": "entra_id",
+    "tenant_id": "00000000-0000-0000-0000-000000000000",
+    "client_id": "REPLACE_ME",
+    "client_secret_name": "agentcore/idp-client-secret",  # pragma: allowlist secret
+}
+
+
+def _journey(agents: dict, **extra: object) -> dict:
+    layer: dict = {
+        "project": "agentcore-workshop",
+        "environment": "dev",
+        "region": "us-east-1",
+        "identity": {"idp": "cognito"},
+        "agents": agents,
+        "gateway": {"web_search": "auto", "tools": ["sample-tool"]},
+        "security": {},
+        "observability": {"transaction_search": True},
+    }
+    layer.update(extra)
+    return layer
+
+
+JOURNEYS: dict[str, dict] = {
+    "greenfield": _journey({"pattern": "orchestrator"}),
+    "migration": _journey(
+        {"pattern": "langgraph-agent"},
+        deployment={"platform_account": "000000000000"},
+        identity=dict(_ENTRA_PLACEHOLDER_IDENTITY),
+        migration={
+            "source": {
+                "platform": "openshift",
+                "build": {
+                    "context": "./migration/simulation/existing-ec2-agent",
+                    "dockerfile": "Dockerfile",
+                },
+                "port": 8000,
+                "invoke_path": "/run",
+                "health_path": "/healthz",
+                "trigger": "webhook",
+                "env": {},
+                "secrets": ["JIRA_TOKEN", "GIT_TOKEN"],
+            },
+            "target": {"runtime": "agentcore", "mode": "adapter"},
+            "network": {"private_dependencies": [], "connectivity": "none"},
+            "stages": {
+                "runtime": {},
+                "data": {"strategy": "none"},
+                "triggers": {"strategy": "none"},
+                "traffic": {"strategy": "none"},
+            },
+        },
+    ),
+    "multi-agent": _journey(
+        {
+            "pattern": "claude-sdk-multi-agent",
+            "a2a": True,
+            "memory": {"long_term": True, "top_k": 10, "relevance_score": 0.3},
+        }
+    ),
+}
+
+TOPOLOGIES: dict[str, dict] = {
+    "centralized": {"deployment": {"strategy": "centralized"}},
+    "distributed": {"deployment": {"strategy": "distributed"}},
+    "federated": {
+        "deployment": {
+            "strategy": "federated",
+            "platform_account": "000000000000",
+            "workload_accounts": ["123456789012"],
+            "federation": {
+                "gateway_url": (
+                    "https://REPLACE_ME.gateway.bedrock-agentcore"
+                    ".us-east-1.amazonaws.com/mcp"
+                ),
+                "issuer_url": (
+                    "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_REPLACEME"
+                ),
+                "m2m_client_id": "REPLACE_ME",
+                "m2m_client_secret_name": "agentcore/platform-m2m",  # pragma: allowlist secret
+            },
+        }
+    },
+}
+
+POSTURES: dict[str, dict] = {
+    "dev": {"deployment": {"mode": "workshop"}},
+    "hardened": {
+        "security": {
+            "networking": True,
+            "cloudtrail_alerting": True,
+            "traceability": True,
+        },
+        "observability": {"alarms": True},
+    },
+    "production": {
+        "project": "agentcore-production",
+        "environment": "prod",
+        "deployment": {"mode": "production", "platform_account": "000000000000"},
+        "identity": {**_ENTRA_PLACEHOLDER_IDENTITY, "mode": "brokered"},
+        "agents": {
+            "model_id": "us.anthropic.claude-sonnet-4-6",
+            "allowed_models": ["us.anthropic.claude-sonnet-4-6"],
+            "memory": {"event_expiry_days": 30},
+        },
+        "gateway": {"web_search": "off"},
+        "security": {
+            "networking": True,
+            "cloudtrail_alerting": True,
+            "resource_policies": True,
+            "egress_filter": True,
+            "require_guardrails": True,
+            "cedar": {"enabled": True, "mode": "ENFORCE"},
+            "traceability": True,
+            "org_id": "o-example1234",
+        },
+        "observability": {
+            "alarms": True,
+            "alarm_email": "ops@REPLACE_ME.invalid",
+            "log_retention_days": 90,
+        },
+    },
+}
+
+# The eight flat preset names, each a journey x topology x posture plus a
+# small overlay for the keys that are not a pure product of the axes.
+SHORTCUTS: dict[str, dict] = {
+    "greenfield": {
+        "journey": "greenfield",
+        "topology": "centralized",
+        "posture": "dev",
+    },
+    "migration": {"journey": "migration", "topology": "centralized", "posture": "dev"},
+    "multi-agent": {
+        "journey": "multi-agent",
+        "topology": "centralized",
+        "posture": "dev",
+    },
+    "distributed": {
+        "journey": "greenfield",
+        "topology": "distributed",
+        "posture": "dev",
+    },
+    "federated": {
+        "journey": "greenfield",
+        "topology": "federated",
+        "posture": "dev",
+        "overlay": {
+            "identity": dict(_ENTRA_PLACEHOLDER_IDENTITY),
+            "agents": {"pattern": "strands-agent"},
+        },
+    },
+    "platform-team": {
+        "journey": "greenfield",
+        "topology": "distributed",
+        "posture": "hardened",
+        "overlay": {"agents": {"a2a": True, "memory": {"long_term": True}}},
+    },
+    "security-focused": {
+        "journey": "greenfield",
+        "topology": "centralized",
+        "posture": "hardened",
+        "overlay": {
+            "agents": {
+                "model_id": "us.anthropic.claude-sonnet-4-6",
+                "allowed_models": ["us.anthropic.claude-sonnet-4-6"],
+            },
+            "security": {
+                "resource_policies": True,
+                "egress_filter": True,
+                "require_guardrails": True,
+                "cedar": {"enabled": True, "mode": "LOG_ONLY"},
+                "org_id": "",
+            },
+            "observability": {"alarms": False},
+        },
+    },
+    "production": {
+        "journey": "greenfield",
+        "topology": "centralized",
+        "posture": "production",
+        "overlay": {"agents": {"pattern": "strands-agent"}},
+    },
+}
+
+# Partial combinations (any subset of journey/topology/posture/runner) that
+# are refused outright, each with the reason shown to the user.
+REFUSE: list[dict] = [
+    {
+        "when": {"posture": "production", "runner": "workshop"},
+        "reason": (
+            "the production profile is design/build only and refuses the "
+            "guided workshop runner"
+        ),
+    },
+    {
+        "when": {"journey": "multi-agent", "posture": "production"},
+        "reason": (
+            "the multi-agent journey uses a claude-sdk-* pattern, which cannot "
+            "attach the Bedrock Guardrail the production posture requires"
+        ),
+    },
+]
+
+
+def _deep_merge(base: dict, over: dict, *, keep_existing: bool = False) -> dict:
+    """Recursive mapping merge; scalars and lists from ``over`` replace.
+
+    With ``keep_existing`` a key already set in ``base`` is never replaced,
+    only missing keys are filled (how the journey owns agents:).
+    """
+    out = copy.deepcopy(base)
+    for key, value in over.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_merge(out[key], value, keep_existing=keep_existing)
+        elif keep_existing and key in out:
+            continue
+        else:
+            out[key] = copy.deepcopy(value)
+    return out
+
+
+def _merge_layers(layers: list[dict]) -> dict:
+    doc = copy.deepcopy(layers[0])
+    for layer in layers[1:]:
+        rest = {k: v for k, v in layer.items() if k != "agents"}
+        doc = _deep_merge(doc, rest)
+        if "agents" in layer:
+            doc["agents"] = _deep_merge(
+                doc.get("agents", {}), layer["agents"], keep_existing=True
+            )
+    return doc
+
+
+def _layer(kind: str, table: dict[str, dict], name: str) -> dict:
+    if name not in table:
+        raise ValueError(
+            f"unknown {kind} layer {name!r}; choose one of: {', '.join(table)}"
+        )
+    return table[name]
+
+
+def refusal_reason(**choice: str | None) -> str | None:
+    """The reason of the first REFUSE entry the choice matches, else None."""
+    for entry in REFUSE:
+        if all(choice.get(k) == v for k, v in entry["when"].items()):
+            return entry["reason"]
+    return None
+
+
+def _compose(
+    journey: str,
+    topology: str,
+    posture: str,
+    region: str | None,
+    runner: str | None,
+    overlay: dict | None,
+) -> dict:
+    layers = [
+        _layer("journey", JOURNEYS, journey),
+        _layer("topology", TOPOLOGIES, topology),
+        _layer("posture", POSTURES, posture),
+    ]
+    reason = refusal_reason(
+        journey=journey, topology=topology, posture=posture, runner=runner
+    )
+    if reason:
+        combo = f"journey={journey} topology={topology} posture={posture}"
+        if runner:
+            combo += f" runner={runner}"
+        raise ValueError(f"refused ({combo}): {reason}")
+    doc = _merge_layers(layers)
+    if overlay:
+        doc = _deep_merge(doc, overlay)
+    if region:
+        doc["region"] = region
+    return doc
+
+
+def compose_layers(
+    journey: str,
+    topology: str,
+    posture: str,
+    region: str | None = None,
+    runner: str | None = None,
+) -> dict:
+    """Compose one platform.yaml document from the three preset layers.
+
+    Raises ValueError naming an unknown layer or the matched refusal reason.
+    The result is unvalidated: run it through validate_composed (or write it
+    and let `deploy.sh design` validate it as today).
+    """
+    return _compose(journey, topology, posture, region, runner, None)
+
+
+def resolve_shortcut(
+    name: str, region: str | None = None, runner: str | None = None
+) -> dict:
+    """Compose the design one of the eight legacy preset names stands for."""
+    if name not in SHORTCUTS:
+        raise ValueError(
+            f"unknown shortcut {name!r}; choose one of: {', '.join(SHORTCUTS)}"
+        )
+    s = SHORTCUTS[name]
+    return _compose(
+        s["journey"], s["topology"], s["posture"], region, runner, s.get("overlay")
+    )
+
+
+def validate_composed(doc: dict) -> PlatformConfig:
+    """The same model validation every platform.yaml goes through."""
+    return PlatformConfig.model_validate(doc)
+
+
+def compose_cli(argv: list[str]) -> int:
+    """deploy.sh entry: PATH JOURNEY TOPOLOGY POSTURE [REGION] -> platform.yaml."""
+    path, journey, topology, posture, *rest = argv
+    region = rest[0] if rest else ""
+    try:
+        doc = compose_layers(journey, topology, posture, region=region or None)
+    except ValueError as exc:
+        print(exc)
+        return 1
+    header = (
+        f"# Generated from presets/ layers by deploy.sh (journey={journey}, "
+        f"topology={topology}, posture={posture}).\n"
+        "# Safe to edit; this header only marks that design may regenerate "
+        "the file.\n"
+    )
+    Path(path).write_text(header + yaml.safe_dump(doc, sort_keys=False))
+    print(
+        f"Layers journey={journey} topology={topology} posture={posture} "
+        f"materialized as {path}"
+    )
+    return 0
 
 
 class FederationConfig(BaseModel):
@@ -702,7 +1049,7 @@ class MigrationGate(BaseModel):
             raise ValueError(
                 "approved_at must include a UTC offset, for example +00:00"
             )
-        if self.approved_at > datetime.now(timezone.utc) + timedelta(minutes=5):
+        if self.approved_at > datetime.now(UTC) + timedelta(minutes=5):
             raise ValueError("approved_at cannot be in the future")
         assert self.expires_at is not None
         if self.expires_at.tzinfo is None:
@@ -732,9 +1079,7 @@ class MigrationGate(BaseModel):
     @property
     def blockers(self) -> list[str]:
         blockers = self._missing_fields()
-        if self.expires_at is not None and self.expires_at <= datetime.now(
-            timezone.utc
-        ):
+        if self.expires_at is not None and self.expires_at <= datetime.now(UTC):
             blockers.append("approval expired")
         return blockers
 

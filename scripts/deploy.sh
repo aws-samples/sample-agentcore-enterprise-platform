@@ -37,6 +37,7 @@ fi
 #   ./deploy.sh migrate data plan|readiness
 #   ./deploy.sh migrate cutover plan|readiness
 #   ./deploy.sh design [--profile PROFILE]    # Design: manifest + plan, nothing deployed
+#   ./deploy.sh design --journey J --topology T --posture P [--region R]
 #   ./deploy.sh build                          # Build:  = deploy
 #   ./deploy.sh usecase new NAME | list        # Build:  scaffold a use case
 #
@@ -143,6 +144,29 @@ materialize_preset() {
     log_info "Profile '$profile' materialized as platform.yaml (the deployment manifest)"
 }
 
+# Layered design: compose presets journey x topology x posture into
+# platform.yaml (infra_utils.platform_config.compose_layers). Validation is
+# the normal design path that runs right after.
+materialize_layers() {
+    local dst="$PLATFORM_CONFIG" py="$PROJECT_DIR/.venv/bin/python" out
+    [ -x "$py" ] || py="python3"
+    if [ -f "$dst" ] && ! head -1 "$dst" | grep -q "^$MATERIALIZE_HEADER"; then
+        if [ "${PRESCAN_YES:-0}" != "1" ]; then
+            log_error "platform.yaml exists and was not generated from a preset."
+            log_error "Refusing to overwrite a hand-edited manifest with layered presets."
+            log_error "Drop the layer flags (the file already IS the config), or re-run with --yes."
+            exit 1
+        fi
+        log_warn "Overwriting hand-edited platform.yaml with layered presets (--yes)."
+    fi
+    if ! out=$(cd "$PROJECT_DIR" && "$py" -c 'import sys; from infra_utils.platform_config import compose_cli; sys.exit(compose_cli(sys.argv[1:]))' "$dst" "$1" "$2" "$3" "${4:-}" 2>&1); then
+        log_error "Cannot compose platform.yaml from layers:"
+        echo "$out" | sed 's/^/    /' >&2
+        exit 1
+    fi
+    log_info "$out"
+}
+
 # Pre-scan argv: materialization must precede apply_platform_config below so
 # the manifest it writes participates with the right precedence. Skipped for
 # the config/doctor actions and for --dry-run (read-only commands must not
@@ -157,6 +181,42 @@ for _a in "$@"; do
     esac
     _prev="$_a"
 done
+
+# --journey/--topology/--posture [--region]: consumed here and stripped from
+# argv so the design parser below sees only the flags it already knows.
+PRESCAN_JOURNEY=""; PRESCAN_TOPOLOGY=""; PRESCAN_POSTURE=""; PRESCAN_REGION=""
+_rest=(); _prev=""
+for _a in "$@"; do
+    case "$_prev" in
+        --journey)  PRESCAN_JOURNEY="$_a";  _prev=""; continue ;;
+        --topology) PRESCAN_TOPOLOGY="$_a"; _prev=""; continue ;;
+        --posture)  PRESCAN_POSTURE="$_a";  _prev=""; continue ;;
+        --region)   PRESCAN_REGION="$_a";   _prev=""; continue ;;
+    esac
+    case "$_a" in
+        --journey|--topology|--posture|--region) _prev="$_a"; continue ;;
+    esac
+    _rest+=("$_a"); _prev=""
+done
+if [ -n "${PRESCAN_JOURNEY}${PRESCAN_TOPOLOGY}${PRESCAN_POSTURE}" ]; then
+    if [ "${1:-}" != "design" ]; then
+        log_error "--journey/--topology/--posture are options of the design subcommand."
+        exit 1
+    fi
+    if [ -z "$PRESCAN_JOURNEY" ] || [ -z "$PRESCAN_TOPOLOGY" ] || [ -z "$PRESCAN_POSTURE" ]; then
+        log_error "--journey, --topology and --posture are required together."
+        exit 1
+    fi
+    if [ -n "$PRESCAN_PROFILE" ]; then
+        log_error "--profile cannot be combined with --journey/--topology/--posture."
+        exit 1
+    fi
+    if [ "$PRESCAN_DRY" != "1" ]; then
+        materialize_layers "$PRESCAN_JOURNEY" "$PRESCAN_TOPOLOGY" "$PRESCAN_POSTURE" "$PRESCAN_REGION"
+    fi
+    set -- "${_rest[@]}"
+fi
+
 if [ -n "$PRESCAN_PROFILE" ] \
     && [ "${1:-}" != "config" ] \
     && [ "${1:-}" != "doctor" ] \
