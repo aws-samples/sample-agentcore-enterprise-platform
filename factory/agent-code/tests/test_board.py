@@ -309,3 +309,30 @@ def test_tracker_dry_run_records_and_never_calls_github(monkeypatch):
     assert (method, path) == ("POST", "/repos/o/r/issues") and issues.MARKER in body[
         "body"
     ]
+
+
+def test_failing_detail_reruns_new_pytest_failures_with_tracebacks(tmp_path):
+    from types import SimpleNamespace
+
+    from factory.developer import Developer
+
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_x.py").write_text(
+        "def test_old():\n    assert False\n\n"
+        "def test_new():\n    assert ['infra_utils/a.py: imports stacks'] == []\n"
+    )
+    dev = SimpleNamespace(wt=tmp_path, work=tmp_path, lint_detail="lint says no")
+    head = {
+        "pytest": (
+            1,
+            "FAILED tests/test_x.py::test_old\nFAILED tests/test_x.py::test_new\n",
+        ),
+        "lint-cicd": (1, ""),
+    }
+    base = {"pytest": (1, "FAILED tests/test_x.py::test_old\n"), "lint-cicd": (1, "")}
+    results = {"pytest": "FAIL new: [...]", "lint-cicd": "FAIL", "cdk synth": "pass"}
+    out = Developer.failing_detail(dev, head, base, results)
+    assert set(out) == {"pytest", "lint-cicd"}
+    assert "imports stacks" in out["pytest"]
+    assert "test_old" not in out["pytest"]
+    assert out["lint-cicd"] == "lint says no"

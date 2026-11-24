@@ -175,6 +175,38 @@ class Developer(Run):
             or wt.name == "base-wt"
         )
 
+    def failing_detail(self, head: dict, base: dict, results: dict) -> dict[str, str]:
+        """What the model sees per red check. For pytest, the new failures re-run alone with
+        tracebacks: the tail of a full-suite run is mostly other tests' FAILED lines."""
+        out = {}
+        for k, v in results.items():
+            if v.startswith("pass"):
+                continue
+            if k == "lint-cicd":
+                out[k] = self.lint_detail
+                continue
+            new = new_failures(head[k][1], base[k][1])[:5]
+            if new and (k == "pytest" or k.startswith("accept: ")):
+                r = sh(
+                    [
+                        tool("python3"),
+                        "-m",
+                        "pytest",
+                        *new,
+                        "-q",
+                        "--tb=short",
+                        "-p",
+                        "no:cacheprovider",
+                        f"--basetemp={self.work / 'pytest' / 'detail'}",
+                    ],
+                    self.wt,
+                    self.work,
+                )
+                out[k] = r.stdout[-3000:]
+            else:
+                out[k] = head[k][1][-3000:]
+        return out
+
     def verdict(
         self, head: dict, base: dict, changed_py: list[str]
     ) -> tuple[bool, dict]:
@@ -372,11 +404,7 @@ class Developer(Run):
                 rec.update(attempts=attempt, checks=results)
                 if passed:
                     break
-                failing = {
-                    k: (self.lint_detail if k == "lint-cicd" else head[k][1][-3000:])
-                    for k, v in results.items()
-                    if not v.startswith("pass")
-                }
+                failing = self.failing_detail(head, base, results)
                 widened = self.widen_scope(failing)
                 feedback = (
                     f"\nPrevious attempt failed these checks:\n{json.dumps(failing)}\nFix them; files above are current."
@@ -562,11 +590,7 @@ class Reviser(Developer):
                 rec.update(attempts=attempt, checks=results)
                 if passed:
                     break
-                failing = {
-                    k: (self.lint_detail if k == "lint-cicd" else head[k][1][-3000:])
-                    for k, v in results.items()
-                    if not v.startswith("pass")
-                }
+                failing = self.failing_detail(head, base, results)
                 widened = self.widen_scope(failing)
                 feedback = (
                     f"\nPrevious attempt failed these checks:\n{json.dumps(failing)}\nFix them; files above are current."
