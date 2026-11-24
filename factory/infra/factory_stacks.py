@@ -951,6 +951,9 @@ class SoftwareFactoryStack(cdk.Stack):
                 "FACTORY_ASANA_SNAPSHOT_TABLE": data.asana_snapshot.table_name,
                 "WORKLOAD_NAME": workload_name,
                 "RETURN_URL": return_url,
+                # Must match the scopes the one-time consent asked for (asana_identity_setup).
+                "FACTORY_ASANA_SCOPES": self.node.try_get_context("asana_scopes")
+                or "projects:read tasks:read tasks:write stories:read stories:write",
                 "FACTORY_ASANA_PROVIDER": provider,
             },
             log_group=self._log_group(

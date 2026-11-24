@@ -77,11 +77,18 @@ def main() -> int:
         help="the provider exists; only (re)do the consent",
     )
     p.add_argument(
+        "--scopes",
+        default=" ".join(s.SCOPES),
+        help="space-separated; 'default' if the Asana app has full permissions. "
+        "The stack's -c asana_scopes must match.",
+    )
+    p.add_argument(
         "--reconsent",
         action="store_true",
         help="ask Asana for consent even if a token exists",
     )
     args = p.parse_args()
+    s.SCOPES[:] = args.scopes.split()
 
     session = boto3.Session(profile_name=args.profile, region_name=args.region)
     ctl, dp = (
@@ -121,9 +128,7 @@ def main() -> int:
         )
         return 2
     board = s.RestBoard(resp["accessToken"], args.project)
-    sections = board.sections()
-    me = board._call("GET", "/users/me", params={"opt_fields": "name"})["data"]["name"]
-    print(f"OK: token works as {me}; project has {len(sections)} sections.")
+    print(f"OK: the token reads the project ({len(board.sections())} sections).")
     return 0
 
 
