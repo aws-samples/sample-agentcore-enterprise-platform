@@ -250,6 +250,58 @@ def test_missing_mode_parameter_means_brokered(monkeypatch):
     assert utils.auth_mode("proj", "dev") == "brokered"
 
 
+def test_federated_workload_uses_okta_audience_and_scope():
+    src = (REPO / "app.py").read_text()
+    fed_branch = src.split("if is_fed_workload:\n    issuer_url", 1)[1].split(
+        "\nelse:", 1
+    )[0]
+    assert 'allowed_audience = [idp_config["audience"]]' in fed_branch
+    assert 'gateway_token_scopes = idp_config["m2m_scope"]' in fed_branch
+
+
+def test_check_identity_reads_okta_audience_from_platform_yaml(monkeypatch):
+    monkeypatch.delenv("PLATFORM_ALLOW_PLACEHOLDERS", raising=False)
+    import check_identity
+
+    okta = PlatformConfig.model_validate(
+        {
+            "deployment": {"platform_account": "111122223333"},
+            "identity": {
+                "idp": "okta",
+                "mode": "direct",
+                "issuer_url": "https://acme.okta.com/oauth2/default",
+                "client_id": "0oa1abcdefg",
+                "client_secret_name": "agentcore/okta-client-secret",
+                "audience": "api://agentcore",
+                "m2m_scope": "agentcore.invoke",
+            },
+        }
+    )
+    # An existing file stands in for platform.yaml; the loader is stubbed so
+    # the test needs no temporary directory.
+    cfg = REPO / "app.py"
+    loaded = []
+
+    def fake_load(path):
+        loaded.append(path)
+        return okta
+
+    monkeypatch.setattr(check_identity, "load_platform_config", fake_load)
+    assert (
+        check_identity.configured_audience({"PLATFORM_CONFIG": str(cfg)})
+        == "api://agentcore"
+    )
+    assert loaded == [str(cfg)]
+    assert (
+        check_identity.configured_audience(
+            {"PLATFORM_CONFIG": str(cfg), "IDP_AUDIENCE": "api://override"}
+        )
+        == "api://override"
+    )
+    missing = REPO / "does-not-exist-platform.yaml"
+    assert check_identity.configured_audience({"PLATFORM_CONFIG": str(missing)}) == ""
+
+
 def test_check_identity_decodes_claims():
     sys.path.insert(0, str(REPO / "scripts"))
     import check_identity

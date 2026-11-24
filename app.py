@@ -500,8 +500,20 @@ if is_fed_workload:
     legacy_m2m_client_secret = None
     allowed_clients = [fed.m2m_client_id]
     if idp_mode == "direct":
-        allowed_clients, allowed_audience = [], [fed.m2m_client_id]
-        gateway_token_scopes = f"{fed.m2m_client_id}/.default"
+        allowed_clients = []
+        if idp_type == "okta":
+            # Okta: aud = the authorization server's audience, a custom scope.
+            if not (idp_config["audience"] and idp_config["m2m_scope"]):
+                raise ValueError(
+                    "Okta direct mode in a federated workload account requires "
+                    "identity.audience and identity.m2m_scope (the same values "
+                    "the platform account deployed with)"
+                )
+            allowed_audience = [idp_config["audience"]]
+            gateway_token_scopes = idp_config["m2m_scope"]
+        else:
+            allowed_audience = [fed.m2m_client_id]
+            gateway_token_scopes = f"{fed.m2m_client_id}/.default"
     elif retired_m2m_client_id:
         allowed_clients.append(retired_m2m_client_id)
 else:

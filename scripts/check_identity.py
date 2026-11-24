@@ -39,8 +39,26 @@ from utils import (
     oidc_discovery,
 )
 
+from infra_utils.platform_config import load_platform_config
+
+REPO = Path(__file__).resolve().parents[1]
 PROJECT = os.environ.get("PROJECT_NAME", DEFAULT_PROJECT)
 ENV = os.environ.get("ENVIRONMENT", DEFAULT_ENV)
+
+
+def configured_audience(environ: dict | None = None) -> str:
+    """The Okta audience the authorizers were told to pin: IDP_AUDIENCE when
+    exported, else identity.audience from the validated platform.yaml (the
+    same file app.py synthesized from)."""
+    environ = os.environ if environ is None else environ
+    if environ.get("IDP_AUDIENCE"):
+        return environ["IDP_AUDIENCE"]
+    path = Path(environ.get("PLATFORM_CONFIG", "platform.yaml"))
+    if not path.is_absolute() and not path.exists():
+        path = REPO / path
+    if not path.exists():
+        return ""
+    return load_platform_config(str(path)).identity.audience
 
 
 def okta_mint_hint(msg: str) -> str:
@@ -87,9 +105,12 @@ def main() -> int:
     issuer = get_ssm_param("auth/issuer-url", PROJECT, ENV)
     if idp == "okta":
         # Okta tokens carry the authorization server's audience, not a client id.
-        audience = os.environ.get("IDP_AUDIENCE", "")
+        audience = configured_audience()
         if not audience:
-            print("FAIL: idp okta needs IDP_AUDIENCE (identity.audience) to check aud")
+            print(
+                "FAIL: idp okta needs identity.audience in platform.yaml "
+                "(or IDP_AUDIENCE) to check aud"
+            )
             return 1
     else:
         audience = get_ssm_param("auth/app-client-id", PROJECT, ENV)
