@@ -162,7 +162,9 @@ JOURNEYS: dict[str, dict] = {
 
 TOPOLOGIES: dict[str, dict] = {
     "centralized": {"deployment": {"strategy": "centralized"}},
-    "distributed": {"deployment": {"strategy": "distributed"}},
+    "distributed": {
+        "deployment": {"strategy": "distributed", "platform_account": "000000000000"}
+    },
     "federated": {
         "deployment": {
             "strategy": "federated",
@@ -252,7 +254,7 @@ SHORTCUTS: dict[str, dict] = {
     },
     "platform-team": {
         "journey": "greenfield",
-        "topology": "distributed",
+        "topology": "federated",
         "posture": "hardened",
         "overlay": {"agents": {"a2a": True, "memory": {"long_term": True}}},
     },

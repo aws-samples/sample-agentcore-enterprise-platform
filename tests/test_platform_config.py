@@ -5,8 +5,6 @@ wrong with their file in one pass, before any AWS call. These tests pin that
 property, plus the cross-field rules that encode real deployment constraints.
 """
 
-import shutil
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -24,14 +22,6 @@ from infra_utils.platform_config import (
 
 REPO = Path(__file__).resolve().parents[1]
 PRESETS = sorted((REPO / "presets").glob("*.yaml"))
-
-
-@pytest.fixture
-def tmp_path():
-    # Repo-local scratch dir: the system temp dir may be unavailable.
-    path = Path(tempfile.mkdtemp(prefix=".tmp-", dir=Path(__file__).resolve().parent))
-    yield path
-    shutil.rmtree(path, ignore_errors=True)
 
 
 def test_presets_exist():

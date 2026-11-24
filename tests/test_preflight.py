@@ -1,11 +1,7 @@
 from __future__ import annotations
 
-import shutil
-import tempfile
 from collections.abc import Sequence
 from pathlib import Path
-
-import pytest
 
 from scripts.preflight import (
     CommandResult,
@@ -15,14 +11,6 @@ from scripts.preflight import (
 )
 
 ACCOUNT = "111122223333"
-
-
-@pytest.fixture
-def tmp_path():
-    # Repo-local scratch dir: the system temp dir may be unavailable.
-    path = Path(tempfile.mkdtemp(prefix=".tmp-", dir=Path(__file__).resolve().parent))
-    yield path
-    shutil.rmtree(path, ignore_errors=True)
 
 
 class FakeRunner:

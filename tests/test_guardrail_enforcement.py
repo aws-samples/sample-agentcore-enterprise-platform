@@ -9,9 +9,7 @@ job has no aws-cdk-lib.
 """
 
 import ast
-import shutil
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -26,15 +24,6 @@ from infra_utils.platform_config import PlatformConfig, to_env
 
 RUNTIME_STACK = REPO / "stacks" / "runtime_stack.py"
 AGENT_CODE = REPO / "agent-code"
-
-
-@pytest.fixture
-def tmp_path():
-    # Repo-local scratch dir: the system temp dir may be unavailable.
-    path = Path(tempfile.mkdtemp(prefix=".tmp-", dir=Path(__file__).resolve().parent))
-    yield path
-    shutil.rmtree(path, ignore_errors=True)
-
 
 # Every pattern that can attach a Bedrock Guardrail carries the env-gated
 # plumbing; the claude-sdk patterns cannot, which is why the config validator

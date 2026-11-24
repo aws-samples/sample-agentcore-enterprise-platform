@@ -9,13 +9,9 @@ must be embedded so the reference and the presets cannot disagree.
 from __future__ import annotations
 
 import importlib.util
-import shutil
 import subprocess  # nosec B404 — running our own generator, no shell
 import sys
-import tempfile
 from pathlib import Path
-
-import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 GEN = REPO / "scripts" / "gen_platform_reference.py"
@@ -24,14 +20,6 @@ DOC = REPO / "docs" / "PLATFORM_YAML.md"
 _spec = importlib.util.spec_from_file_location("gen_platform_reference", GEN)
 gen = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(gen)
-
-
-@pytest.fixture
-def tmp_path():
-    # Repo-local scratch dir: the system temp dir may be unavailable.
-    path = Path(tempfile.mkdtemp(prefix=".tmp-", dir=Path(__file__).resolve().parent))
-    yield path
-    shutil.rmtree(path, ignore_errors=True)
 
 
 def run(*args: str) -> subprocess.CompletedProcess:

@@ -198,6 +198,10 @@ for _a in "$@"; do
     esac
     _rest+=("$_a"); _prev=""
 done
+if [ -n "$_prev" ]; then
+    log_error "$_prev needs a value."
+    exit 1
+fi
 if [ -n "${PRESCAN_JOURNEY}${PRESCAN_TOPOLOGY}${PRESCAN_POSTURE}" ]; then
     if [ "${1:-}" != "design" ]; then
         log_error "--journey/--topology/--posture are options of the design subcommand."
