@@ -705,7 +705,7 @@ class SoftwareFactoryStack(cdk.Stack):
                 "RUNTIME_ARN": runtime_arn,
                 "DLQ_URL": dlq.queue_url,
                 # Hard stop: above this day's summed RunCostUSD, new runs are parked in the DLQ until 00:00 UTC.
-                "DAILY_COST_STOP_USD": "20",
+                "DAILY_COST_STOP_USD": "100",
             },
             log_group=self._log_group(
                 "DispatcherLogs", "/aws/lambda/software-factory-dispatcher"
