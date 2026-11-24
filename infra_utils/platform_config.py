@@ -3071,7 +3071,12 @@ def _main() -> int:
         return 0
     if "--design" in flags:
         print("\n".join(design_plan(config, os.environ.get("CDK_DEFAULT_ACCOUNT", ""))))
-        return 0
+        findings = region_findings(config)
+        if findings:
+            print("\nRegion checks (static tables, no AWS calls):")
+            for finding in findings:
+                print(f"  {finding.render()}")
+        return 1 if any(f.level == "error" for f in findings) else 0
     if "--plan" in flags:
         print(
             "\n".join(migration_plan(config, os.environ.get("CDK_DEFAULT_ACCOUNT", "")))

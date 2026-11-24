@@ -1,6 +1,9 @@
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 from infra_utils import runtime_network
 from infra_utils.platform_config import (
@@ -101,3 +104,34 @@ def test_region_findings_makes_no_aws_calls(monkeypatch):
     monkeypatch.setattr(boto3, "Session", boom)
     region_findings(_config(allowed=[US_MODEL]), "us-east-1")
     region_findings(_config(), "eu-central-1")
+
+
+PRESET = Path(__file__).resolve().parents[1] / "presets" / "security-focused.yaml"
+
+
+def _design(tmp_path, monkeypatch, capsys, region):
+    from infra_utils import platform_config
+
+    doc = yaml.safe_load(PRESET.read_text())
+    doc["region"] = region
+    path = tmp_path / "platform.yaml"
+    path.write_text(yaml.safe_dump(doc))
+    monkeypatch.setattr(sys, "argv", ["platform_config", "--design", str(path)])
+    code = platform_config._main()
+    return code, capsys.readouterr().out
+
+
+def test_design_passes_and_prints_no_region_checks_in_a_supported_region(
+    tmp_path, monkeypatch, capsys
+):
+    code, out = _design(tmp_path, monkeypatch, capsys, "us-east-1")
+    assert code == 0
+    assert "Region checks" not in out
+
+
+def test_design_fails_on_a_region_error(tmp_path, monkeypatch, capsys):
+    # security-focused turns networking on; without a zone table entry design must fail.
+    monkeypatch.delitem(runtime_network.SUPPORTED_ZONE_IDS, "us-east-1")
+    code, out = _design(tmp_path, monkeypatch, capsys, "us-east-1")
+    assert code == 1
+    assert "[ERROR]" in out and "us-east-1" in out
