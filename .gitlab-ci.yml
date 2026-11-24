@@ -1,17 +1,17 @@
 # ═══════════════════════════════════════════════════════════════
 # GitLab CI — quality gates for every merge request
 #
-# Ports the intent of .github/workflows/ (which never ran: the remote
-# is GitLab, not GitHub). Stages:
+# GitHub Actions (.github/workflows/) is the project's primary CI. This
+# file is a GitLab CI reference port of the same quality gates, for
+# customers who fork or mirror the repository to GitLab. Stages:
 #   lint      — ruff check + format on files changed in the MR
 #   validate  — control-library catalog validation, Dockerfile parse check
 #   test      — policy_loader unit tests
 #   synth     — cdk synth with placeholder account (no AWS credentials)
 #   terraform — fmt + validate for org-guardrails
 #
-# Note: ruff lints CHANGED files only — a pre-existing backlog of ~113
-# findings across the repo is tracked separately (Asana: "Clean FAST
-# tracker false claims + lint backlog"). New/modified code must be clean.
+# Note: ruff lints CHANGED files only — new/modified code must be clean.
+# Pre-existing findings elsewhere in the repo are not gated here.
 # ═══════════════════════════════════════════════════════════════
 
 stages: [lint, validate, test, synth, terraform]
