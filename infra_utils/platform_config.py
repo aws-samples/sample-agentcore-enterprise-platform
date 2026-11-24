@@ -44,6 +44,82 @@ from pydantic import (
 # Where the Web Search built-in gateway connector exists (launch regions).
 WEB_SEARCH_REGIONS = {"us-east-1", "eu-west-1", "ap-northeast-1"}
 
+# ── Region tables (static; see docs/SUPPORT_MATRIX.md for how to update) ──
+# Base model ids offered as cross-region inference profiles per geo prefix.
+# These drift from AWS: findings derived from them are warnings only; `doctor`
+# and `verify` remain the authoritative live checks.
+INFERENCE_PROFILES_BY_GEO: dict[str, frozenset[str]] = {
+    "us": frozenset(
+        {
+            "anthropic.claude-sonnet-4-6",
+            "anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "anthropic.claude-sonnet-4-20250514-v1:0",
+            "anthropic.claude-3-7-sonnet-20250219-v1:0",
+            "anthropic.claude-haiku-4-5-20251001-v1:0",
+            "anthropic.claude-3-5-haiku-20241022-v1:0",
+            "anthropic.claude-opus-4-1-20250805-v1:0",
+            "amazon.nova-pro-v1:0",
+            "amazon.nova-lite-v1:0",
+            "amazon.nova-micro-v1:0",
+        }
+    ),
+    "eu": frozenset(
+        {
+            "anthropic.claude-sonnet-4-6",
+            "anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "anthropic.claude-sonnet-4-20250514-v1:0",
+            "anthropic.claude-3-7-sonnet-20250219-v1:0",
+            "anthropic.claude-haiku-4-5-20251001-v1:0",
+            "amazon.nova-pro-v1:0",
+            "amazon.nova-lite-v1:0",
+            "amazon.nova-micro-v1:0",
+        }
+    ),
+    "apac": frozenset(
+        {
+            "anthropic.claude-sonnet-4-6",
+            "anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "anthropic.claude-sonnet-4-20250514-v1:0",
+            "anthropic.claude-3-7-sonnet-20250219-v1:0",
+            "anthropic.claude-haiku-4-5-20251001-v1:0",
+            "amazon.nova-pro-v1:0",
+            "amazon.nova-lite-v1:0",
+            "amazon.nova-micro-v1:0",
+        }
+    ),
+    "global": frozenset(
+        {
+            "anthropic.claude-sonnet-4-6",
+            "anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "anthropic.claude-sonnet-4-20250514-v1:0",
+            "anthropic.claude-haiku-4-5-20251001-v1:0",
+        }
+    ),
+}
+
+# Region -> the geo prefix of the cross-region inference profiles it serves.
+REGION_GEO: dict[str, str] = {
+    "us-east-1": "us",
+    "us-east-2": "us",
+    "us-west-1": "us",
+    "us-west-2": "us",
+    "eu-central-1": "eu",
+    "eu-central-2": "eu",
+    "eu-north-1": "eu",
+    "eu-south-1": "eu",
+    "eu-south-2": "eu",
+    "eu-west-1": "eu",
+    "eu-west-2": "eu",
+    "eu-west-3": "eu",
+    "ap-northeast-1": "apac",
+    "ap-northeast-2": "apac",
+    "ap-northeast-3": "apac",
+    "ap-south-1": "apac",
+    "ap-south-2": "apac",
+    "ap-southeast-1": "apac",
+    "ap-southeast-2": "apac",
+}
+
 _ACCOUNT_RE = r"^\d{12}$"
 _REGION_RE = r"^[a-z]{2}(-[a-z]+)+-\d$"
 
@@ -868,6 +944,117 @@ def observability_placeholders(alarm_email: str) -> list[str]:
             )
         ]
     return []
+
+
+@dataclass(frozen=True)
+class RegionFinding:
+    level: Literal["error", "warning"]
+    code: str
+    message: str
+
+    def render(self) -> str:
+        prefix = "[ERROR]" if self.level == "error" else "[WARN]"
+        return f"{prefix} {self.message}"
+
+
+def _config_region(config) -> str:
+    region = getattr(config, "region", "") or ""
+    if not region:
+        region = getattr(getattr(config, "project", None), "region", "") or ""
+    return region
+
+
+def _split_profile(model_id: str) -> tuple[str, str]:
+    head, sep, rest = model_id.partition(".")
+    if sep and head in INFERENCE_PROFILES_BY_GEO:
+        return head, rest
+    return "", model_id
+
+
+def region_findings(config, region: str | None = None) -> list[RegionFinding]:
+    """Static, region-aware design checks. Never calls AWS.
+
+    `config` needs `security.networking`, `agents.model_id`,
+    `agents.allowed_models` and `gateway.web_search`. The Region is taken from
+    `region` or, failing that, from the config. Every message names it.
+    """
+    # Lazy import keeps platform_config importable without a cycle; infra_utils
+    # must never import stacks (scripts/check_repository_structure.py).
+    from infra_utils.runtime_network import SUPPORTED_ZONE_IDS
+
+    region = region or _config_region(config)
+    out: list[RegionFinding] = []
+
+    # A missing entry is not proof the Region is unsupported: the runtime
+    # helper deliberately applies no zone restriction for unknown Regions so a
+    # stale table never blocks a Region AgentCore has since added. Warn only.
+    if config.security.networking and region not in SUPPORTED_ZONE_IDS:
+        out.append(
+            RegionFinding(
+                "warning",
+                "zones-unknown",
+                f"security.networking is on but region {region} has no "
+                "SUPPORTED_ZONE_IDS entry (infra_utils/runtime_network.py), so "
+                "AgentCore zone support could not be checked statically; no "
+                f"zone restriction is applied. Run doctor in {region} to confirm",
+            )
+        )
+
+    agents = config.agents
+    models = [m for m in [agents.model_id, *agents.allowed_models] if m]
+    models = list(dict.fromkeys(models))
+    geo = REGION_GEO.get(region)
+    if models and geo is None:
+        out.append(
+            RegionFinding(
+                "warning",
+                "model-region-unknown",
+                f"model availability could not be checked: region {region} is "
+                "not in REGION_GEO",
+            )
+        )
+    elif geo is not None:
+        known = set().union(*INFERENCE_PROFILES_BY_GEO.values())
+        for model in models:
+            prefix, base = _split_profile(model)
+            if base not in known:
+                out.append(
+                    RegionFinding(
+                        "warning",
+                        "model-unknown",
+                        f"model {model} is not a known cross-region inference "
+                        f"profile in {region}",
+                    )
+                )
+            elif prefix and prefix not in ("global", geo):
+                out.append(
+                    RegionFinding(
+                        "warning",
+                        "model-geo-mismatch",
+                        f"model {model} uses the '{prefix}.' profile but region "
+                        f"{region} serves '{geo}.' (or 'global.') profiles",
+                    )
+                )
+            elif prefix and base not in INFERENCE_PROFILES_BY_GEO[prefix]:
+                out.append(
+                    RegionFinding(
+                        "warning",
+                        "model-unknown",
+                        f"model {model} is not a known cross-region inference "
+                        f"profile in {region}",
+                    )
+                )
+
+    if config.gateway.web_search == "on" and region not in WEB_SEARCH_REGIONS:
+        out.append(
+            RegionFinding(
+                "warning",
+                "web-search-region",
+                f"gateway.web_search is on but region {region} is not a Web "
+                f"Search launch region ({', '.join(sorted(WEB_SEARCH_REGIONS))})",
+            )
+        )
+    return out
 
 
 # ── Migration ──
@@ -3237,7 +3424,12 @@ def _main() -> int:
         return 0
     if "--design" in flags:
         print("\n".join(design_plan(config, os.environ.get("CDK_DEFAULT_ACCOUNT", ""))))
-        return 0
+        findings = region_findings(config)
+        if findings:
+            print("\nRegion checks (static tables, no AWS calls):")
+            for finding in findings:
+                print(f"  {finding.render()}")
+        return 1 if any(f.level == "error" for f in findings) else 0
     if "--plan" in flags:
         print(
             "\n".join(migration_plan(config, os.environ.get("CDK_DEFAULT_ACCOUNT", "")))
