@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 from pathlib import Path
 
 from boto3.dynamodb.conditions import Attr, Key
@@ -114,33 +115,65 @@ class Developer(Run):
             if argv[0] == "pytest":
                 argv = [tool("python3"), "-m", *argv]
             accept[f"accept: {cmd}"] = run(argv)
-        return accept | {
-            "pytest": run(
-                [
-                    tool("python3"),
-                    "-m",
-                    "pytest",
-                    "tests/",
-                    "-q",
-                    "-p",
-                    "no:cacheprovider",
-                    f"--basetemp={self.work / 'pytest' / wt.name}",
-                ]
-            ),
-            "lint-cicd": run(["make", "lint-cicd"]),
-            "cdk synth": run(
-                [
-                    "cdk",
-                    "--app",
-                    f"{tool('python3')} app.py",
-                    "synth",
-                    "--quiet",
-                    "-o",
-                    str(self.work / f"cdk.out.{wt.name}"),
-                ],
-                env,
-            ),
-        }
+        return (
+            accept
+            | {
+                "pytest": run(
+                    [
+                        tool("python3"),
+                        "-m",
+                        "pytest",
+                        "tests/",
+                        "-q",
+                        "-p",
+                        "no:cacheprovider",
+                        f"--basetemp={self.work / 'pytest' / wt.name}",
+                    ]
+                ),
+                "lint-cicd": run(["make", "lint-cicd"]),
+                "cdk synth": run(
+                    [
+                        "cdk",
+                        "--app",
+                        f"{tool('python3')} app.py",
+                        "synth",
+                        "--quiet",
+                        "-o",
+                        str(self.work / f"cdk.out.{wt.name}"),
+                    ],
+                    env,
+                ),
+            }
+            | (
+                # CI's contract-parity job: every preset synthesizes offline. Only when the change can
+                # affect synthesis, because it synthesizes every preset (minutes).
+                {"contract-parity": run(["bash", "scripts/check-contract.sh"], env)}
+                if (wt / "scripts/check-contract.sh").exists()
+                and self.touches_synth(wt)
+                else {}
+            )
+        )
+
+    SYNTH_PATHS = (
+        "app.py",
+        "stacks/",
+        "infra_utils/",
+        "presets/",
+        "scripts/check-contract.sh",
+    )
+
+    def touches_synth(self, wt: Path) -> bool:
+        changed = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=wt,
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.splitlines()
+        return (
+            any(line[3:].startswith(self.SYNTH_PATHS) for line in changed)
+            or wt.name == "base-wt"
+        )
 
     def verdict(
         self, head: dict, base: dict, changed_py: list[str]
@@ -223,6 +256,35 @@ class Developer(Run):
                 out.append(f"=== {p} ===\n{text[:40000]}")
         return "\n".join(out)
 
+    # --- generated files and scope from failures ----------------------------
+    def regenerate(self, wt: Path) -> list[str]:
+        """Rebuild what the repo generates from code, so a schema or preset change carries its doc."""
+        gen = wt / "scripts" / "gen_platform_reference.py"
+        if not gen.exists():
+            return []
+        r = sh([tool("python3"), "scripts/gen_platform_reference.py"], wt, self.work)
+        self.allowed.add("docs/PLATFORM_YAML.md")
+        return (
+            []
+            if r.returncode == 0
+            else [f"gen_platform_reference.py failed: {r.stdout[-300:]}"]
+        )
+
+    def widen_scope(self, failing: dict) -> list[str]:
+        """Existing repo files a failing check's output names become editable (same refusals apply)."""
+        text = " ".join(str(v) for v in failing.values())
+        named = {
+            p
+            for p in re.findall(
+                r"(?<![\w/.-])([\w-]+(?:/[\w.-]+)+\.(?:py|sh|ya?ml|md|json|toml))", text
+            )
+            if (self.wt / p).is_file()
+        }
+        ok, _ = allowed_paths(sorted(named), json.dumps(self.task))
+        new = sorted(ok - self.allowed)
+        self.allowed |= ok
+        return new
+
     # --- the loop ---------------------------------------------------------
     def execute(self) -> dict:
         rec = {"outcome": "failed", "task": self.task, "check_passed": False}
@@ -286,6 +348,7 @@ class Developer(Run):
                     32000,
                 )
                 notes = self.apply_change(change, self.allowed)
+                notes += self.regenerate(self.wt)
                 rec.setdefault("proposals", []).append(
                     {"notes": notes, "summary": str(change.get("summary", ""))[:600]}
                 )
@@ -314,7 +377,15 @@ class Developer(Run):
                     for k, v in results.items()
                     if not v.startswith("pass")
                 }
-                feedback = f"\nPrevious attempt failed these checks:\n{json.dumps(failing)}\nFix them; files above are current."
+                widened = self.widen_scope(failing)
+                feedback = (
+                    f"\nPrevious attempt failed these checks:\n{json.dumps(failing)}\nFix them; files above are current."
+                    + (
+                        f"\nThese files are now editable because a failing check names them: {', '.join(widened)}."
+                        if widened
+                        else ""
+                    )
+                )
             rec["check_passed"] = passed
             if not passed and any(
                 k.startswith("accept: ") and not v.startswith("pass")
@@ -470,6 +541,7 @@ class Reviser(Developer):
                     32000,
                 )
                 notes = self.apply_change(change, self.allowed)
+                notes += self.regenerate(self.wt)
                 changed = self.changed() + [
                     f
                     for f in self.git(
@@ -495,7 +567,15 @@ class Reviser(Developer):
                     for k, v in results.items()
                     if not v.startswith("pass")
                 }
-                feedback = f"\nPrevious attempt failed these checks:\n{json.dumps(failing)}\nFix them; files above are current."
+                widened = self.widen_scope(failing)
+                feedback = (
+                    f"\nPrevious attempt failed these checks:\n{json.dumps(failing)}\nFix them; files above are current."
+                    + (
+                        f"\nThese files are now editable because a failing check names them: {', '.join(widened)}."
+                        if widened
+                        else ""
+                    )
+                )
             rec["check_passed"] = passed
             if not passed:
                 rec.update(

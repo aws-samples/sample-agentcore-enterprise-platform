@@ -847,13 +847,24 @@ def handle_developer(payload: dict) -> dict:
         rec = _safe(agent.execute)
         if publish and rec.get("outcome") == "branch_ready_dry_run":
             rec.update(_safe(lambda: agent.ship(token)))
-        if rec.get("outcome") == "failed" and isinstance(tracker, asana.Board):
-            # A crashed attempt must not leave the task stuck in progress: park it, say why.
+        if rec.get("outcome") in (
+            "failed",
+            "checks_failed",
+            "no_change",
+        ) and isinstance(tracker, asana.Board):
+            # An unsuccessful build must not leave the task stuck in progress: park it, say why.
+            checks = rec.get("checks") or {}
+            red = "; ".join(
+                f"{k}: {str(v)[:160]}"
+                for k, v in checks.items()
+                if not str(v).startswith("pass")
+            )
             tracker.move(
                 task["gid"],
                 asana.NEEDS_SCOPING,
-                f"Developer agent failed: {str(rec.get('reason', ''))[:300]}. "
-                "Move the task back to Ready for agent to retry.",
+                f"Developer agent: {rec['outcome']} - {str(rec.get('reason', ''))[:300]}"
+                + (f"\nFailing checks: {red}" if red else "")
+                + "\nComment what to change if needed, then move the task back to Ready for agent to retry.",
             )
         elif (
             rec.get("outcome") == "branch_ready_dry_run"

@@ -230,3 +230,9 @@ def test_the_patterns_do_not_backtrack_on_hostile_input():
 def test_every_secret_pattern_is_anchored_enough_to_compile():
     for pattern, _ in untrusted._SECRETS:
         assert isinstance(pattern, re.Pattern)
+
+
+def test_only_the_repo_contract_script_may_run_under_bash():
+    assert refuse(["bash", "scripts/check-contract.sh"]) == ""
+    assert "not an allowed command" in refuse(["bash", "-c", "id"])
+    assert "not an allowed command" in refuse(["bash", "scripts/other.sh"])

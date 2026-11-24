@@ -949,6 +949,9 @@ def refuse(cmd: list[str]) -> str:
     if not cmd:
         return "empty command"
     name = Path(str(cmd[0])).name
+    # The repo's own preset/synth parity script (what CI's contract-parity job runs), and only it.
+    if name == "bash" and [str(c) for c in cmd[1:]] == ["scripts/check-contract.sh"]:
+        return ""
     if name not in ALLOWED_COMMANDS:
         return f"{name} is not an allowed command"
     args = [str(a) for a in cmd[1:]]
