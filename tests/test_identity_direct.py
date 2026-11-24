@@ -226,6 +226,7 @@ def test_direct_token_uses_discovered_endpoint_and_app_default_scope(monkeypatch
         else:
             seen["url"] = url
             seen["body"] = dict(p.split("=", 1) for p in req.data.decode().split("&"))
+            seen["auth"] = req.get_header("Authorization")
             body = {"access_token": "stub-token-from-fake-idp"}
         return io.BytesIO(json.dumps(body).encode())
 
@@ -237,6 +238,8 @@ def test_direct_token_uses_discovered_endpoint_and_app_default_scope(monkeypatch
     assert seen["body"]["grant_type"] == "client_credentials"
     assert seen["body"]["client_id"] == CLIENT
     assert seen["body"]["scope"] == f"{CLIENT}%2F.default"
+    # Entra keeps client_secret_post: no Basic header.
+    assert seen["auth"] is None
 
 
 def test_missing_mode_parameter_means_brokered(monkeypatch):
@@ -300,6 +303,41 @@ def test_check_identity_reads_okta_audience_from_platform_yaml(monkeypatch):
     )
     missing = REPO / "does-not-exist-platform.yaml"
     assert check_identity.configured_audience({"PLATFORM_CONFIG": str(missing)}) == ""
+
+
+def test_check_identity_prints_okta_hint_from_http_error(monkeypatch, capsys):
+    import urllib.error
+
+    import check_identity
+
+    issuer = "https://acme.okta.com/oauth2/default"
+    monkeypatch.setenv("IDP_MODE", "direct")
+    monkeypatch.setenv("IDP_TYPE", "okta")
+    monkeypatch.setenv("IDP_AUDIENCE", "api://agentcore")
+    monkeypatch.setattr(check_identity, "auth_mode", lambda p, e: "direct")
+    monkeypatch.setattr(check_identity, "get_ssm_param", lambda *a, **k: issuer)
+    monkeypatch.setattr(check_identity, "oidc_discovery", lambda i: {"issuer": i})
+    body = json.dumps(
+        {"error": "invalid_scope", "error_description": "free text not printed"}
+    ).encode()
+
+    def fail(*a, **k):
+        raise urllib.error.HTTPError(
+            f"{issuer}/v1/token", 400, "Bad Request", None, io.BytesIO(body)
+        )
+
+    monkeypatch.setattr(check_identity, "get_m2m_token", fail)
+    assert check_identity.main() == 1
+    out = capsys.readouterr().out
+    assert "OAuth error: invalid_scope" in out
+    assert "define the custom scope" in out
+    assert "free text not printed" not in out
+
+
+def test_oauth_error_code_ignores_non_http_errors():
+    import check_identity
+
+    assert check_identity.oauth_error_code(RuntimeError("invalid_scope")) == ""
 
 
 def test_check_identity_decodes_claims():

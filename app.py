@@ -353,16 +353,8 @@ idp_config = {
     "client_secret_name": cfg("idp_client_secret_name", "IDP_CLIENT_SECRET_NAME", ""),
     "issuer_url": cfg("idp_issuer_url", "IDP_ISSUER_URL", ""),
     # Okta direct mode: authorization-server audience and the custom M2M scope.
-    "audience": cfg(
-        "idp_audience",
-        "IDP_AUDIENCE",
-        platform_config.identity.audience if platform_config else "",
-    ),
-    "m2m_scope": cfg(
-        "idp_m2m_scope",
-        "IDP_M2M_SCOPE",
-        platform_config.identity.m2m_scope if platform_config else "",
-    ),
+    "audience": cfg("idp_audience", "IDP_AUDIENCE", ""),
+    "m2m_scope": cfg("idp_m2m_scope", "IDP_M2M_SCOPE", ""),
 }
 
 # OAuth provider credentials (3LO). Secrets travel as Secrets Manager secret

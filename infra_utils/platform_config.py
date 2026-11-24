@@ -400,6 +400,19 @@ def identity_placeholders(identity: IdentityConfig) -> list[str]:
     return out
 
 
+def to_env(config: PlatformConfig) -> dict[str, str]:
+    """platform.yaml -> the environment names deploy.sh and app.py read (see
+    _base_env), plus identity.audience / identity.m2m_scope as IDP_AUDIENCE /
+    IDP_M2M_SCOPE when set, so `deploy.sh verify` and
+    scripts/check_identity.py get the Okta direct-mode values from the file."""
+    env = _base_env(config)
+    if config.identity.audience:
+        env["IDP_AUDIENCE"] = config.identity.audience
+    if config.identity.m2m_scope:
+        env["IDP_M2M_SCOPE"] = config.identity.m2m_scope
+    return env
+
+
 class MemoryConfig(BaseModel):
     long_term: bool = False
     event_expiry_days: int = Field(default=30, ge=1, le=365)
@@ -1900,7 +1913,7 @@ def allowed_model_resources(models: list[str]) -> list[str]:
     return list(dict.fromkeys(resources))  # dedupe, order preserved
 
 
-def to_env(config: PlatformConfig) -> dict[str, str]:
+def _base_env(config: PlatformConfig) -> dict[str, str]:
     """Map the schema onto the env-var names deploy.sh and app.py already use.
 
     Only these names cross the shell boundary; everything else stays in the

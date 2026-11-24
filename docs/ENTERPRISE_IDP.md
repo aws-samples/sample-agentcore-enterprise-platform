@@ -150,7 +150,9 @@ Three things differ from Entra:
 4. **Applications**: an API Services app (or your web app with the Client
    Credentials grant enabled). Copy the client id into `identity.client_id`
    and store the client secret in Secrets Manager (no trailing newline) under
-   `identity.client_secret_name`.
+   `identity.client_secret_name`. Keep the app's client authentication at
+   Okta's default, **Client secret (client_secret_basic)**: the scripts send
+   an `Authorization: Basic` header to Okta (Entra keeps `client_secret_post`).
 
 `deploy.sh verify` runs `scripts/check_identity.py`, which mints a machine
 token and names the Okta fix for `invalid_scope` (scope missing or not

@@ -1,5 +1,6 @@
 """scripts/utils.py: the client_credentials request for Okta, no network."""
 
+import base64
 import importlib.util
 import json
 import urllib.parse
@@ -28,6 +29,43 @@ def test_build_okta_client_credentials_request():
         "client_secret": "s3cret",
         "scope": "agentcore.invoke",
     }
+
+
+def test_okta_uses_client_secret_basic():
+    req = utils.build_client_credentials_request(
+        f"{ISSUER}/v1/token",
+        "0oa1",
+        "s3cret",
+        "agentcore.invoke",
+        auth_method="client_secret_basic",
+    )
+    expected = base64.b64encode(b"0oa1:s3cret").decode()
+    assert req["headers"]["Authorization"] == f"Basic {expected}"
+    assert req["body"] == {
+        "grant_type": "client_credentials",
+        "scope": "agentcore.invoke",
+    }
+
+
+def test_entra_uses_client_secret_post():
+    endpoint = "https://login.microsoftonline.com/t/oauth2/v2.0/token"
+    req = utils.build_client_credentials_request(
+        endpoint, "app", "s3cret", "app/.default"
+    )
+    assert "Authorization" not in req["headers"]
+    assert req["body"] == {
+        "grant_type": "client_credentials",
+        "client_id": "app",
+        "client_secret": "s3cret",
+        "scope": "app/.default",
+    }
+
+
+def test_unknown_auth_method_refused():
+    with pytest.raises(ValueError, match="auth method"):
+        utils.build_client_credentials_request(
+            f"{ISSUER}/v1/token", "a", "b", "c", auth_method="private_key_jwt"
+        )
 
 
 def test_build_request_refuses_plain_http():
@@ -63,6 +101,7 @@ def test_direct_token_uses_discovery_endpoint_and_published_scope(monkeypatch):
         sent["url"] = req.full_url
         sent["method"] = req.get_method()
         sent["body"] = dict(urllib.parse.parse_qsl(req.data.decode()))
+        sent["auth"] = req.get_header("Authorization")
         return _Resp()
 
     monkeypatch.setattr(utils.urllib.request, "urlopen", _urlopen)
@@ -71,3 +110,6 @@ def test_direct_token_uses_discovery_endpoint_and_published_scope(monkeypatch):
     assert sent["method"] == "POST"
     assert sent["body"]["scope"] == "agentcore.invoke"
     assert sent["body"]["grant_type"] == "client_credentials"
+    # Okta: client_secret_basic, the credentials never travel in the body.
+    assert sent["auth"] == "Basic " + base64.b64encode(b"0oa1:s3cret").decode()
+    assert "client_secret" not in sent["body"]

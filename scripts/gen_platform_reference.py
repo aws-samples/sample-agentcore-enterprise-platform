@@ -171,6 +171,8 @@ ENV: dict[str, str] = {
     "identity.client_id": "IDP_CLIENT_ID",
     "identity.issuer_url": "IDP_ISSUER_URL",
     "identity.client_secret_name": "IDP_CLIENT_SECRET_NAME",
+    "identity.audience": "IDP_AUDIENCE",
+    "identity.m2m_scope": "IDP_M2M_SCOPE",
     "agents.pattern": "AGENT_PATTERN",
     "agents.model_id": "MODEL_ID",
     "agents.allowed_models": "ALLOWED_MODELS",
@@ -244,6 +246,9 @@ _FULL = {
         "client_id": "9a8b7c6d-1234-4abc-9def-000111222333",
         "issuer_url": "https://login.microsoftonline.com/3f2b1c4d/v2.0",
         "client_secret_name": "agentcore/idp-client-secret",
+        # Only consumed by Okta direct mode, but set here so to_env emits them.
+        "audience": "api://agentcore",
+        "m2m_scope": "agentcore.invoke",
     },
     "agents": {
         "model_id": "us.anthropic.claude-sonnet-4-6",

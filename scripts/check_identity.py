@@ -25,8 +25,11 @@ Usage:
 import base64
 import json
 import os
+import re
 import sys
+import urllib.error
 from pathlib import Path
+from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -82,6 +85,22 @@ def okta_mint_hint(msg: str) -> str:
     return ""
 
 
+def oauth_error_code(exc: BaseException) -> str:
+    """The OAuth `error` code (RFC 6749 5.2) from a token endpoint's
+    HTTPError body, or "". Only that field is read: str(HTTPError) carries just
+    the HTTP status, and the free-text error_description is never printed."""
+    if not isinstance(exc, urllib.error.HTTPError):
+        return ""
+    try:
+        body = json.loads(exc.read() or b"{}")
+    except (ValueError, OSError, AttributeError):
+        return ""
+    code = body.get("error") if isinstance(body, dict) else None
+    if isinstance(code, str) and re.fullmatch(r"[a-z_]{1,64}", code):
+        return code
+    return ""
+
+
 def claims(token: str) -> dict:
     payload = token.split(".")[1]
     return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
@@ -119,15 +138,17 @@ def main() -> int:
         c = claims(get_m2m_token(PROJECT, ENV))
     except Exception as exc:  # noqa: BLE001 — report the IdP's own error text
         msg = str(exc)
+        code = oauth_error_code(exc)
         hint = ""
         if idp == "okta":
-            hint = okta_mint_hint(msg)
+            hint = okta_mint_hint(code or msg)
         elif "7000229" in msg or "service principal" in msg:
             hint = (
                 "\n  → the app registration has no service principal in the tenant: "
                 "az ad sp create --id <client-id>"
             )
-        print(f"FAIL: could not mint an M2M token: {msg}{hint}")
+        detail = f"{msg} (OAuth error: {code})" if code else msg
+        print(f"FAIL: could not mint an M2M token: {detail}{hint}")
         return 1
 
     ok = True
@@ -139,7 +160,7 @@ def main() -> int:
                 "  → use a custom authorization server issuer "
                 "(https://<org>.okta.com/oauth2/<authServerId>), not the org one"
             )
-        elif "sts.windows.net" in str(c.get("iss")):
+        elif urlparse(str(c.get("iss") or "")).hostname == "sts.windows.net":
             print(
                 "  → the app issues v1 tokens; set api.requestedAccessTokenVersion=2 on "
                 "the app registration (az rest PATCH /applications/<object-id>)"

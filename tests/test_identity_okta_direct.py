@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from infra_utils.platform_config import IdentityConfig
+from infra_utils.platform_config import IdentityConfig, PlatformConfig, to_env
 
 OKTA = {
     "idp": "okta",
@@ -76,6 +76,23 @@ def test_entra_direct_unchanged():
     )
     assert ident.direct_m2m_scope == "9a8b7c6d-1111-2222-3333-444455556666/.default"
     assert ident.direct_audience == "9a8b7c6d-1111-2222-3333-444455556666"
+
+
+def test_to_env_exports_okta_audience_and_scope():
+    env = to_env(
+        PlatformConfig.model_validate(
+            {"deployment": {"platform_account": "111122223333"}, "identity": OKTA}
+        )
+    )
+    assert env["IDP_AUDIENCE"] == "api://agentcore"
+    assert env["IDP_M2M_SCOPE"] == "agentcore.invoke"
+    assert env["IDP_MODE"] == "direct"
+
+
+def test_to_env_omits_unset_audience_and_scope():
+    env = to_env(PlatformConfig())
+    assert "IDP_AUDIENCE" not in env
+    assert "IDP_M2M_SCOPE" not in env
 
 
 def test_ping_direct_still_refused():

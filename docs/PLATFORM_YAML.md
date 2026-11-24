@@ -61,8 +61,8 @@ Who issues the tokens the platform trusts.
 | `identity.client_id` | str | `""` | `IDP_CLIENT_ID` | App registration / OIDC client id at your IdP. |
 | `identity.issuer_url` | str | `""` | `IDP_ISSUER_URL` | OIDC issuer of your IdP. Required for `okta` and `ping` (Entra derives it from the tenant). |
 | `identity.client_secret_name` | str | `""` | `IDP_CLIENT_SECRET_NAME` | Secrets Manager NAME holding the IdP client secret. Required for any non-Cognito IdP; the value never goes in this file. |
-| `identity.audience` | str | `""` | — | Okta direct mode: the custom authorization server's Audience, the token `aud` the Gateway and Runtime pin. Required for `idp: okta` with `mode: direct`. |
-| `identity.m2m_scope` | str | `""` | — | Okta direct mode: a custom scope on that authorization server, requested with `client_credentials` for machine tokens (e.g. `agentcore.invoke`). Required for `idp: okta` with `mode: direct`. |
+| `identity.audience` | str | `""` | `IDP_AUDIENCE` | Okta direct mode: the custom authorization server's Audience, the token `aud` the Gateway and Runtime pin. Required for `idp: okta` with `mode: direct`. |
+| `identity.m2m_scope` | str | `""` | `IDP_M2M_SCOPE` | Okta direct mode: a custom scope on that authorization server, requested with `client_credentials` for machine tokens (e.g. `agentcore.invoke`). Required for `idp: okta` with `mode: direct`. |
 
 ## `agents:`
 

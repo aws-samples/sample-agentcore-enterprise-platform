@@ -178,8 +178,20 @@ def _get_direct_m2m_token(project: str, env: str, region: str) -> str:
     client_secret = boto3.client("secretsmanager", region_name=region).get_secret_value(
         SecretId=secret_name
     )["SecretString"]
+    # Entra keeps client_secret_post. Okta registers confidential clients with
+    # client_secret_basic by default and rejects post with invalid_client.
+    # Direct mode is Entra or Okta only, so the issuer host decides.
+    auth_method = (
+        "client_secret_post"
+        if urllib.parse.urlparse(issuer).hostname == "login.microsoftonline.com"
+        else "client_secret_basic"
+    )
     request = build_client_credentials_request(
-        oidc_discovery(issuer)["token_endpoint"], client_id, client_secret, scope
+        oidc_discovery(issuer)["token_endpoint"],
+        client_id,
+        client_secret,
+        scope,
+        auth_method=auth_method,
     )
     req = urllib.request.Request(
         request["url"],
@@ -192,24 +204,35 @@ def _get_direct_m2m_token(project: str, env: str, region: str) -> str:
 
 
 def build_client_credentials_request(
-    token_endpoint: str, client_id: str, client_secret: str, scope: str
+    token_endpoint: str,
+    client_id: str,
+    client_secret: str,
+    scope: str,
+    auth_method: str = "client_secret_post",
 ) -> dict:
     """The IdP-agnostic client_credentials request (method, URL, headers,
-    form body). Entra: the v2.0 token endpoint, scope `<client_id>/.default`;
-    Okta: `<issuer>/v1/token`, the custom scope on the authorization server.
+    form body). Entra: the v2.0 token endpoint, scope `<client_id>/.default`,
+    client_secret_post; Okta: `<issuer>/v1/token`, the custom scope on the
+    authorization server, client_secret_basic (Okta's default).
     Pure, so it is testable without network."""
     if not token_endpoint.startswith("https://"):
         raise ValueError(f"token endpoint must be https: {token_endpoint!r}")
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    body = {"grant_type": "client_credentials"}
+    if auth_method == "client_secret_basic":
+        basic = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+        headers["Authorization"] = f"Basic {basic}"
+    elif auth_method == "client_secret_post":
+        body["client_id"] = client_id
+        body["client_secret"] = client_secret
+    else:
+        raise ValueError(f"unsupported client auth method: {auth_method!r}")
+    body["scope"] = scope
     return {
         "method": "POST",
         "url": token_endpoint,
-        "headers": {"Content-Type": "application/x-www-form-urlencoded"},
-        "body": {
-            "grant_type": "client_credentials",
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "scope": scope,
-        },
+        "headers": headers,
+        "body": body,
     }
 
 

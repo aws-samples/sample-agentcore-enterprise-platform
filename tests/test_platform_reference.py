@@ -11,7 +11,10 @@ from __future__ import annotations
 import importlib.util
 import subprocess  # nosec B404 — running our own generator, no shell
 import sys
+import tempfile
 from pathlib import Path
+
+import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 GEN = REPO / "scripts" / "gen_platform_reference.py"
@@ -65,12 +68,18 @@ def test_every_preset_is_embedded():
         assert body[0] in doc, f"{preset.name} not embedded verbatim"
 
 
-def test_a_hand_edit_fails_the_check(tmp_path, monkeypatch, capsys):
+@pytest.fixture
+def scratch_dir():
+    with tempfile.TemporaryDirectory() as d:
+        yield Path(d)
+
+
+def test_a_hand_edit_fails_the_check(scratch_dir, monkeypatch, capsys):
     # Point the generator at a mutated copy; --check must fail and show the diff.
-    stale = tmp_path / "PLATFORM_YAML.md"
+    stale = scratch_dir / "PLATFORM_YAML.md"
     stale.write_text(DOC.read_text().replace("reference", "refrence", 1))
     monkeypatch.setattr(gen, "OUT", stale)
-    monkeypatch.setattr(gen, "ROOT", tmp_path)
+    monkeypatch.setattr(gen, "ROOT", scratch_dir)
     assert gen.main(["--check"]) == 1
     out = capsys.readouterr().out
     assert "refrence" in out and "is stale" in out
