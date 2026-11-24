@@ -611,7 +611,11 @@ def handle_developer(payload: dict) -> dict:
         return {"outcome": "skipped", "reason": f"no new {where}"}
     publish = bool(DEV_PUBLISH and token and not payload.get("dry_run"))
     tracker = (
-        asana.Board(session, "developer", f"task-{task['gid']}", publish)
+        # The run part of an op's idempotency key must differ per attempt, or a second attempt
+        # on the same task would have its moves deduplicated against the first one's.
+        asana.Board(
+            session, "developer", f"task-{task['gid']}-{int(time.time())}", publish
+        )
         if asana.enabled()
         else issues.Tracker(REPO, token, publish)
     )
@@ -670,7 +674,9 @@ def handle_design(payload: dict) -> dict:
             else f"nothing new in {asana.NEEDS_DESIGN!r}"
         )
         return {"outcome": "skipped", "reason": reason}
-    board = asana.Board(session, "designer", f"design-{task['gid']}", PM_PUBLISH)
+    board = asana.Board(
+        session, "designer", f"design-{task['gid']}-{int(time.time())}", PM_PUBLISH
+    )
     work = Path("/tmp/factory") / f"design-{task['gid']}"
     agent = Designer(task, clone(work), work, REGION, REPO, board)
     return _finish(

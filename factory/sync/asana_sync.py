@@ -390,6 +390,32 @@ def apply_op(op: dict, board: Board, sections: dict[str, str]) -> str:
     return gid
 
 
+TRANSIENT = (
+    "424",
+    "429",
+    "500",
+    "502",
+    "503",
+    "504",
+    "communication failure",
+    "timed out",
+)
+
+
+def with_retry(fn, waits=(3, 10), sleep=None):
+    """Asana (or the MCP in front of it) sometimes fails a call it accepts a moment later."""
+    import time
+
+    sleep = sleep or time.sleep
+    for wait in (*waits, None):
+        try:
+            return fn()
+        except BoardError as e:
+            if wait is None or not any(t in str(e) for t in TRANSIENT):
+                raise
+            sleep(wait)
+
+
 def apply_pending(ops: list[dict], board: Board, claim=lambda op: True) -> list[dict]:
     """Apply pending ops oldest first. One failure does not stop the rest. Returns status updates."""
     sections = board.sections()
@@ -411,7 +437,7 @@ def apply_pending(ops: list[dict], board: Board, claim=lambda op: True) -> list[
             )
             continue
         try:
-            gid = apply_op(op, board, sections)
+            gid = with_retry(lambda op=op: apply_op(op, board, sections))
             out.append({"op_id": op["op_id"], "status": "applied", "asana_gid": gid})
             if op["op"] == "create_task":
                 in_project.add(gid)

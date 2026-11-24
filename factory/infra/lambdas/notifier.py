@@ -95,7 +95,7 @@ def message(row: dict, project: str) -> tuple[str, str] | None:
         )
     else:
         return None
-    parts = [f"{emoji} *{head}* ({agent})"]
+    parts = [f"{emoji} {head} ({agent})"]
     if reason and outcome not in ("pr_opened", "merged_recorded", "spec_written"):
         parts.append(reason)
     links = [u for u in (row.get("pr_url"), task_link(row, project)) if u]
