@@ -13,6 +13,7 @@ Two things this module exists to prevent, both found in the original code:
 """
 
 import os
+import sys
 
 # Set to 1 only for offline synths: AZ pinning is then skipped without any
 # AWS call and the VPC keeps max_azs=2 instead of failing the synth.
@@ -136,6 +137,11 @@ def default_zones_supported(
     return len(defaults) == count and all(name_to_id[n] in supported for n in defaults)
 
 
+def _warn_stderr(message: str) -> None:
+    # stderr: `cdk ls` and the contract check read stack names from stdout.
+    print(message, file=sys.stderr)
+
+
 def resolve_vpc_zones(
     region: str,
     target_account: str,
@@ -143,7 +149,7 @@ def resolve_vpc_zones(
     lookup_errors: tuple,
     *,
     environ=None,
-    warn=print,
+    warn=_warn_stderr,
     count: int = 2,
     vpc_name: str = "",
 ) -> tuple[list[str] | None, dict[str, str]]:
