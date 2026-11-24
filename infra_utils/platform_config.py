@@ -636,14 +636,18 @@ def region_findings(config, region: str | None = None) -> list[RegionFinding]:
     region = region or _config_region(config)
     out: list[RegionFinding] = []
 
+    # A missing entry is not proof the Region is unsupported: the runtime
+    # helper deliberately applies no zone restriction for unknown Regions so a
+    # stale table never blocks a Region AgentCore has since added. Warn only.
     if config.security.networking and region not in SUPPORTED_ZONE_IDS:
         out.append(
             RegionFinding(
-                "error",
-                "unsupported-zones",
+                "warning",
+                "zones-unknown",
                 f"security.networking is on but region {region} has no "
-                "SUPPORTED_ZONE_IDS entry (infra_utils/runtime_network.py); the "
-                "VPC deploy will fail there",
+                "SUPPORTED_ZONE_IDS entry (infra_utils/runtime_network.py), so "
+                "AgentCore zone support could not be checked statically; no "
+                f"zone restriction is applied. Run doctor in {region} to confirm",
             )
         )
 

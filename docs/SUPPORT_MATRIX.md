@@ -21,8 +21,11 @@ customer production approval.
 `infra_utils/platform_config.py`). These checks make no AWS calls, and every
 message names the Region:
 
-- **Zones (error):** networking is on and the Region has no
-  `SUPPORTED_ZONE_IDS` entry in `infra_utils/runtime_network.py`.
+- **Zones (warning):** networking is on and the Region has no
+  `SUPPORTED_ZONE_IDS` entry in `infra_utils/runtime_network.py`. A missing
+  entry means the table has not been updated for that Region. It does not
+  mean the Region is unsupported, and the runtime networking helper applies
+  no zone restriction there.
 - **Models (warning):** `agents.model_id` or an `agents.allowed_models`
   entry is either not in `INFERENCE_PROFILES_BY_GEO` or uses a profile
   prefix other than the Region's geo (`REGION_GEO`). `global.` profiles are
@@ -30,7 +33,7 @@ message names the Region:
 - **Web search (warning):** `gateway.web_search: on` is set outside
   `WEB_SEARCH_REGIONS`.
 
-The model and web search tables drift from AWS offerings, which is why
+The zone, model and web search tables drift from AWS offerings, which is why
 findings from them are warnings. `doctor` and `verify` remain the
 authoritative live checks. To update the tables, edit them in
 `infra_utils/platform_config.py`. When AWS adds a profile, add its base model

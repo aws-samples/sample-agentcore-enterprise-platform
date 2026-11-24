@@ -1,4 +1,5 @@
 import sys
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -37,18 +38,19 @@ def test_supported_region_has_no_findings():
     assert region_findings(_config(allowed=[US_MODEL]), "us-east-1") == []
 
 
-def test_unsupported_zone_region_errors_only_with_networking():
+def test_missing_zone_entry_warns_only_with_networking():
+    # A stale table must not block a Region AgentCore has since added.
     findings = region_findings(
         _config(model="global.anthropic.claude-sonnet-4-6", web_search="off"),
         "eu-central-1",
     )
-    errors = [f for f in findings if f.level == "error"]
-    assert [f.code for f in errors] == ["unsupported-zones"]
-    assert "eu-central-1" in errors[0].message
-    assert errors[0].render().startswith("[ERROR]")
+    assert [f.code for f in findings] == ["zones-unknown"]
+    assert findings[0].level == "warning"
+    assert "eu-central-1" in findings[0].message
+    assert findings[0].render().startswith("[WARN]")
 
     off = region_findings(_config(networking=False), "eu-central-1")
-    assert not [f for f in off if f.code == "unsupported-zones"]
+    assert not [f for f in off if f.code == "zones-unknown"]
 
 
 def test_unknown_model_warns_naming_region():
@@ -109,29 +111,31 @@ def test_region_findings_makes_no_aws_calls(monkeypatch):
 PRESET = Path(__file__).resolve().parents[1] / "presets" / "security-focused.yaml"
 
 
-def _design(tmp_path, monkeypatch, capsys, region):
+def _design(monkeypatch, capsys, region):
     from infra_utils import platform_config
 
     doc = yaml.safe_load(PRESET.read_text())
     doc["region"] = region
-    path = tmp_path / "platform.yaml"
-    path.write_text(yaml.safe_dump(doc))
-    monkeypatch.setattr(sys, "argv", ["platform_config", "--design", str(path)])
-    code = platform_config._main()
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "platform.yaml"
+        path.write_text(yaml.safe_dump(doc))
+        monkeypatch.setattr(sys, "argv", ["platform_config", "--design", str(path)])
+        code = platform_config._main()
     return code, capsys.readouterr().out
 
 
 def test_design_passes_and_prints_no_region_checks_in_a_supported_region(
-    tmp_path, monkeypatch, capsys
+    monkeypatch, capsys
 ):
-    code, out = _design(tmp_path, monkeypatch, capsys, "us-east-1")
+    code, out = _design(monkeypatch, capsys, "us-east-1")
     assert code == 0
     assert "Region checks" not in out
 
 
-def test_design_fails_on_a_region_error(tmp_path, monkeypatch, capsys):
-    # security-focused turns networking on; without a zone table entry design must fail.
+def test_design_warns_but_passes_without_a_zone_entry(monkeypatch, capsys):
+    # security-focused turns networking on; a missing zone table entry warns only.
     monkeypatch.delitem(runtime_network.SUPPORTED_ZONE_IDS, "us-east-1")
-    code, out = _design(tmp_path, monkeypatch, capsys, "us-east-1")
-    assert code == 1
-    assert "[ERROR]" in out and "us-east-1" in out
+    code, out = _design(monkeypatch, capsys, "us-east-1")
+    assert code == 0
+    assert "[WARN]" in out and "us-east-1" in out
+    assert "[ERROR]" not in out
