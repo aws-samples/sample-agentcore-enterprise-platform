@@ -5,10 +5,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
-STUB_MARKER = "<!-- posture-tiers: pending first generation -->"
 
 _spec = importlib.util.spec_from_file_location(
     "gen_posture_tiers", REPO_ROOT / "scripts" / "gen_posture_tiers.py"
@@ -19,17 +16,9 @@ _spec.loader.exec_module(gen)
 
 def test_committed_doc_matches_generator():
     committed = gen.OUTPUT.read_text(encoding="utf-8")
-    if STUB_MARKER in committed:
-        pytest.skip(
-            f"docs/POSTURE_TIERS.md not generated yet; run `{gen.REGENERATE_COMMAND}`"
-        )
     assert committed == gen.render(), (
         f"docs/POSTURE_TIERS.md is stale; run `{gen.REGENERATE_COMMAND}` and commit the result"
     )
-
-
-def test_generator_output_is_never_the_stub():
-    assert STUB_MARKER not in gen.render()
 
 
 def test_tier_mapping_points_at_existing_presets():
