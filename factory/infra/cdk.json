@@ -9,6 +9,6 @@
     "factory_dev_publish": "true",
     "factory_tracker": "asana",
     "asana_sync": "cloud",
-    "factory_paused": "true"
+    "factory_paused": "false"
   }
 }
