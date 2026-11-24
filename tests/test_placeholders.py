@@ -223,7 +223,14 @@ def test_real_deploy_refuses_shape_valid_org_placeholder():
 
 
 @pytest.mark.parametrize(
-    "preset", ["migration.yaml", "federated.yaml", "production.yaml"]
+    "preset",
+    [
+        "migration.yaml",
+        "federated.yaml",
+        "production.yaml",
+        "platform-team.yaml",
+        "distributed.yaml",
+    ],
 )
 def test_presets_with_placeholders_refuse_a_real_deploy(preset):
     # THE acceptance test: `deploy.sh deploy --profile migration` with the
@@ -237,6 +244,31 @@ def test_presets_with_placeholders_refuse_a_real_deploy(preset):
 def test_every_preset_loads_for_the_parity_gate(preset, monkeypatch):
     monkeypatch.setenv("PLATFORM_ALLOW_PLACEHOLDERS", "1")
     load_platform_config(PRESETS / preset)
+
+
+def _preset_errors(preset: str) -> str:
+    with pytest.raises(ValidationError) as e:
+        load_platform_config(PRESETS / preset)
+    return "\n".join(x["msg"] for x in e.value.errors())
+
+
+def test_platform_team_preset_names_its_sentinel_accounts():
+    msg = _preset_errors("platform-team.yaml")
+    assert "deployment.platform_account is a placeholder" in msg
+    assert "deployment.workload_accounts[0] is a placeholder" in msg
+    assert "deployment.federation.gateway_url is a placeholder" in msg
+    assert "deployment.federation.m2m_client_id is a placeholder" in msg
+
+
+def test_distributed_preset_names_its_sentinel_account():
+    msg = _preset_errors("distributed.yaml")
+    assert "deployment.platform_account is a placeholder" in msg
+
+
+def test_platform_team_preset_is_federated(monkeypatch):
+    monkeypatch.setenv("PLATFORM_ALLOW_PLACEHOLDERS", "1")
+    c = load_platform_config(PRESETS / "platform-team.yaml")
+    assert c.deployment.strategy == "federated"
 
 
 def test_migration_preset_placeholders_become_plan_warnings(monkeypatch):

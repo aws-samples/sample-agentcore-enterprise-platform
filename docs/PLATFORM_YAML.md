@@ -211,6 +211,7 @@ environment: dev
 region: us-east-1
 deployment:
   strategy: distributed
+  platform_account: "000000000000"  # REPLACE: aws sts get-caller-identity
 identity:
   idp: cognito
 agents:
@@ -408,17 +409,25 @@ observability:
 <summary><code>presets/platform-team.yaml</code></summary>
 
 ```yaml
-# Platform team: the full build — every module, distributed-ready.
+# Platform team: the full build — every module, as shared infrastructure.
 # Modules: 3 4 5 A 6 7 8 9 C E
-# Distributed strategy: each workload team deploys its own copy of this file
-# into its own account; org guardrails under control-library/terraform/ apply
-# org-wide once.
+# Federated strategy: one shared platform account runs auth and the gateway
+# for the organisation; workload accounts run their own runtimes against it.
+# Replace the sentinel account ids below with real ones before deploying.
+# See docs/MULTI_ACCOUNT.md.
 project: agentcore-workshop
 environment: dev
 region: us-east-1
 
 deployment:
-  strategy: distributed
+  strategy: federated
+  platform_account: "000000000000"      # REPLACE: aws sts get-caller-identity
+  workload_accounts: ["123456789012"]   # REPLACE: each workload account id
+  federation:                      # sentinels — copy from the platform account's `deploy.sh export`
+    gateway_url: "https://REPLACE_ME.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp"
+    issuer_url: "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_REPLACEME"
+    m2m_client_id: "REPLACE_ME"
+    m2m_client_secret_name: "agentcore/platform-m2m"   # pragma: allowlist secret — a NAME in the workload account
 
 identity:
   idp: cognito
