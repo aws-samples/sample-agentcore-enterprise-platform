@@ -221,6 +221,11 @@ class GatewayStack(cdk.Stack):
                 )
             )
         self._gateway = agentcore.CfnGateway(self, "Gateway", **gateway_props)
+        # role_arn only orders the Gateway after the Role, not after its
+        # DefaultPolicy (KMS / Lambda / web-search grants). A construct-level
+        # dependency covers every CfnResource under the role, including policies
+        # added later, so the Gateway is never created before its permissions.
+        self._gateway.node.add_dependency(gw_role)
 
         # Allow the Gateway to invoke the interceptor Lambda (after gateway ARN is known).
         if self._interceptor_fn is not None:
