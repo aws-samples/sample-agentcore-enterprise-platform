@@ -233,6 +233,30 @@ def test_unsupported_default_zones_are_pinned():
     assert name_to_id == UNSUPPORTED_FIRST
 
 
+def test_skip_flag_makes_no_aws_calls():
+    """Offline synth (contract-parity gate): no STS/EC2 request at all."""
+    factory, calls = _factory(UNSUPPORTED_FIRST)
+    warnings = []
+    result = resolve_vpc_zones(
+        "us-east-1",
+        ACCOUNT,
+        factory,
+        (FakeLookupError,),
+        environ={SKIP_AZ_PINNING_ENV: "1"},
+        warn=warnings.append,
+    )
+    assert result == (None, {})
+    assert calls == []
+    assert warnings and SKIP_AZ_PINNING_ENV in warnings[0]
+
+
+@pytest.mark.parametrize("zones", [{}, {"us-east-1a": "use1-az1"}])
+def test_too_few_zones_fail_through_resolver(zones):
+    factory, _ = _factory(zones)
+    with pytest.raises(ValueError, match="describe-availability-zones"):
+        resolve_vpc_zones("us-east-1", ACCOUNT, factory, (FakeLookupError,), environ={})
+
+
 def test_skip_flag_name():
     assert SKIP_AZ_PINNING_ENV == "AGENTCORE_SKIP_AZ_PINNING"
 

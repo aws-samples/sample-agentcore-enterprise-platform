@@ -14,8 +14,8 @@ Two things this module exists to prevent, both found in the original code:
 
 import os
 
-# Set to 1 only for offline synths: a failed AZ lookup then keeps max_azs=2
-# instead of failing the synth.
+# Set to 1 only for offline synths: AZ pinning is then skipped without any
+# AWS call and the VPC keeps max_azs=2 instead of failing the synth.
 SKIP_AZ_PINNING_ENV = "AGENTCORE_SKIP_AZ_PINNING"
 
 # AgentCore supports VPC connectivity only in specific Availability Zones, and
@@ -132,7 +132,8 @@ def default_zones_supported(
     supported = SUPPORTED_ZONE_IDS.get(region)
     if not supported:
         return True
-    return all(name_to_id[name] in supported for name in sorted(name_to_id)[:count])
+    defaults = sorted(name_to_id)[:count]
+    return len(defaults) == count and all(name_to_id[n] in supported for n in defaults)
 
 
 def resolve_vpc_zones(
@@ -152,7 +153,8 @@ def resolve_vpc_zones(
     unknown region, or default zones that are already supported (so existing
     deployments synthesize an identical template). The caller account must
     match ``target_account``, otherwise the mapping would be another
-    account's. A failed lookup raises unless AGENTCORE_SKIP_AZ_PINNING=1.
+    account's. A failed lookup raises. AGENTCORE_SKIP_AZ_PINNING=1 skips
+    pinning before any AWS call, so an offline synth stays deterministic.
     When pinning applies and an existing VPC named ``vpc_name`` already has
     subnets in unsupported zone ids, a warning tells the operator to destroy
     and redeploy the networking stack (no automatic migration).
@@ -160,33 +162,30 @@ def resolve_vpc_zones(
     if region not in SUPPORTED_ZONE_IDS:
         return None, {}
     environ = os.environ if environ is None else environ
-    skip = environ.get(SKIP_AZ_PINNING_ENV) == "1"
+    if environ.get(SKIP_AZ_PINNING_ENV) == "1":
+        warn(
+            f"WARNING: AZ pinning skipped; {SKIP_AZ_PINNING_ENV}=1 keeps "
+            "max_azs=2 without any AWS lookup (offline synth). "
+            "scripts/check_network.py verifies placement after deploy."
+        )
+        return None, {}
 
     def lookup(what, call):
         try:
             return call()
         except lookup_errors as exc:
-            if not skip:
-                raise RuntimeError(
-                    f"Could not {what} to choose AgentCore-supported AZs in "
-                    f"{region} ({exc}). Fix the AWS credentials or endpoint, "
-                    f"or set {SKIP_AZ_PINNING_ENV}=1 to keep max_azs=2 "
-                    "(offline synth only)."
-                ) from exc
-            warn(
-                f"WARNING: AZ pinning skipped ({exc}); {SKIP_AZ_PINNING_ENV}=1 "
-                "keeps max_azs=2. scripts/check_network.py verifies placement "
-                "after deploy."
-            )
-            return None
+            raise RuntimeError(
+                f"Could not {what} to choose AgentCore-supported AZs in "
+                f"{region} ({exc}). Fix the AWS credentials or endpoint, "
+                f"or set {SKIP_AZ_PINNING_ENV}=1 to keep max_azs=2 "
+                "(offline synth only)."
+            ) from exc
 
     if target_account:
         identity = lookup(
             "read the caller account (sts get-caller-identity)",
             lambda: client_factory("sts").get_caller_identity(),
         )
-        if identity is None:
-            return None, {}
         caller = identity["Account"]
         if caller != target_account:
             raise ValueError(
@@ -199,8 +198,6 @@ def resolve_vpc_zones(
         "list availability zones (ec2 describe-availability-zones)",
         lambda: zone_name_to_id(client_factory("ec2")),
     )
-    if name_to_id is None:
-        return None, {}
     if default_zones_supported(region, name_to_id, count):
         return None, name_to_id
     chosen = select_supported_zone_names(region, name_to_id, count)

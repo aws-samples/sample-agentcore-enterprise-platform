@@ -397,11 +397,7 @@ cdk.Tags.of(app).add("DeploymentMode", deployment_mode)
 networking_stack = None
 if enable_networking:
     import boto3
-    from botocore.exceptions import (
-        ClientError,
-        EndpointConnectionError,
-        NoCredentialsError,
-    )
+    from botocore.exceptions import BotoCoreError, ClientError
 
     from infra_utils.runtime_network import resolve_vpc_zones
 
@@ -409,13 +405,16 @@ if enable_networking:
     # supports only some ids. Pin the VPC to supported ids at synth time only
     # when the default pick is unsupported. Lookup failures, an account
     # mismatch, or too few supported zones fail the synth on purpose
-    # (AGENTCORE_SKIP_AZ_PINNING=1 allows an offline synth to keep max_azs=2).
+    # (AGENTCORE_SKIP_AZ_PINNING=1 skips the lookup entirely so an offline
+    # synth such as scripts/check-contract.sh keeps max_azs=2).
     # An existing VPC in unsupported AZs gets a destroy-and-redeploy warning.
     networking_azs, _az_map = resolve_vpc_zones(
         region,
         account,
         lambda service: boto3.client(service, region_name=region),
-        (NoCredentialsError, ClientError, EndpointConnectionError),
+        # BotoCoreError covers missing credentials, unreachable endpoints,
+        # timeouts and missing profiles: all become one clear synth error.
+        (BotoCoreError, ClientError),
         vpc_name=f"{prefix}-vpc",
     )
     if networking_azs:
