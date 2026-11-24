@@ -392,3 +392,33 @@ def test_the_pm_sees_only_the_factory_sections_and_comments_at_most_five_times()
     ]
     asana.apply_plan(b, reconcile, [])
     assert len(b.ops) == asana.MAX_PM_COMMENTS
+
+
+def _pr(head_repo, login="robobc-software-factory[bot]"):
+    return {
+        "number": 7,
+        "html_url": "https://github.com/o/r/pull/7",
+        "user": {"login": login},
+        "head": {"ref": "factory/task/900001", "repo": {"full_name": head_repo}},
+        "body": "",
+    }
+
+
+def test_an_in_repo_branch_reaches_the_board_and_a_fork_needs_write_access(monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        server, "_can_write", lambda login, token: seen.append(login) or False
+    )
+    snap = {"project": "p", "tasks": [task("900001", section=asana.IN_REVIEW)]}
+    monkeypatch.setattr(asana, "load_snapshot", lambda session: snap)
+    monkeypatch.setattr(server.boto3, "Session", lambda **k: None)
+    out = server.board_link(
+        _pr(server.REPO), "tok", False, "merge_handler", asana.DONE, "Merged"
+    )
+    assert (
+        out["board"] == "dry_run" and seen == []
+    )  # the factory's own PR: no collaborator check
+    out = server.board_link(
+        _pr("someone/fork", "someone"), "tok", False, "merge_handler", asana.DONE, "x"
+    )
+    assert out["board"] == "skipped" and seen == ["someone"]

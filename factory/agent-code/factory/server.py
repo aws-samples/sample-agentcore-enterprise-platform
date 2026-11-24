@@ -692,15 +692,18 @@ def board_link(
 ) -> dict:
     """Asana mode: put a PR's news on the task it names, and move the task to `section`.
 
-    Only for a PR whose author has write access to the repo: anyone can open a PR on a public
-    repo and write any gid in it, and the board is private. Only for a task on the board, open,
+    Only for a PR someone with write access stands behind: anyone can open a PR on a public
+    repo and write any gid in it, and the board is private. A branch in this repository (not a
+    fork) was pushed by someone with write access or by the factory's own App, so it counts;
+    a fork's PR counts only if its author has write access. Only for a task on the board, open,
     and in one of the factory's sections; a task elsewhere on the board is left alone.
     """
     gid = asana.task_ref(pr)
     if not gid:
         return {}
     author = (pr.get("user") or {}).get("login", "")
-    if not (token and _can_write(author, token)):
+    head_repo = (((pr.get("head") or {}).get("repo")) or {}).get("full_name", "")
+    if not token or (head_repo != REPO and not _can_write(author, token)):
         return {"board": "skipped", "board_reason": f"@{author} has no write access"}
     session = boto3.Session(region_name=REGION)
     try:
