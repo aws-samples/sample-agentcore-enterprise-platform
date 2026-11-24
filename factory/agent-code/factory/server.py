@@ -602,6 +602,33 @@ def next_revision(tasks: list[dict], open_prs: list[dict], tried: dict) -> tuple
     return best
 
 
+def pr_review_context(number: int, token: str) -> tuple[list[str], list[str]]:
+    """The latest review's summary and inline findings (untrusted text), and the paths those
+    findings point at. Older reviews are left out: their findings are usually addressed."""
+    reviews = [
+        r
+        for r in github.request("GET", f"/repos/{REPO}/pulls/{number}/reviews", token)
+        if r.get("body")
+    ]
+    if not reviews:
+        return [], []
+    last = reviews[-1]
+    inline = [
+        c
+        for c in github.request(
+            "GET", f"/repos/{REPO}/pulls/{number}/comments?per_page=100", token
+        )
+        if c.get("pull_request_review_id") == last.get("id")
+    ]
+    text = str(last.get("body") or "") + "".join(
+        f"\n\n{c.get('path')}:{c.get('line') or c.get('original_line')}\n{c.get('body')}"
+        for c in inline
+    )
+    return [untrusted.clean(text, 12000, tail=False)], sorted(
+        {str(c.get("path")) for c in inline if c.get("path")}
+    )
+
+
 def handle_revision(
     session, token: str, open_prs: list[dict], payload: dict
 ) -> dict | None:
@@ -614,18 +641,13 @@ def handle_revision(
         return None
     t, pr_row, asks = pick
     full = github.get_pull(REPO, int(pr_row["number"]), token)
-    reviews = [
-        untrusted.clean(str(r.get("body") or ""), 4000, tail=False)
-        for r in github.request(
-            "GET", f"/repos/{REPO}/pulls/{pr_row['number']}/reviews", token
-        )[-3:]
-        if r.get("body")
-    ]
+    reviews, finding_paths = pr_review_context(int(pr_row["number"]), token)
     pr = {
         "number": pr_row["number"],
         "head_sha": full["head"]["sha"],
         "files": pr_row["files"],
         "url": full["html_url"],
+        "finding_paths": finding_paths,
     }
     publish = bool(DEV_PUBLISH and token and not payload.get("dry_run"))
     task = asana.developer_task(t)

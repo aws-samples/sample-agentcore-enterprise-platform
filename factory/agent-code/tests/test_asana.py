@@ -463,3 +463,12 @@ def test_a_revision_needs_an_open_factory_pr_and_a_new_comment():
         server.next_revision([with_pr], prs, {"900011": "2026-11-24T13:00:00+00:00"})
         is None
     )
+
+
+def test_a_revision_may_edit_files_the_maintainer_names_but_never_factory():
+    from factory.developer import allowed_paths
+
+    named = ["scripts/check-contract.sh", "factory/agent-code/factory/server.py"]
+    ok, refused = allowed_paths(["app.py", *named], "set it in scripts/check-contract.sh")
+    assert "scripts/check-contract.sh" in ok and "app.py" in ok
+    assert any("factory/" in r for r in refused)

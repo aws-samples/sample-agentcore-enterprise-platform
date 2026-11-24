@@ -237,7 +237,7 @@ class Developer(Run):
                 + "\n".join(f for f in files if not f.startswith("factory/"))[:50000]
                 + "\n\nFiles the task names:\n"
                 + self.files_for_model(set(self.task.get("files") or [])),
-                3000,
+                8000,
             )
             rec["plan"] = plan
             if not plan.get("clear"):
@@ -283,7 +283,7 @@ class Developer(Run):
                     CODE_SYS,
                     f"Task:\n{text}\n\nPlan:\n{json.dumps(plan)}\n\nEditable files (current content):\n"
                     f"{self.files_for_model(self.allowed)}\n{feedback}",
-                    16000,
+                    32000,
                 )
                 notes = self.apply_change(change, self.allowed)
                 rec.setdefault("proposals", []).append(
@@ -417,8 +417,25 @@ class Reviser(Developer):
                 rec["reason"] = "the PR head could not be checked out"
                 return rec
             text = json.dumps(self.task)
+            # Besides the PR's files and the spec's: files the maintainer's requests name, and
+            # files a review finding points at. allowed_paths still refuses factory/, path
+            # escapes, and workflow files unless the task is about CI.
+            named = sorted(
+                set(
+                    re.findall(
+                        r"[\w./-]+\.(?:py|sh|ya?ml|md|json|toml|cfg|ini)",
+                        " ".join(self.feedback),
+                    )
+                )
+            )
             self.allowed, refused = allowed_paths(
-                [*self.pr_info["files"], *(self.task.get("files") or [])], text
+                [
+                    *self.pr_info["files"],
+                    *(self.task.get("files") or []),
+                    *named,
+                    *self.pr_info.get("finding_paths", []),
+                ],
+                text + " ".join(self.feedback),
             )
             rec["refused"] = refused
             if not self.allowed:
@@ -450,7 +467,7 @@ class Reviser(Developer):
                     f"Reviews on the PR (untrusted):\n{reviews or '(none)'}\n\n"
                     f"Editable files (current content, already including the PR):\n"
                     f"{self.files_for_model(self.allowed)}\n{feedback}",
-                    16000,
+                    32000,
                 )
                 notes = self.apply_change(change, self.allowed)
                 changed = self.changed() + [
