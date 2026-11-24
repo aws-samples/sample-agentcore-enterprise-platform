@@ -12,6 +12,12 @@ Two things this module exists to prevent, both found in the original code:
     "network isolated" deployment could come back on the public network.
 """
 
+import os
+
+# Set to 1 only for offline synths: a failed AZ lookup then keeps max_azs=2
+# instead of failing the synth.
+SKIP_AZ_PINNING_ENV = "FACTORY_SKIP_AZ_PINNING"
+
 # AgentCore supports VPC connectivity only in specific Availability Zones, and
 # an AZ *name* (us-east-1a) maps to a different AZ *id* (use1-az1) in every
 # account — so a VPC that works in one account can fail in the next. Source:
@@ -114,6 +120,86 @@ def select_supported_zone_names(
             f"{region}`."
         )
     return chosen[:count]
+
+
+def default_zones_supported(
+    region: str, name_to_id: dict[str, str], count: int = 2
+) -> bool:
+    """Whether CDK's default pick (first ``count`` sorted names) is supported.
+
+    An unknown region counts as supported: keep today's behaviour.
+    """
+    supported = SUPPORTED_ZONE_IDS.get(region)
+    if not supported:
+        return True
+    return all(name_to_id[name] in supported for name in sorted(name_to_id)[:count])
+
+
+def resolve_vpc_zones(
+    region: str,
+    target_account: str,
+    client_factory,
+    lookup_errors: tuple,
+    *,
+    environ=None,
+    warn=print,
+    count: int = 2,
+) -> tuple[list[str] | None, dict[str, str]]:
+    """AZ names to pin the VPC to, plus the account's name -> id mapping.
+
+    Returns (None, ...) when CDK's default max_azs choice should be kept: an
+    unknown region, or default zones that are already supported (so existing
+    deployments synthesize an identical template). The caller account must
+    match ``target_account``, otherwise the mapping would be another
+    account's. A failed lookup raises unless FACTORY_SKIP_AZ_PINNING=1.
+    """
+    if region not in SUPPORTED_ZONE_IDS:
+        return None, {}
+    environ = os.environ if environ is None else environ
+    skip = environ.get(SKIP_AZ_PINNING_ENV) == "1"
+
+    def lookup(what, call):
+        try:
+            return call()
+        except lookup_errors as exc:
+            if not skip:
+                raise RuntimeError(
+                    f"Could not {what} to choose AgentCore-supported AZs in "
+                    f"{region} ({exc}). Fix the AWS credentials or endpoint, "
+                    f"or set {SKIP_AZ_PINNING_ENV}=1 to keep max_azs=2 "
+                    "(offline synth only)."
+                ) from exc
+            warn(
+                f"WARNING: AZ pinning skipped ({exc}); {SKIP_AZ_PINNING_ENV}=1 "
+                "keeps max_azs=2. scripts/check_network.py verifies placement "
+                "after deploy."
+            )
+            return None
+
+    if target_account:
+        identity = lookup(
+            "read the caller account (sts get-caller-identity)",
+            lambda: client_factory("sts").get_caller_identity(),
+        )
+        if identity is None:
+            return None, {}
+        caller = identity["Account"]
+        if caller != target_account:
+            raise ValueError(
+                f"AWS credentials belong to account {caller}, but the target "
+                f"account (CDK_DEFAULT_ACCOUNT) is {target_account}. AZ name -> "
+                "id mappings differ per account; use credentials for the "
+                "target account."
+            )
+    name_to_id = lookup(
+        "list availability zones (ec2 describe-availability-zones)",
+        lambda: zone_name_to_id(client_factory("ec2")),
+    )
+    if name_to_id is None:
+        return None, {}
+    if default_zones_supported(region, name_to_id, count):
+        return None, name_to_id
+    return select_supported_zone_names(region, name_to_id, count), name_to_id
 
 
 def zone_name_to_id(ec2_client) -> dict[str, str]:

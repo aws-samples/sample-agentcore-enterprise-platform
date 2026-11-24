@@ -6,9 +6,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import aws_cdk as cdk
+import pytest
 from aws_cdk.assertions import Template
 
 from stacks.networking_stack import NetworkingStack
+
+
+@pytest.fixture(autouse=True)
+def _offline_synth(monkeypatch):
+    # Offline synth: allow the max_azs fallback instead of failing closed.
+    monkeypatch.setenv("FACTORY_SKIP_AZ_PINNING", "1")
 
 
 def _synth(**kwargs):

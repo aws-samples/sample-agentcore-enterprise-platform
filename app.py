@@ -403,36 +403,31 @@ if enable_networking:
         NoCredentialsError,
     )
 
-    from infra_utils.runtime_network import (
-        select_supported_zone_names,
-        zone_name_to_id,
-    )
+    from infra_utils.runtime_network import resolve_vpc_zones
 
     # AZ names map to different AZ ids per account, and AgentCore VPC mode
-    # supports only some ids. Pin the VPC to supported ids at synth time; a
-    # ValueError from the selection fails the synth on purpose.
-    networking_azs = None
-    try:
-        _az_map = zone_name_to_id(boto3.client("ec2", region_name=region))
-    except (NoCredentialsError, ClientError, EndpointConnectionError) as exc:
+    # supports only some ids. Pin the VPC to supported ids at synth time only
+    # when the default pick is unsupported. Lookup failures, an account
+    # mismatch, or too few supported zones fail the synth on purpose
+    # (FACTORY_SKIP_AZ_PINNING=1 allows an offline synth to keep max_azs=2).
+    networking_azs, _az_map = resolve_vpc_zones(
+        region,
+        account,
+        lambda service: boto3.client(service, region_name=region),
+        (NoCredentialsError, ClientError, EndpointConnectionError),
+    )
+    if networking_azs:
         print(
-            f"WARNING: AZ pinning skipped ({exc}); keeping max_azs=2. "
-            "scripts/check_network.py verifies placement after deploy."
+            "Networking AZs: "
+            + ", ".join(f"{n} ({_az_map[n]})" for n in networking_azs)
         )
-    else:
-        networking_azs = select_supported_zone_names(region, _az_map)
-        if networking_azs:
-            print(
-                "Networking AZs: "
-                + ", ".join(f"{n} ({_az_map[n]})" for n in networking_azs)
+        if account:
+            # Seed CDK's AZ lookup so it validates the pinned names
+            # against the real list instead of its dummy placeholders.
+            app.node.set_context(
+                f"availability-zones:account={account}:region={region}",
+                sorted(_az_map),
             )
-            if account:
-                # Seed CDK's AZ lookup so it validates the pinned names
-                # against the real list instead of its dummy placeholders.
-                app.node.set_context(
-                    f"availability-zones:account={account}:region={region}",
-                    sorted(_az_map),
-                )
     networking_stack = NetworkingStack(
         app,
         f"{prefix}-networking",

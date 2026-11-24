@@ -15,12 +15,56 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from infra_utils.runtime_network import (
+    SKIP_AZ_PINNING_ENV,
     SUPPORTED_ZONE_IDS,
     build_network_config,
+    resolve_vpc_zones,
     select_supported_zone_names,
     unsupported_zone_ids,
     zone_name_to_id,
 )
+
+ACCOUNT = "111111111111"
+UNSUPPORTED_FIRST = {
+    "us-east-1a": "use1-az3",
+    "us-east-1b": "use1-az5",
+    "us-east-1c": "use1-az1",
+    "us-east-1d": "use1-az4",
+}
+
+
+class FakeLookupError(Exception):
+    pass
+
+
+def _factory(zones, caller=ACCOUNT, fail=False):
+    calls = []
+
+    class Sts:
+        def get_caller_identity(self):
+            if fail:
+                raise FakeLookupError("no credentials")
+            return {"Account": caller}
+
+    class Ec2:
+        def describe_availability_zones(self):
+            return {
+                "AvailabilityZones": [
+                    {
+                        "ZoneName": name,
+                        "ZoneId": zone_id,
+                        "State": "available",
+                        "OptInStatus": "opt-in-not-required",
+                    }
+                    for name, zone_id in zones.items()
+                ]
+            }
+
+    def factory(service):
+        calls.append(service)
+        return Sts() if service == "sts" else Ec2()
+
+    return factory, calls
 
 
 def test_public_mode_is_unchanged():
@@ -123,6 +167,57 @@ def test_zone_name_to_id_excludes_opt_in_and_unavailable_zones():
             }
 
     assert zone_name_to_id(FakeEc2()) == {"us-east-1a": "use1-az1"}
+
+
+def test_lookup_failure_fails_closed():
+    factory, _ = _factory(UNSUPPORTED_FIRST, fail=True)
+    with pytest.raises(RuntimeError, match=SKIP_AZ_PINNING_ENV):
+        resolve_vpc_zones("us-east-1", ACCOUNT, factory, (FakeLookupError,), environ={})
+
+
+def test_lookup_failure_falls_back_only_with_skip_flag():
+    factory, _ = _factory(UNSUPPORTED_FIRST, fail=True)
+    warnings = []
+    result = resolve_vpc_zones(
+        "us-east-1",
+        ACCOUNT,
+        factory,
+        (FakeLookupError,),
+        environ={SKIP_AZ_PINNING_ENV: "1"},
+        warn=warnings.append,
+    )
+    assert result == (None, {})
+    assert warnings and "WARNING" in warnings[0]
+
+
+def test_account_mismatch_fails_before_az_lookup():
+    factory, calls = _factory(UNSUPPORTED_FIRST, caller="222222222222")
+    with pytest.raises(ValueError) as excinfo:
+        resolve_vpc_zones("us-east-1", ACCOUNT, factory, (FakeLookupError,), environ={})
+    assert "222222222222" in str(excinfo.value)
+    assert ACCOUNT in str(excinfo.value)
+    assert calls == ["sts"]
+
+
+def test_supported_default_zones_keep_max_azs():
+    zones = {
+        "us-east-1a": "use1-az1",
+        "us-east-1b": "use1-az2",
+        "us-east-1c": "use1-az3",
+    }
+    factory, _ = _factory(zones)
+    assert resolve_vpc_zones(
+        "us-east-1", ACCOUNT, factory, (FakeLookupError,), environ={}
+    ) == (None, zones)
+
+
+def test_unsupported_default_zones_are_pinned():
+    factory, _ = _factory(UNSUPPORTED_FIRST)
+    zones, name_to_id = resolve_vpc_zones(
+        "us-east-1", ACCOUNT, factory, (FakeLookupError,), environ={}
+    )
+    assert zones == ["us-east-1c", "us-east-1d"]
+    assert name_to_id == UNSUPPORTED_FIRST
 
 
 def test_zone_id_table_is_well_formed():
