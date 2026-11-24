@@ -296,10 +296,31 @@ class Developer(Run):
             return []
         r = sh([tool("python3"), "scripts/gen_platform_reference.py"], wt, self.work)
         self.allowed.add("docs/PLATFORM_YAML.md")
+        if "infra_utils/platform_config.py" in self.allowed:
+            # New schema keys need a row in the generator's DESCRIPTIONS / ENV tables.
+            self.allowed.add("scripts/gen_platform_reference.py")
+        if r.returncode != 0:
+            return [
+                (
+                    "scripts/gen_platform_reference.py failed (its DESCRIPTIONS/ENV tables "
+                    f"must match the schema): {r.stdout[-600:]}"
+                )
+            ]
+        doc = wt / "docs" / "PLATFORM_YAML.md"
+        todo = [
+            line[:160]
+            for line in (doc.read_text().splitlines() if doc.exists() else [])
+            if line.startswith("|") and line.rstrip().endswith("| TODO |")
+        ]
         return (
-            []
-            if r.returncode == 0
-            else [f"gen_platform_reference.py failed: {r.stdout[-300:]}"]
+            [
+                (
+                    "docs/PLATFORM_YAML.md has undescribed keys; add each to DESCRIPTIONS "
+                    f"in scripts/gen_platform_reference.py: {todo[:10]}"
+                )
+            ]
+            if todo
+            else []
         )
 
     def widen_scope(self, failing: dict) -> list[str]:

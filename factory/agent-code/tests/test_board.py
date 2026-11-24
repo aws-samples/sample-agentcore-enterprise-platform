@@ -336,3 +336,27 @@ def test_failing_detail_reruns_new_pytest_failures_with_tracebacks(tmp_path):
     assert "imports stacks" in out["pytest"]
     assert "test_old" not in out["pytest"]
     assert out["lint-cicd"] == "lint says no"
+
+
+def test_regenerate_opens_the_generator_and_names_undescribed_keys(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from factory import developer
+
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "scripts" / "gen_platform_reference.py").write_text(
+        "from pathlib import Path\n"
+        "Path('docs/PLATFORM_YAML.md').write_text("
+        "'| Key | Type | Default | Env override | Description |\\n"
+        "| `identity.audience` | str | — | — | TODO |\\n"
+        "| `identity.idp` | str | — | — | Which IdP. |\\n')\n"
+    )
+    dev = SimpleNamespace(work=tmp_path, allowed={"infra_utils/platform_config.py"})
+    notes = developer.Developer.regenerate(dev, tmp_path)
+    assert "scripts/gen_platform_reference.py" in dev.allowed
+    assert "docs/PLATFORM_YAML.md" in dev.allowed
+    assert len(notes) == 1 and "identity.audience" in notes[0]
+    assert "identity.idp" not in notes[0]
