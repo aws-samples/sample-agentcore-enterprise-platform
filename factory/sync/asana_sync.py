@@ -59,7 +59,11 @@ def iso(t: str | None) -> str:
 # --- the MCP client ------------------------------------------------------------------------
 
 
-class McpError(RuntimeError):
+class BoardError(RuntimeError):
+    """Asana refused or could not be reached, whichever transport carried the call."""
+
+
+class McpError(BoardError):
     pass
 
 
@@ -139,10 +143,34 @@ class Mcp:
         self.proc.terminate()
 
 
-class Board:
-    """The board operations the sync needs, over the MCP."""
+FIELDS = "name,notes,completed,modified_at,created_at,created_by,memberships.section.name,memberships.project.gid"
 
-    FIELDS = "name,notes,completed,modified_at,created_at,created_by,memberships.section.name,memberships.project.gid"
+
+def task_row(t: dict, project: str) -> dict:
+    """One Asana task as the snapshot stores it. moved_by/moved_at start as the creator."""
+    section = next(
+        (
+            (m.get("section") or {}).get("name")
+            for m in t.get("memberships") or []
+            if (m.get("project") or {}).get("gid", project) == project
+        ),
+        None,
+    )
+    return {
+        "gid": t["gid"],
+        "name": t.get("name", ""),
+        "notes": (t.get("notes") or "")[:8000],
+        "section": section,
+        "completed": bool(t.get("completed")),
+        "modified_at": iso(t.get("modified_at")),
+        "created_by": (t.get("created_by") or {}).get("gid", ""),
+        "moved_by": (t.get("created_by") or {}).get("gid", ""),
+        "moved_at": iso(t.get("created_at")),
+    }
+
+
+class Board:
+    """The board operations the sync needs, over the MCP (workstation)."""
 
     def __init__(self, mcp: Mcp, project: str):
         self.mcp, self.project = mcp, project
@@ -154,32 +182,12 @@ class Board:
         }
 
     def tasks(self) -> list[dict]:
-        out = []
-        for t in self.mcp.pages(
-            "GetTasksFromProject", project_gid=self.project, opt_fields=self.FIELDS
-        ):
-            section = next(
-                (
-                    (m.get("section") or {}).get("name")
-                    for m in t.get("memberships") or []
-                    if (m.get("project") or {}).get("gid", self.project) == self.project
-                ),
-                None,
+        return [
+            task_row(t, self.project)
+            for t in self.mcp.pages(
+                "GetTasksFromProject", project_gid=self.project, opt_fields=FIELDS
             )
-            out.append(
-                {
-                    "gid": t["gid"],
-                    "name": t.get("name", ""),
-                    "notes": (t.get("notes") or "")[:8000],
-                    "section": section,
-                    "completed": bool(t.get("completed")),
-                    "modified_at": iso(t.get("modified_at")),
-                    "created_by": (t.get("created_by") or {}).get("gid", ""),
-                    "moved_by": (t.get("created_by") or {}).get("gid", ""),
-                    "moved_at": iso(t.get("created_at")),
-                }
-            )
-        return out
+        ]
 
     def stories(self, gid: str) -> list[dict]:
         return self.mcp.pages("GetStoriesForTask", task_gid=gid)
@@ -199,6 +207,98 @@ class Board:
 
     def complete_task(self, gid: str) -> None:
         self.mcp.call("UpdateTask", task_gid=gid, completed="true")
+
+
+class RestError(BoardError):
+    pass
+
+
+class RestBoard(Board):
+    """The same operations over the Asana REST API with an OAuth access token (in AWS)."""
+
+    API = "https://app.asana.com/api/1.0"
+
+    def __init__(self, token: str, project: str, opener=None):
+        import urllib.request
+
+        self._token, self.project = token, project
+        self._open = opener or urllib.request.urlopen
+
+    def _call(
+        self,
+        method: str,
+        path: str,
+        body: dict | None = None,
+        params: dict | None = None,
+    ) -> dict:
+        import urllib.error
+        import urllib.parse
+        import urllib.request
+
+        url = self.API + path + ("?" + urllib.parse.urlencode(params) if params else "")
+        req = urllib.request.Request(
+            url,
+            method=method,
+            data=json.dumps({"data": body}).encode() if body is not None else None,
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+        )
+        # Unredirected: a redirect never carries the token to another host.
+        req.add_unredirected_header("Authorization", f"Bearer {self._token}")
+        try:
+            with self._open(req, timeout=30) as r:  # fixed https://app.asana.com base
+                return json.loads(r.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            raise RestError(
+                f"Asana {method} {path} -> {e.code}: {e.read(300).decode(errors='replace')}"
+            ) from None
+        except urllib.error.URLError as e:
+            raise RestError(f"Asana {method} {path}: {e.reason}") from None
+
+    def _pages(self, path: str, params: dict | None = None) -> list[dict]:
+        out, params = [], {**(params or {}), "limit": 100}
+        while True:
+            page = self._call("GET", path, params=params)
+            out += page.get("data", [])
+            offset = (page.get("next_page") or {}).get("offset")
+            if not offset:
+                return out
+            params["offset"] = offset
+
+    def sections(self) -> dict[str, str]:
+        return {
+            s["name"]: s["gid"]
+            for s in self._pages(f"/projects/{self.project}/sections")
+        }
+
+    def tasks(self) -> list[dict]:
+        return [
+            task_row(t, self.project)
+            for t in self._pages(
+                f"/projects/{self.project}/tasks", {"opt_fields": FIELDS}
+            )
+        ]
+
+    def stories(self, gid: str) -> list[dict]:
+        fields = "created_at,created_by,text,resource_subtype"
+        return self._pages(f"/tasks/{gid}/stories", {"opt_fields": fields})
+
+    def create_task(self, section_gid: str, name: str, notes: str) -> str:
+        body = {
+            "name": name,
+            "notes": notes,
+            "projects": [self.project],
+            "memberships": [{"project": self.project, "section": section_gid}],
+        }
+        return self._call("POST", "/tasks", body)["data"]["gid"]
+
+    def move_task(self, gid: str, section_gid: str) -> None:
+        self._call("POST", f"/sections/{section_gid}/addTask", {"task": gid})
+
+    def comment(self, gid: str, text: str) -> None:
+        self._call("POST", f"/tasks/{gid}/stories", {"text": text})
+
+    def complete_task(self, gid: str) -> None:
+        self._call("PUT", f"/tasks/{gid}", {"completed": True})
 
 
 # --- the rules: pure functions over a Board, so tests need no MCP ---------------------------
@@ -305,7 +405,7 @@ def apply_pending(ops: list[dict], board: Board, claim=lambda op: True) -> list[
             out.append({"op_id": op["op_id"], "status": "applied", "asana_gid": gid})
             if op["op"] == "create_task":
                 in_project.add(gid)
-        except (McpError, KeyError, ValueError) as e:
+        except (BoardError, KeyError, ValueError) as e:
             out.append(
                 {"op_id": op["op_id"], "status": "failed", "error": str(e)[:300]}
             )
@@ -315,9 +415,64 @@ def apply_pending(ops: list[dict], board: Board, claim=lambda op: True) -> list[
 # --- DynamoDB ------------------------------------------------------------------------------
 
 
+def pending_ops(ops_t, project: str) -> list[dict]:
+    from boto3.dynamodb.conditions import Key
+
+    pending, kw = (
+        [],
+        {
+            "IndexName": "by_status",
+            "KeyConditionExpression": Key("status").eq("pending"),
+        },
+    )
+    while True:
+        page = ops_t.query(**kw)
+        pending += [o for o in page["Items"] if o.get("project") == project]
+        if "LastEvaluatedKey" not in page:
+            return pending
+        kw["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+
+
+def sync_once(board: Board, ops_t, snap_t, pending: list[dict]) -> dict:
+    """Apply the pending ops, record their status, and replace the snapshot. One pass."""
+
+    def claim(op) -> bool:
+        try:
+            ops_t.update_item(
+                Key={"op_id": op["op_id"]},
+                UpdateExpression="SET #s = :applying",
+                ConditionExpression="#s = :pending",
+                ExpressionAttributeNames={"#s": "status"},
+                ExpressionAttributeValues={
+                    ":applying": "applying",
+                    ":pending": "pending",
+                },
+            )
+            return True
+        except ops_t.meta.client.exceptions.ConditionalCheckFailedException:
+            return False  # another sync took it
+
+    results = apply_pending(pending, board, claim)
+    at = datetime.now(UTC).isoformat(timespec="seconds")
+    for r in results:
+        ops_t.update_item(
+            Key={"op_id": r["op_id"]},
+            UpdateExpression="SET #s = :s, applied_at = :at, asana_gid = :g, #e = :e",
+            ExpressionAttributeNames={"#s": "status", "#e": "error"},
+            ExpressionAttributeValues={
+                ":s": r["status"],
+                ":at": at,
+                ":g": r.get("asana_gid", ""),
+                ":e": r.get("error", ""),
+            },
+        )
+    snap_t.put_item(Item=snapshot(board))
+    bad = [r for r in results if r["status"] != "applied"]
+    return {"applied": len(results) - len(bad), "not_applied": bad, "snapshot_at": at}
+
+
 def main(argv: list[str] | None = None) -> int:
     import boto3
-    from boto3.dynamodb.conditions import Key
 
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument(
@@ -367,19 +522,7 @@ def main(argv: list[str] | None = None) -> int:
             profile_name=args.profile, region_name=args.region
         ).resource("dynamodb")
         ops_t, snap_t = ddb.Table(args.ops_table), ddb.Table(args.snapshot_table)
-        pending, kw = (
-            [],
-            {
-                "IndexName": "by_status",
-                "KeyConditionExpression": Key("status").eq("pending"),
-            },
-        )
-        while True:
-            page = ops_t.query(**kw)
-            pending += [o for o in page["Items"] if o.get("project") == args.project]
-            if "LastEvaluatedKey" not in page:
-                break
-            kw["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+        pending = pending_ops(ops_t, args.project)
         if args.dry_run:
             snap = snapshot(board)
             in_project = {t["gid"] for t in json.loads(snap["tasks"])}
@@ -403,54 +546,71 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
 
-        def claim(op) -> bool:
-            try:
-                ops_t.update_item(
-                    Key={"op_id": op["op_id"]},
-                    UpdateExpression="SET #s = :applying",
-                    ConditionExpression="#s = :pending",
-                    ExpressionAttributeNames={"#s": "status"},
-                    ExpressionAttributeValues={
-                        ":applying": "applying",
-                        ":pending": "pending",
-                    },
-                )
-                return True
-            except ops_t.meta.client.exceptions.ConditionalCheckFailedException:
-                return False  # another sync took it
-
-        results = apply_pending(pending, board, claim)
-        at = datetime.now(UTC).isoformat(timespec="seconds")
-        for r in results:
-            ops_t.update_item(
-                Key={"op_id": r["op_id"]},
-                UpdateExpression="SET #s = :s, applied_at = :at, asana_gid = :g, #e = :e",
-                ExpressionAttributeNames={"#s": "status", "#e": "error"},
-                ExpressionAttributeValues={
-                    ":s": r["status"],
-                    ":at": at,
-                    ":g": r.get("asana_gid", ""),
-                    ":e": r.get("error", ""),
-                },
-            )
-        snap_t.put_item(Item=snapshot(board))
-        bad = [r for r in results if r["status"] != "applied"]
-        print(
-            json.dumps(
-                {
-                    "applied": len(results) - len(bad),
-                    "not_applied": bad,
-                    "snapshot_at": at,
-                },
-                default=str,
-            )
-        )
+        print(json.dumps(sync_once(board, ops_t, snap_t, pending), default=str))
         return 0
     except McpError as e:
         print(f"asana sync: {e}", file=sys.stderr)
         return 2
     finally:
         mcp.close()
+
+
+# --- in AWS: AgentCore Identity holds the Asana OAuth app and the consented token -----------
+
+PROVIDER = os.environ.get("FACTORY_ASANA_PROVIDER", "software-factory-asana")
+TOKEN_USER = (
+    "factory-operator"  # the token vault key the one-time consent is stored under
+)
+# What the sync does on the board: read projects, sections, tasks and stories; move and
+# complete tasks; add comments. Override with FACTORY_ASANA_SCOPES (space-separated).
+SCOPES = os.environ.get(
+    "FACTORY_ASANA_SCOPES",
+    "projects:read tasks:read tasks:write stories:read stories:write",
+).split()
+
+
+def asana_token(ac, workload: str, return_url: str, force: bool = False) -> dict:
+    """{"accessToken": ...} once consent was given, else {"authorizationUrl", "sessionUri"}."""
+    wat = ac.get_workload_access_token_for_user_id(
+        workloadName=workload, userId=TOKEN_USER
+    )["workloadAccessToken"]
+    return ac.get_resource_oauth2_token(
+        workloadIdentityToken=wat,
+        resourceCredentialProviderName=PROVIDER,
+        scopes=SCOPES,
+        oauth2Flow="USER_FEDERATION",
+        resourceOauth2ReturnUrl=return_url,
+        forceAuthentication=force,
+    )
+
+
+def handler(event, context):
+    """Lambda: one sync pass with the token AgentCore Identity keeps fresh. No Asana secret here."""
+    import boto3
+
+    project = os.environ["FACTORY_ASANA_PROJECT"]
+    resp = asana_token(
+        boto3.client("bedrock-agentcore"),
+        os.environ["WORKLOAD_NAME"],
+        os.environ["RETURN_URL"],
+    )
+    if not resp.get("accessToken"):
+        out = {
+            "outcome": "needs_consent",
+            "reason": "run factory/sync/asana_identity_setup.py once",
+        }
+        print(json.dumps(out))
+        return out
+    ddb = boto3.resource("dynamodb")
+    ops_t = ddb.Table(os.environ["FACTORY_ASANA_OPS_TABLE"])
+    snap_t = ddb.Table(os.environ["FACTORY_ASANA_SNAPSHOT_TABLE"])
+    board = RestBoard(resp["accessToken"], project)
+    out = {
+        "outcome": "synced",
+        **sync_once(board, ops_t, snap_t, pending_ops(ops_t, project)),
+    }
+    print(json.dumps(out, default=str))
+    return out
 
 
 if __name__ == "__main__":

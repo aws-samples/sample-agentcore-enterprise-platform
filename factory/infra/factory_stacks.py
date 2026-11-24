@@ -241,6 +241,10 @@ class SoftwareFactoryStack(cdk.Stack):
         self._cost_alarms(self._budget())
         self._readonly_role(data, coordinator_role_name)
         self._asana_sync_role(data, coordinator_role_name)
+        # -c asana_sync=cloud (Asana mode): the sync runs here as a Lambda, with the Asana OAuth
+        # token AgentCore Identity keeps; the workstation sync stays available as a fallback.
+        if self.tracker == "asana" and ctx("asana_sync", "workstation") == "cloud":
+            self._asana_cloud_sync(data)
         cdk.CfnOutput(self, "WebhookUrl", value=f"{api.api_endpoint}/github")
         cdk.CfnOutput(self, "RuntimeArn", value=runtime_arn)
 
@@ -891,6 +895,138 @@ class SoftwareFactoryStack(cdk.Stack):
             treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
         )
         alarm.add_alarm_action(cw_actions.SnsAction(topic))
+
+    def _asana_cloud_sync(self, data: SoftwareFactoryDataStack) -> None:
+        """Every 15 min: apply queued board ops and refresh the snapshot through the Asana API.
+
+        AgentCore Identity holds the OAuth app's client secret and the consented token (both
+        put there by factory/sync/asana_identity_setup.py, never by this stack); only this
+        function's role can obtain that token.
+        """
+        workload_name, provider = (
+            "software-factory-asana-sync",
+            "software-factory-asana",
+        )
+        return_url = "http://localhost:8765/asana-consent-done"  # asana_identity_setup.RETURN_URL
+        workload = agentcore.CfnWorkloadIdentity(
+            self,
+            "AsanaSyncWorkload",
+            name=workload_name,
+            allowed_resource_oauth2_return_urls=[return_url],
+        )
+        code = _lambda.Code.from_asset(
+            os.path.dirname(
+                HERE
+            ),  # factory/: the sync plus the board contract it imports
+            exclude=[
+                "*",
+                ".*",
+                "**/.*",
+                "**/__pycache__",
+                "!sync",
+                "sync/*",
+                "!sync/asana_sync.py",
+                "!agent-code",
+                "agent-code/*",
+                "!agent-code/factory",
+                "agent-code/factory/*",
+                "!agent-code/factory/__init__.py",
+                "!agent-code/factory/asana.py",
+                "!agent-code/factory/config.py",
+            ],
+        )
+        fn = _lambda.Function(
+            self,
+            "AsanaSyncCloud",
+            function_name="software-factory-asana-sync",
+            runtime=_lambda.Runtime.PYTHON_3_13,
+            handler="sync.asana_sync.handler",
+            code=code,
+            timeout=cdk.Duration.minutes(5),
+            memory_size=256,
+            reserved_concurrent_executions=1,  # one pass at a time
+            environment={
+                "FACTORY_ASANA_PROJECT": self.asana_project,
+                "FACTORY_ASANA_OPS_TABLE": data.asana_ops.table_name,
+                "FACTORY_ASANA_SNAPSHOT_TABLE": data.asana_snapshot.table_name,
+                "WORKLOAD_NAME": workload_name,
+                "RETURN_URL": return_url,
+                # Must match the scopes the one-time consent asked for (asana_identity_setup).
+                "FACTORY_ASANA_SCOPES": self.node.try_get_context("asana_scopes")
+                or "projects:read tasks:read tasks:write stories:read stories:write",
+                "FACTORY_ASANA_PROVIDER": provider,
+            },
+            log_group=self._log_group(
+                "AsanaSyncLogs", "/aws/lambda/software-factory-asana-sync"
+            ),
+        )
+        fn.node.add_dependency(workload)
+        ac = f"arn:aws:bedrock-agentcore:{self.region}:{self.account}"
+        wid = f"{ac}:workload-identity-directory/default/workload-identity/{workload_name}"
+        for stmt in [
+            iam.PolicyStatement(
+                actions=["bedrock-agentcore:GetWorkloadAccessTokenForUserId"],
+                resources=[f"{ac}:workload-identity-directory/default", wid],
+            ),
+            iam.PolicyStatement(
+                actions=["bedrock-agentcore:GetResourceOauth2Token"],
+                resources=[
+                    f"{ac}:token-vault/default",
+                    f"{ac}:token-vault/default/oauth2credentialprovider/{provider}",
+                    f"{ac}:workload-identity-directory/default",
+                    wid,
+                ],
+            ),
+            # The provider keeps its client secret in Secrets Manager under this name.
+            iam.PolicyStatement(
+                actions=["secretsmanager:GetSecretValue"],
+                resources=[
+                    (
+                        f"arn:aws:secretsmanager:{self.region}:{self.account}:secret:"
+                        f"bedrock-agentcore-identity!default/oauth2/{provider}*"
+                    )
+                ],
+            ),
+            iam.PolicyStatement(
+                actions=["dynamodb:GetItem", "dynamodb:Query"],
+                resources=[
+                    data.asana_ops.table_arn,
+                    f"{data.asana_ops.table_arn}/index/by_status",
+                ],
+            ),
+            # Same limit as the workstation sync role: only an op's status fields change.
+            iam.PolicyStatement(
+                actions=["dynamodb:UpdateItem"],
+                resources=[data.asana_ops.table_arn],
+                conditions={
+                    "ForAllValues:StringEquals": {
+                        "dynamodb:Attributes": [
+                            "op_id",
+                            "status",
+                            "applied_at",
+                            "error",
+                            "asana_gid",
+                        ]
+                    },
+                    "StringEqualsIfExists": {
+                        "dynamodb:ReturnValues": ["NONE", "UPDATED_NEW"]
+                    },
+                },
+            ),
+            iam.PolicyStatement(
+                actions=["dynamodb:PutItem"], resources=[data.asana_snapshot.table_arn]
+            ),
+        ]:
+            fn.add_to_role_policy(stmt)
+        rule = events.Rule(
+            self,
+            "AsanaSyncEvery15m",
+            rule_name="software-factory-asana-sync-15m",
+            schedule=events.Schedule.rate(cdk.Duration.minutes(15)),
+            targets=[targets.LambdaFunction(fn, retry_attempts=0)],
+            enabled=not self.paused,
+        )
+        cdk.CfnOutput(self, "AsanaSyncRuleArn", value=rule.rule_arn)
 
     def _asana_sync_role(
         self, data: SoftwareFactoryDataStack, coordinator_role_name: str
