@@ -396,6 +396,43 @@ cdk.Tags.of(app).add("DeploymentMode", deployment_mode)
 # ── Optional: Networking (VPC, subnets, endpoints) ──
 networking_stack = None
 if enable_networking:
+    import boto3
+    from botocore.exceptions import (
+        ClientError,
+        EndpointConnectionError,
+        NoCredentialsError,
+    )
+
+    from infra_utils.runtime_network import (
+        select_supported_zone_names,
+        zone_name_to_id,
+    )
+
+    # AZ names map to different AZ ids per account, and AgentCore VPC mode
+    # supports only some ids. Pin the VPC to supported ids at synth time; a
+    # ValueError from the selection fails the synth on purpose.
+    networking_azs = None
+    try:
+        _az_map = zone_name_to_id(boto3.client("ec2", region_name=region))
+    except (NoCredentialsError, ClientError, EndpointConnectionError) as exc:
+        print(
+            f"WARNING: AZ pinning skipped ({exc}); keeping max_azs=2. "
+            "scripts/check_network.py verifies placement after deploy."
+        )
+    else:
+        networking_azs = select_supported_zone_names(region, _az_map)
+        if networking_azs:
+            print(
+                "Networking AZs: "
+                + ", ".join(f"{n} ({_az_map[n]})" for n in networking_azs)
+            )
+            if account:
+                # Seed CDK's AZ lookup so it validates the pinned names
+                # against the real list instead of its dummy placeholders.
+                app.node.set_context(
+                    f"availability-zones:account={account}:region={region}",
+                    sorted(_az_map),
+                )
     networking_stack = NetworkingStack(
         app,
         f"{prefix}-networking",
@@ -407,6 +444,7 @@ if enable_networking:
         migration_ca_bundle_secret_name=migration_ca_bundle_secret_name,
         log_retention_days=log_retention_days,
         retain_data=production_mode,
+        availability_zones=networking_azs,
         env=cdk_env,
     )
 

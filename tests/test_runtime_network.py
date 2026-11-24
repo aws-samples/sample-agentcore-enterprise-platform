@@ -17,7 +17,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from infra_utils.runtime_network import (
     SUPPORTED_ZONE_IDS,
     build_network_config,
+    select_supported_zone_names,
     unsupported_zone_ids,
+    zone_name_to_id,
 )
 
 
@@ -64,6 +66,63 @@ def test_unsupported_zones_are_reported():
 def test_unknown_region_does_not_block_a_deploy():
     """A stale table must not veto a region AgentCore has since added."""
     assert unsupported_zone_ids("me-central-1", ["mec1-az1"]) == []
+
+
+def test_selection_skips_unsupported_first_zones():
+    name_to_id = {
+        "us-east-1a": "use1-az3",
+        "us-east-1b": "use1-az5",
+        "us-east-1c": "use1-az1",
+        "us-east-1d": "use1-az4",
+    }
+    assert select_supported_zone_names("us-east-1", name_to_id) == [
+        "us-east-1c",
+        "us-east-1d",
+    ]
+
+
+def test_selection_unknown_region_keeps_default():
+    assert select_supported_zone_names("me-central-1", {"x": "mec1-az1"}) is None
+
+
+def test_selection_with_too_few_supported_zones_fails_clearly():
+    name_to_id = {"us-east-1a": "use1-az1", "us-east-1b": "use1-az3"}
+    with pytest.raises(ValueError) as excinfo:
+        select_supported_zone_names("us-east-1", name_to_id)
+    message = str(excinfo.value)
+    for zone_id in SUPPORTED_ZONE_IDS["us-east-1"]:
+        assert zone_id in message
+    assert "use1-az3" in message
+    assert "describe-availability-zones" in message
+
+
+def test_zone_name_to_id_excludes_opt_in_and_unavailable_zones():
+    class FakeEc2:
+        def describe_availability_zones(self):
+            return {
+                "AvailabilityZones": [
+                    {
+                        "ZoneName": "us-east-1a",
+                        "ZoneId": "use1-az1",
+                        "State": "available",
+                        "OptInStatus": "opt-in-not-required",
+                    },
+                    {
+                        "ZoneName": "us-east-1-bos-1a",
+                        "ZoneId": "use1-bos1-az1",
+                        "State": "available",
+                        "OptInStatus": "opted-in",
+                    },
+                    {
+                        "ZoneName": "us-east-1b",
+                        "ZoneId": "use1-az2",
+                        "State": "impaired",
+                        "OptInStatus": "opt-in-not-required",
+                    },
+                ]
+            }
+
+    assert zone_name_to_id(FakeEc2()) == {"us-east-1a": "use1-az1"}
 
 
 def test_zone_id_table_is_well_formed():

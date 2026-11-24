@@ -87,3 +87,41 @@ def unsupported_zone_ids(region: str, zone_ids: list[str]) -> list[str]:
     if not supported:
         return []
     return [z for z in zone_ids if z not in supported]
+
+
+def select_supported_zone_names(
+    region: str, name_to_id: dict[str, str], count: int = 2
+) -> list[str] | None:
+    """The first ``count`` AZ names (sorted) whose zone id AgentCore supports.
+
+    ``name_to_id`` is this account's AZ name -> AZ id mapping. An unknown
+    region returns None, meaning "keep CDK's default AZ choice": the same
+    stale-table policy as unsupported_zone_ids. Raises ValueError when the
+    account offers fewer than ``count`` supported zones.
+    """
+    supported = SUPPORTED_ZONE_IDS.get(region)
+    if not supported:
+        return None
+    chosen = [name for name in sorted(name_to_id) if name_to_id[name] in supported]
+    if len(chosen) < count:
+        offered = sorted(set(name_to_id.values()))
+        raise ValueError(
+            f"AgentCore VPC mode in {region} supports only zone ids "
+            f"{', '.join(supported)}, but this account offers "
+            f"{', '.join(offered) or 'none'}; {count} supported zones are "
+            "needed. Check the mapping with "
+            "`aws ec2 describe-availability-zones --region "
+            f"{region}`."
+        )
+    return chosen[:count]
+
+
+def zone_name_to_id(ec2_client) -> dict[str, str]:
+    """AZ name -> AZ id for available, non-opt-in zones of ``ec2_client``."""
+    response = ec2_client.describe_availability_zones()
+    return {
+        zone["ZoneName"]: zone["ZoneId"]
+        for zone in response.get("AvailabilityZones", [])
+        if zone.get("State") == "available"
+        and zone.get("OptInStatus") == "opt-in-not-required"
+    }
