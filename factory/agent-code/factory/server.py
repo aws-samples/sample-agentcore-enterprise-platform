@@ -195,6 +195,8 @@ def validate(payload: dict) -> dict:
             raise ValueError("task_gid must be a numeric board task id")
         if payload.get("revise") not in (None, True, False):
             raise ValueError("revise must be a boolean")
+        if payload.get("from_review") not in (None, True, False):
+            raise ValueError("from_review must be a boolean")
         prefix = "design" if payload["role"] == "designer" else "task"
         return {"id": f"{prefix}-{gid}"}
     if payload.get("role") == "developer":
@@ -381,6 +383,55 @@ def handle_bench(payload: dict) -> dict:
     return {**line, **{k: rec[k] for k in keys if rec.get(k)}}
 
 
+def queue_autofix(pr: dict) -> dict:
+    """One automatic revision round for the reviewer's major/blocker findings on a factory task PR.
+
+    Once per PR (a dedupe claim), so the reviewer and the reviser cannot loop: the review of the
+    fix-up commit goes to the maintainer, whatever it says. Minor findings are never auto-fixed.
+    """
+    import re as _re
+
+    m = _re.fullmatch(r"factory/task/(\d+)", str((pr.get("head") or {}).get("ref", "")))
+    queue, dedupe = (
+        os.environ.get("FACTORY_QUEUE_URL"),
+        os.environ.get("FACTORY_DEDUPE_TABLE"),
+    )
+    if not (asana.enabled() and m and queue and dedupe):
+        return {"autofix": "not_applicable"}
+    table = boto3.resource("dynamodb", region_name=REGION).Table(dedupe)
+    try:
+        table.put_item(
+            Item={
+                "delivery_id": f"autofix#{pr['number']}",
+                "expires_at": int(time.time()) + 30 * 86400,
+            },
+            ConditionExpression="attribute_not_exists(delivery_id)",
+        )
+    except table.meta.client.exceptions.ConditionalCheckFailedException:
+        return {"autofix": "round_already_used"}
+    gid = m.group(1)
+    boto3.client("sqs", region_name=REGION).send_message(
+        QueueUrl=queue,
+        MessageBody=json.dumps(
+            {"role": "developer", "task_gid": gid, "revise": True, "from_review": True}
+        ),
+        MessageGroupId=f"revise-{gid}",
+        MessageDeduplicationId=f"autofix-{pr['number']}",
+    )
+    return {"autofix": "queued", "task_gid": gid}
+
+
+def blocking_findings(texts: list[str]) -> list[str]:
+    """The major and blocker findings in a review's text (one per inline comment)."""
+    out = []
+    for block in "\n\n".join(texts).split("\n\n"):
+        lines = block.strip().splitlines()
+        head = next((ln for ln in lines if ln.startswith("**")), "")
+        if head.lower().startswith(("**major", "**blocker")):
+            out.append(" ".join(ln.strip() for ln in lines)[:1500])
+    return out
+
+
 def as_own_pr(review: dict, pr: dict) -> dict:
     """GitHub refuses REQUEST_CHANGES from the PR's own author, and the factory's App opens its
     own PRs. There the verdict becomes a COMMENT that says so at the top, so it is still seen."""
@@ -433,6 +484,8 @@ def handle_review(payload: dict) -> dict:
                     outcome="review_posted",
                     pr_url=github.post_review(REPO, number, token, review),
                 )
+                if rec["review"].get("event") == "REQUEST_CHANGES":
+                    rec["autofix"] = _safe(lambda: queue_autofix(pr))
         except Exception as e:  # noqa: BLE001 - every failure must still produce a run row
             traceback.print_exc()
             rec = {"outcome": "failed", "reason": f"{type(e).__name__}: {e}"[:500]}
@@ -636,7 +689,21 @@ def handle_revision(
     tasks = asana.load_snapshot(session)["tasks"]
     if payload.get("task_gid"):
         tasks = [t for t in tasks if str(t["gid"]) == str(payload["task_gid"])]
-    pick = next_revision(tasks, open_prs, attempted_tasks(session))
+    if payload.get("from_review"):
+        # The automatic round: the requests are the reviewer's own major/blocker findings.
+        t = tasks[0] if tasks else None
+        pr_row = t and next(
+            (p for p in open_prs if p["branch"] == f"factory/task/{t['gid']}"), None
+        )
+        if not pr_row:
+            return None
+        context, _ = pr_review_context(int(pr_row["number"]), token)
+        asks = blocking_findings(context)
+        if not asks:
+            return None
+        pick = (t, pr_row, asks)
+    else:
+        pick = next_revision(tasks, open_prs, attempted_tasks(session))
     if pick is None:
         return None
     t, pr_row, asks = pick
@@ -687,7 +754,13 @@ def handle_developer(payload: dict) -> dict:
                 "outcome": "skipped",
                 "reason": "no unanswered comment on an open PR",
             }
-        ready = asana.in_section(asana.load_snapshot(session)["tasks"], asana.READY)
+        snap = asana.load_snapshot(session)["tasks"]
+        # Ready for agent, or left in progress by an attempt that failed (no PR or branch for it).
+        ready = asana.in_section(snap, asana.READY) + [
+            t
+            for t in asana.in_section(snap, asana.IN_PROGRESS)
+            if str(t["gid"]) not in taken
+        ]
         pick = [
             t
             for t in ready
@@ -774,6 +847,14 @@ def handle_developer(payload: dict) -> dict:
         rec = _safe(agent.execute)
         if publish and rec.get("outcome") == "branch_ready_dry_run":
             rec.update(_safe(lambda: agent.ship(token)))
+        if rec.get("outcome") == "failed" and isinstance(tracker, asana.Board):
+            # A crashed attempt must not leave the task stuck in progress: park it, say why.
+            tracker.move(
+                task["gid"],
+                asana.NEEDS_SCOPING,
+                f"Developer agent failed: {str(rec.get('reason', ''))[:300]}. "
+                "Move the task back to Ready for agent to retry.",
+            )
         elif (
             rec.get("outcome") == "branch_ready_dry_run"
         ):  # what a real run would do after opening the PR

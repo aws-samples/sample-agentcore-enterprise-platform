@@ -566,6 +566,19 @@ class SoftwareFactoryStack(cdk.Stack):
                 actions=["dynamodb:GetItem"],
                 resources=[data.asana_snapshot.table_arn],
             ),
+            # One auto-fix round per PR: claim it in the dedupe table, then queue it.
+            iam.PolicyStatement(
+                sid="AutofixClaim",
+                actions=["dynamodb:PutItem"],
+                resources=[data.dedupe.table_arn],
+            ),
+            iam.PolicyStatement(
+                sid="AutofixQueue",
+                actions=["sqs:SendMessage"],
+                resources=[
+                    f"arn:aws:sqs:{self.region}:{self.account}:software-factory-events.fifo"
+                ],
+            ),
         ]:
             role.add_to_policy(stmt)
         data.github_app.grant_read(role)
@@ -607,6 +620,9 @@ class SoftwareFactoryStack(cdk.Stack):
                 "FACTORY_ASANA_USERS": self.asana_users,
                 "FACTORY_ASANA_OPS_TABLE": data.asana_ops.table_name,
                 "FACTORY_ASANA_SNAPSHOT_TABLE": data.asana_snapshot.table_name,
+                # The reviewer queues at most one auto-fix round per factory PR (server.queue_autofix).
+                "FACTORY_QUEUE_URL": f"https://sqs.{self.region}.amazonaws.com/{self.account}/software-factory-events.fifo",
+                "FACTORY_DEDUPE_TABLE": data.dedupe.table_name,
             },
         )
         runtime.node.add_dependency(built, role)

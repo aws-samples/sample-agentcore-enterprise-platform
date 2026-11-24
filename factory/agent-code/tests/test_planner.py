@@ -99,3 +99,62 @@ def test_a_planned_payload_passes_runtime_validation():
     }
     with pytest.raises(ValueError):
         server.validate({"role": "developer", "task_gid": "12; rm"})
+
+
+def test_only_major_and_blocker_findings_are_auto_fixed():
+    from factory import server
+
+    review = [
+        (
+            "Summary text.\n\napp.py:414\n**major: Wire the opt-out into the offline check**\nDetails.\n\n"
+            "runtime_network.py:135\n**minor: Check the zone count**\nDetails.\n\n"
+            "stacks/x.py:3\n**blocker: Secret in a log line**\nDetails."
+        )
+    ]
+    got = server.blocking_findings(review)
+    assert (
+        len(got) == 2
+        and "Wire the opt-out" in got[0]
+        and "Secret in a log line" in got[1]
+    )
+
+
+def test_an_autofix_round_is_queued_once_per_pr(monkeypatch):
+    from factory import server
+
+    claims, sent = set(), []
+
+    class Table:
+        class meta:
+            class client:
+                class exceptions:
+                    class ConditionalCheckFailedException(Exception):
+                        pass
+
+        def put_item(self, Item, ConditionExpression):
+            if Item["delivery_id"] in claims:
+                raise self.meta.client.exceptions.ConditionalCheckFailedException()
+            claims.add(Item["delivery_id"])
+
+    monkeypatch.setenv("FACTORY_QUEUE_URL", "q")
+    monkeypatch.setenv("FACTORY_DEDUPE_TABLE", "d")
+    monkeypatch.setattr(
+        server.boto3,
+        "resource",
+        lambda *a, **k: type("R", (), {"Table": lambda s, n: Table()})(),
+    )
+    monkeypatch.setattr(
+        server.boto3,
+        "client",
+        lambda *a, **k: type(
+            "C", (), {"send_message": lambda s, **kw: sent.append(kw)}
+        )(),
+    )
+    pr = {"number": 9, "head": {"ref": "factory/task/900001"}}
+    assert server.queue_autofix(pr)["autofix"] == "queued"
+    assert server.queue_autofix(pr)["autofix"] == "round_already_used"
+    assert (
+        server.queue_autofix({"number": 10, "head": {"ref": "feature/x"}})["autofix"]
+        == "not_applicable"
+    )
+    assert len(sent) == 1 and '"from_review": true' in sent[0]["MessageBody"]
