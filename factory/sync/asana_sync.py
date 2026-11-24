@@ -111,6 +111,10 @@ class Mcp:
                 return msg["result"]
 
     def call(self, tool: str, **args) -> dict:
+        """One tool call; a transient Asana failure (an expired upstream token, 5xx) is retried."""
+        return with_retry(lambda: self._call(tool, **args))
+
+    def _call(self, tool: str, **args) -> dict:
         res = self._rpc(
             "tools/call",
             {
@@ -234,7 +238,10 @@ class RestBoard(Board):
         self._token, self.project = token, project
         self._open = opener or urllib.request.urlopen
 
-    def _call(
+    def _call(self, *args, **kwargs) -> dict:
+        return with_retry(lambda: self._request(*args, **kwargs))
+
+    def _request(
         self,
         method: str,
         path: str,
@@ -437,7 +444,9 @@ def apply_pending(ops: list[dict], board: Board, claim=lambda op: True) -> list[
             )
             continue
         try:
-            gid = with_retry(lambda op=op: apply_op(op, board, sections))
+            gid = apply_op(
+                op, board, sections
+            )  # each call inside retries transient errors
             out.append({"op_id": op["op_id"], "status": "applied", "asana_gid": gid})
             if op["op"] == "create_task":
                 in_project.add(gid)
