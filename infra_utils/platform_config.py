@@ -26,9 +26,10 @@ import os
 import re
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse
 
 import yaml
 from pydantic import (
@@ -242,7 +243,10 @@ class IdentityConfig(BaseModel):
         deployed. Gateway and runtimes validate the IdP's tokens by audience
         (Entra tokens carry `aud`/`azp`, not Cognito's `client_id`), and the
         M2M credential is the same app registration's client secret.
-        Supported for entra_id; okta/ping stay brokered for now.
+        Supported for entra_id and okta; ping stays brokered for now. Okta
+        needs a custom authorization server (issuer path /oauth2/<id>), its
+        audience (`audience`) and a custom scope for machine tokens
+        (`m2m_scope`).
     """
 
     idp: Literal["cognito", "entra_id", "okta", "ping"] = "cognito"
@@ -252,6 +256,10 @@ class IdentityConfig(BaseModel):
     issuer_url: str = ""
     # Secrets Manager secret NAME — the secret itself never goes in this file.
     client_secret_name: str = ""
+    # Okta direct mode: the authorization server's audience (the token `aud`)
+    # and the custom scope requested with client_credentials.
+    audience: str = ""
+    m2m_scope: str = ""
 
     @property
     def direct_issuer_url(self) -> str:
@@ -270,16 +278,27 @@ class IdentityConfig(BaseModel):
     def direct_m2m_scope(self) -> str:
         """client_credentials scope in direct mode: the app's own `.default`,
         so the token's audience is the app itself (Entra rejects a missing
-        scope outright)."""
+        scope outright). Okta: the custom scope defined on the authorization
+        server."""
+        if self.idp == "okta":
+            return self.m2m_scope
         return f"{self.client_id}/.default"
+
+    @property
+    def direct_audience(self) -> str:
+        """The `aud` the authorizers pin in direct mode: Okta tokens carry the
+        authorization server's audience, Entra tokens the app's client id."""
+        if self.idp == "okta":
+            return self.audience
+        return self.client_id
 
     @model_validator(mode="after")
     def _federated_idp_fields(self) -> IdentityConfig:
-        if self.mode == "direct" and self.idp != "entra_id":
+        if self.mode == "direct" and self.idp not in ("entra_id", "okta"):
             raise ValueError(
-                f"identity.mode 'direct' is supported for idp 'entra_id' today; "
-                f"idp {self.idp!r} deploys brokered (through Cognito). Set mode: "
-                "brokered or switch the IdP."
+                f"identity.mode 'direct' is supported for idp 'entra_id' and "
+                f"'okta' today; idp {self.idp!r} deploys brokered (through "
+                "Cognito). Set mode: brokered or switch the IdP."
             )
         if self.idp == "entra_id" and not self.tenant_id:
             raise ValueError("idp 'entra_id' requires identity.tenant_id")
@@ -295,8 +314,39 @@ class IdentityConfig(BaseModel):
                 f"idp {self.idp!r} requires identity.client_id (the IdP app "
                 "registration's client id)"
             )
+        if self.mode == "direct" and self.idp == "okta":
+            errors = _okta_direct_errors(self)
+            if errors:
+                raise ValueError("\n".join(errors))
         _refuse_placeholders(identity_placeholders(self))
         return self
+
+
+def _okta_direct_errors(identity: IdentityConfig) -> list[str]:
+    """What Okta direct mode needs beyond the brokered fields."""
+    errors: list[str] = []
+    if not re.search(r"/oauth2/[^/]+", urlparse(identity.issuer_url).path):
+        errors.append(
+            f"identity.issuer_url {identity.issuer_url!r} is not an Okta custom "
+            "authorization server: direct mode needs "
+            "https://<org>.okta.com/oauth2/default or /oauth2/<authServerId> "
+            "(Okta admin > Security > API > Authorization Servers > Issuer URI). "
+            "Tokens from the org authorization server (https://<org>.okta.com) "
+            "are only for Okta's own APIs and cannot be validated by third parties"
+        )
+    if not identity.audience:
+        errors.append(
+            "idp 'okta' with mode 'direct' requires identity.audience (Okta "
+            "admin > Security > API > Authorization Servers > <server> > "
+            "Settings > Audience, e.g. api://default)"
+        )
+    if not identity.m2m_scope:
+        errors.append(
+            "idp 'okta' with mode 'direct' requires identity.m2m_scope (a custom "
+            "scope on that authorization server, Okta admin > Security > API > "
+            "Authorization Servers > <server> > Scopes, e.g. agentcore.invoke)"
+        )
+    return errors
 
 
 def identity_placeholders(identity: IdentityConfig) -> list[str]:
@@ -320,6 +370,19 @@ def identity_placeholders(identity: IdentityConfig) -> list[str]:
         out.append(
             f"identity.issuer_url is a placeholder ({u!r}): put your IdP's https "
             "issuer URL here (Okta: https://<org>.okta.com/oauth2/default)"
+        )
+    a = identity.audience
+    if a and _SENTINEL_RE.search(a):
+        out.append(
+            f"identity.audience is a placeholder ({a!r}): put your Okta "
+            "authorization server's audience here (Security > API > "
+            "Authorization Servers > Settings > Audience)"
+        )
+    m = identity.m2m_scope
+    if m and _SENTINEL_RE.search(m):
+        out.append(
+            f"identity.m2m_scope is a placeholder ({m!r}): put the custom scope "
+            "defined on your Okta authorization server here (Scopes tab)"
         )
     s = identity.client_secret_name
     if s and (
@@ -702,7 +765,7 @@ class MigrationGate(BaseModel):
             raise ValueError(
                 "approved_at must include a UTC offset, for example +00:00"
             )
-        if self.approved_at > datetime.now(timezone.utc) + timedelta(minutes=5):
+        if self.approved_at > datetime.now(UTC) + timedelta(minutes=5):
             raise ValueError("approved_at cannot be in the future")
         assert self.expires_at is not None
         if self.expires_at.tzinfo is None:
@@ -732,9 +795,7 @@ class MigrationGate(BaseModel):
     @property
     def blockers(self) -> list[str]:
         blockers = self._missing_fields()
-        if self.expires_at is not None and self.expires_at <= datetime.now(
-            timezone.utc
-        ):
+        if self.expires_at is not None and self.expires_at <= datetime.now(UTC):
             blockers.append("approval expired")
         return blockers
 

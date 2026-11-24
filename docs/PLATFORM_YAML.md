@@ -56,11 +56,13 @@ Who issues the tokens the platform trusts.
 | Key | Type | Default | Env override | Description |
 |---|---|---|---|---|
 | `identity.idp` | one of: `cognito`, `entra_id`, `okta`, `ping` | `'cognito'` | `IDP_TYPE` | Who authenticates users. `cognito` is self-contained; the others federate Cognito to your enterprise IdP (docs/ENTERPRISE_IDP.md). |
-| `identity.mode` | one of: `brokered`, `direct` | `'brokered'` | `IDP_MODE` | Who issues the tokens. `brokered`: Cognito issues them and the IdP only signs users in — works with no IdP at all. `direct`: the IdP issues them and no Cognito user pool is deployed; `entra_id` only, and the app registration needs a service principal and v2 access tokens (docs/ENTERPRISE_IDP.md, Direct mode). |
+| `identity.mode` | one of: `brokered`, `direct` | `'brokered'` | `IDP_MODE` | Who issues the tokens. `brokered`: Cognito issues them and the IdP only signs users in — works with no IdP at all. `direct`: the IdP issues them and no Cognito user pool is deployed; `entra_id` (the app registration needs a service principal and v2 access tokens) or `okta` (needs a custom authorization server, `audience` and `m2m_scope`), see docs/ENTERPRISE_IDP.md. |
 | `identity.tenant_id` | str | `""` | `IDP_TENANT_ID` | Entra ID tenant. Required when `idp: entra_id`. |
 | `identity.client_id` | str | `""` | `IDP_CLIENT_ID` | App registration / OIDC client id at your IdP. |
 | `identity.issuer_url` | str | `""` | `IDP_ISSUER_URL` | OIDC issuer of your IdP. Required for `okta` and `ping` (Entra derives it from the tenant). |
 | `identity.client_secret_name` | str | `""` | `IDP_CLIENT_SECRET_NAME` | Secrets Manager NAME holding the IdP client secret. Required for any non-Cognito IdP; the value never goes in this file. |
+| `identity.audience` | str | `""` | — | Okta direct mode: the custom authorization server's Audience, the token `aud` the Gateway and Runtime pin. Required for `idp: okta` with `mode: direct`. |
+| `identity.m2m_scope` | str | `""` | — | Okta direct mode: a custom scope on that authorization server, requested with `client_credentials` for machine tokens (e.g. `agentcore.invoke`). Required for `idp: okta` with `mode: direct`. |
 
 ## `agents:`
 

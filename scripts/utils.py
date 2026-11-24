@@ -178,22 +178,39 @@ def _get_direct_m2m_token(project: str, env: str, region: str) -> str:
     client_secret = boto3.client("secretsmanager", region_name=region).get_secret_value(
         SecretId=secret_name
     )["SecretString"]
-    token_url = oidc_discovery(issuer)["token_endpoint"]
-    data = urllib.parse.urlencode(
-        {
+    request = build_client_credentials_request(
+        oidc_discovery(issuer)["token_endpoint"], client_id, client_secret, scope
+    )
+    req = urllib.request.Request(
+        request["url"],
+        data=urllib.parse.urlencode(request["body"]).encode(),
+        headers=request["headers"],
+        method=request["method"],
+    )
+    resp = urllib.request.urlopen(req).read()  # nosec B310 — https URL from OIDC discovery
+    return json.loads(resp)["access_token"]
+
+
+def build_client_credentials_request(
+    token_endpoint: str, client_id: str, client_secret: str, scope: str
+) -> dict:
+    """The IdP-agnostic client_credentials request (method, URL, headers,
+    form body). Entra: the v2.0 token endpoint, scope `<client_id>/.default`;
+    Okta: `<issuer>/v1/token`, the custom scope on the authorization server.
+    Pure, so it is testable without network."""
+    if not token_endpoint.startswith("https://"):
+        raise ValueError(f"token endpoint must be https: {token_endpoint!r}")
+    return {
+        "method": "POST",
+        "url": token_endpoint,
+        "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+        "body": {
             "grant_type": "client_credentials",
             "client_id": client_id,
             "client_secret": client_secret,
             "scope": scope,
-        }
-    ).encode()
-    req = urllib.request.Request(
-        token_url,
-        data=data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-    )
-    resp = urllib.request.urlopen(req).read()  # nosec B310 — https URL from OIDC discovery
-    return json.loads(resp)["access_token"]
+        },
+    }
 
 
 def oidc_discovery(issuer: str) -> dict:

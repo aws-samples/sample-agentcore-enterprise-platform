@@ -51,7 +51,9 @@ DESCRIPTIONS: dict[str, str] = {
     "deployment.federation.m2m_client_secret_name": "Secrets Manager NAME in the workload account holding the M2M client secret. The secret itself never goes in this file.",
     # identity
     "identity.idp": "Who authenticates users. `cognito` is self-contained; the others federate Cognito to your enterprise IdP (docs/ENTERPRISE_IDP.md).",
-    "identity.mode": "Who issues the tokens. `brokered`: Cognito issues them and the IdP only signs users in — works with no IdP at all. `direct`: the IdP issues them and no Cognito user pool is deployed; `entra_id` only, and the app registration needs a service principal and v2 access tokens (docs/ENTERPRISE_IDP.md, Direct mode).",
+    "identity.mode": "Who issues the tokens. `brokered`: Cognito issues them and the IdP only signs users in — works with no IdP at all. `direct`: the IdP issues them and no Cognito user pool is deployed; `entra_id` (the app registration needs a service principal and v2 access tokens) or `okta` (needs a custom authorization server, `audience` and `m2m_scope`), see docs/ENTERPRISE_IDP.md.",
+    "identity.audience": "Okta direct mode: the custom authorization server's Audience, the token `aud` the Gateway and Runtime pin. Required for `idp: okta` with `mode: direct`.",
+    "identity.m2m_scope": "Okta direct mode: a custom scope on that authorization server, requested with `client_credentials` for machine tokens (e.g. `agentcore.invoke`). Required for `idp: okta` with `mode: direct`.",
     "identity.tenant_id": "Entra ID tenant. Required when `idp: entra_id`.",
     "identity.client_id": "App registration / OIDC client id at your IdP.",
     "identity.issuer_url": "OIDC issuer of your IdP. Required for `okta` and `ping` (Entra derives it from the tenant).",

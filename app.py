@@ -318,7 +318,7 @@ if production_mode:
             ),
             (
                 "identity.mode",
-                idp_mode != "direct" or idp_type == "entra_id",
+                idp_mode != "direct" or idp_type in ("entra_id", "okta"),
             ),
             ("observability.transaction_search", enable_transaction_search),
             ("observability.alarms", enable_alarms),
@@ -352,6 +352,17 @@ idp_config = {
     "client_id": cfg("idp_client_id", "IDP_CLIENT_ID", ""),
     "client_secret_name": cfg("idp_client_secret_name", "IDP_CLIENT_SECRET_NAME", ""),
     "issuer_url": cfg("idp_issuer_url", "IDP_ISSUER_URL", ""),
+    # Okta direct mode: authorization-server audience and the custom M2M scope.
+    "audience": cfg(
+        "idp_audience",
+        "IDP_AUDIENCE",
+        platform_config.identity.audience if platform_config else "",
+    ),
+    "m2m_scope": cfg(
+        "idp_m2m_scope",
+        "IDP_M2M_SCOPE",
+        platform_config.identity.m2m_scope if platform_config else "",
+    ),
 }
 
 # OAuth provider credentials (3LO). Secrets travel as Secrets Manager secret
@@ -515,8 +526,10 @@ else:
         else None
     )
     if auth_stack.is_direct:
-        allowed_clients, allowed_audience = [], [auth_stack.app_client_id]
-        gateway_token_scopes = f"{auth_stack.app_client_id}/.default"
+        # Entra: aud = the app's client id, scope <client_id>/.default.
+        # Okta: aud = the authorization server's audience, a custom scope.
+        allowed_clients, allowed_audience = [], [auth_stack.direct_audience]
+        gateway_token_scopes = auth_stack.direct_m2m_scope
     else:
         allowed_clients = [auth_stack.app_client_id, auth_stack.m2m_client_id]
         if retired_m2m_client_id:

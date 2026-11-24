@@ -43,6 +43,27 @@ PROJECT = os.environ.get("PROJECT_NAME", DEFAULT_PROJECT)
 ENV = os.environ.get("ENVIRONMENT", DEFAULT_ENV)
 
 
+def okta_mint_hint(msg: str) -> str:
+    """The Okta-side fix for a failed client_credentials request."""
+    if "invalid_scope" in msg:
+        return (
+            "\n  → define the custom scope (identity.m2m_scope) on the authorization "
+            "server (Security > API > Authorization Servers > Scopes) and allow it "
+            "in an Access Policy rule for this client"
+        )
+    if "unauthorized_client" in msg:
+        return (
+            "\n  → enable the Client Credentials grant on the Okta app (an API "
+            "Services app, or the web app with that grant enabled)"
+        )
+    if "invalid_client" in msg:
+        return (
+            "\n  → the client secret in Secrets Manager is wrong, expired, or has "
+            "trailing whitespace"
+        )
+    return ""
+
+
 def claims(token: str) -> dict:
     payload = token.split(".")[1]
     return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
@@ -62,15 +83,25 @@ def main() -> int:
         print("OK: brokered — Cognito issues tokens (nothing IdP-side to check)")
         return 0
 
+    idp = os.environ.get("IDP_TYPE", "entra_id")
     issuer = get_ssm_param("auth/issuer-url", PROJECT, ENV)
-    audience = get_ssm_param("auth/app-client-id", PROJECT, ENV)
+    if idp == "okta":
+        # Okta tokens carry the authorization server's audience, not a client id.
+        audience = os.environ.get("IDP_AUDIENCE", "")
+        if not audience:
+            print("FAIL: idp okta needs IDP_AUDIENCE (identity.audience) to check aud")
+            return 1
+    else:
+        audience = get_ssm_param("auth/app-client-id", PROJECT, ENV)
     advertised = oidc_discovery(issuer)["issuer"]
     try:
         c = claims(get_m2m_token(PROJECT, ENV))
     except Exception as exc:  # noqa: BLE001 — report the IdP's own error text
         msg = str(exc)
         hint = ""
-        if "7000229" in msg or "service principal" in msg:
+        if idp == "okta":
+            hint = okta_mint_hint(msg)
+        elif "7000229" in msg or "service principal" in msg:
             hint = (
                 "\n  → the app registration has no service principal in the tenant: "
                 "az ad sp create --id <client-id>"
@@ -82,7 +113,12 @@ def main() -> int:
     if c.get("iss") != advertised:
         ok = False
         print(f"FAIL: token iss {c.get('iss')!r} != discovery issuer {advertised!r}")
-        if "sts.windows.net" in str(c.get("iss")):
+        if idp == "okta":
+            print(
+                "  → use a custom authorization server issuer "
+                "(https://<org>.okta.com/oauth2/<authServerId>), not the org one"
+            )
+        elif "sts.windows.net" in str(c.get("iss")):
             print(
                 "  → the app issues v1 tokens; set api.requestedAccessTokenVersion=2 on "
                 "the app registration (az rest PATCH /applications/<object-id>)"
@@ -92,6 +128,11 @@ def main() -> int:
     if aud != audience:
         ok = False
         print(f"FAIL: token aud {aud!r} is not the allowed audience {audience!r}")
+        if idp == "okta":
+            print(
+                "  → set identity.audience to the authorization server's Audience "
+                "(Security > API > Authorization Servers > Settings)"
+            )
     if ok:
         print(f"OK: direct — {advertised} issues tokens for audience {audience}")
     return 0 if ok else 1

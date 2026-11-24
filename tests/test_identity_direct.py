@@ -58,16 +58,17 @@ def test_default_mode_is_brokered_and_absent_from_old_files():
     assert to_env(c)["IDP_MODE"] == "brokered"
 
 
-def test_direct_requires_entra():
+def test_direct_refuses_ping():
+    # Okta direct is supported (tests/test_identity_okta_direct.py); Ping is next.
     with pytest.raises(ValidationError, match="supported for idp 'entra_id'"):
         PlatformConfig.model_validate(
             {
                 "identity": {
-                    "idp": "okta",
+                    "idp": "ping",
                     "mode": "direct",
-                    "issuer_url": "https://corp.okta.com/oauth2/default",
+                    "issuer_url": "https://auth.pingone.com/abc/as",
                     "client_id": "abc",
-                    "client_secret_name": "agentcore/okta",
+                    "client_secret_name": "agentcore/ping",
                 }
             }
         )
@@ -138,8 +139,10 @@ def test_both_stacks_use_the_shared_authorizer():
 def test_app_switches_to_audience_and_scope_in_direct_mode():
     src = (REPO / "app.py").read_text()
     assert 'idp_mode = cfg("idp_mode", "IDP_MODE", "brokered")' in src
-    assert "allowed_clients, allowed_audience = [], [auth_stack.app_client_id]" in src
-    assert 'gateway_token_scopes = f"{auth_stack.app_client_id}/.default"' in src
+    # Entra pins its client id, Okta the authorization server's audience —
+    # both resolved by the auth stack (stacks/auth_stack.py direct_audience).
+    assert "allowed_clients, allowed_audience = [], [auth_stack.direct_audience]" in src
+    assert "gateway_token_scopes = auth_stack.direct_m2m_scope" in src
     # Empty env values are rejected at deploy time — the scope var is conditional.
     assert (
         '{"GATEWAY_TOKEN_SCOPES": gateway_token_scopes} if gateway_token_scopes' in src

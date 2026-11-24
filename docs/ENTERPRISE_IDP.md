@@ -104,9 +104,58 @@ credential provider; `GATEWAY_TOKEN_SCOPES` on the runtime carries the scope.
 
 ### Not in direct mode yet
 
-Okta and Ping stay brokered (`identity.mode: direct` with those IdPs is a
-validation error). Federated multi-account topologies synthesize in direct
-mode but have not been exercised live.
+Ping stays brokered (`identity.mode: direct` with it is a validation error).
+Okta is supported, see [Okta, direct mode](#okta-direct-mode). Federated
+multi-account topologies synthesize in direct mode but have not been
+exercised live.
+
+---
+
+## Okta, direct mode
+
+```yaml
+identity:
+  idp: okta
+  mode: direct
+  issuer_url: https://<org>.okta.com/oauth2/default   # a CUSTOM authorization server
+  audience: api://default                             # that server's Audience
+  m2m_scope: agentcore.invoke                         # a custom scope on that server
+  client_id: "<okta app client id>"
+  client_secret_name: agentcore/okta-client-secret
+```
+
+Three things differ from Entra:
+
+- **Issuer.** It must be a custom authorization server
+  (`https://<org>.okta.com/oauth2/default` or `/oauth2/<authServerId>`).
+  Tokens from the org authorization server (`https://<org>.okta.com`) are
+  only for Okta's own APIs and cannot be validated by third parties, so an
+  issuer without `/oauth2/<id>` is a validation error.
+- **Audience.** Okta access tokens carry `aud` = the authorization server's
+  audience, not the client id. The Gateway and the Runtime pin
+  `allowedAudience: [identity.audience]` against
+  `<issuer>/.well-known/openid-configuration`.
+- **Machine scope.** `client_credentials` against `<issuer>/v1/token` needs a
+  custom scope; it is published as `auth/m2m-scope`.
+
+### Okta admin steps
+
+1. **Security > API > Authorization Servers**: use `default` or add one.
+   Copy its **Issuer URI** into `identity.issuer_url` and its **Audience**
+   (e.g. `api://agentcore`) into `identity.audience`.
+2. On that server, **Scopes > Add Scope**: e.g. `agentcore.invoke`; put it
+   in `identity.m2m_scope`.
+3. **Access Policies**: add a policy assigned to your app with a rule that
+   allows the Client Credentials grant and the scope above.
+4. **Applications**: an API Services app (or your web app with the Client
+   Credentials grant enabled). Copy the client id into `identity.client_id`
+   and store the client secret in Secrets Manager (no trailing newline) under
+   `identity.client_secret_name`.
+
+`deploy.sh verify` runs `scripts/check_identity.py`, which mints a machine
+token and names the Okta fix for `invalid_scope` (scope missing or not
+allowed by a policy rule), `unauthorized_client` (grant not enabled) and an
+issuer or audience mismatch.
 
 ---
 
