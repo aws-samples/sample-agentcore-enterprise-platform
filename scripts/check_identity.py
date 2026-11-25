@@ -94,9 +94,6 @@ OAUTH_ERRORS = (
     "invalid_scope",
 )
 
-# What is printed for each code: built from the constants above, looked up by the code.
-OAUTH_TEXT = {c: f", OAuth error: {c}" for c in OAUTH_ERRORS}
-
 
 def oauth_error_code(exc: BaseException) -> str:
     """The OAuth `error` code (RFC 6749 5.2) from a token endpoint's
@@ -160,7 +157,7 @@ def main() -> int:
                 "\n  → the app registration has no service principal in the tenant: "
                 "az ad sp create --id <client-id>"
             )
-        # Only fixed words and the OAuth error code are printed: the raw text of a
+        # Only fixed words are printed; the hint turns the OAuth error code into the fix: the raw text of a
         # failed token request can carry the client credentials (CodeQL
         # py/clear-text-logging-sensitive-data). The hint above already names the fix.
         kind = (
@@ -168,9 +165,7 @@ def main() -> int:
             if isinstance(exc, urllib.error.HTTPError)
             else "request failed"
         )
-        print(
-            f"FAIL: could not mint an M2M token ({kind}{OAUTH_TEXT.get(code, '')}){hint}"
-        )
+        print(f"FAIL: could not mint an M2M token ({kind}){hint}")
         return 1
 
     ok = True

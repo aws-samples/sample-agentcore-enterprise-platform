@@ -329,7 +329,7 @@ def test_check_identity_prints_okta_hint_from_http_error(monkeypatch, capsys):
     monkeypatch.setattr(check_identity, "get_m2m_token", fail)
     assert check_identity.main() == 1
     out = capsys.readouterr().out
-    assert "OAuth error: invalid_scope" in out
+    assert "OAuth error" not in out  # only fixed words; the hint names the fix
     assert "define the custom scope" in out
     assert "free text not printed" not in out
 
