@@ -81,6 +81,8 @@ make test-controls
 # or: python -m pytest tests/ -q      → 12 passed
 ```
 
+CI runs the full `tests/` suite on every pull request and every push to `main`, with no path filter, via `.github/workflows/unit-tests.yml`.
+
 ### A4. CMK-for-Memory SCP via Terraform (item 1)
 
 ```bash
