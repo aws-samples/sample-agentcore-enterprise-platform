@@ -734,13 +734,25 @@ class IdentityConfig(BaseModel):
                 "registration's client id)"
             )
         _refuse_placeholders(identity_placeholders(self))
+        # Every entry point (design, doctor, build via app.py) loads the
+        # config through this model, so the upgrade warning is printed
+        # before any stack can change.
+        emit_identity_mode_warnings(self)
         return self
+
+
+# Messages already printed in this process: one load path may validate the
+# same identity block more than once.
+_EMITTED_MODE_WARNINGS: set[str] = set()
 
 
 def identity_mode_warnings(identity: IdentityConfig) -> list[str]:
     """Warn when an omitted identity.mode resolved to direct (the default
-    used to be brokered for every IdP)."""
+    used to be brokered for every IdP). An explicit IDP_MODE override in the
+    environment decides the effective mode, so it does not warn."""
     if not identity._mode_defaulted or identity.mode != "direct":
+        return []
+    if os.environ.get("IDP_MODE"):
         return []
     return [
         (
@@ -750,6 +762,15 @@ def identity_mode_warnings(identity: IdentityConfig) -> list[str]:
             "`identity.mode: brokered`."
         )
     ]
+
+
+def emit_identity_mode_warnings(identity: IdentityConfig) -> None:
+    """Print identity_mode_warnings on stderr, once per message per process."""
+    for message in identity_mode_warnings(identity):
+        if message in _EMITTED_MODE_WARNINGS:
+            continue
+        _EMITTED_MODE_WARNINGS.add(message)
+        print(f"[WARN] {message}", file=sys.stderr)
 
 
 def identity_placeholders(identity: IdentityConfig) -> list[str]:

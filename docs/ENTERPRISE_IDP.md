@@ -19,7 +19,8 @@ context or `platform.yaml`. Only the secret's *name* is configuration.
 
 > **Upgrading an existing Entra ID deployment?** A `platform.yaml` that omits
 > `identity.mode` used to resolve to brokered and now resolves to direct.
-> `deploy.sh design`, `doctor` and `build` warn when this happens. Pin
+> Loading the config (`deploy.sh design`, `doctor`, `build`) prints a
+> `[WARN]` on stderr when this happens, unless `IDP_MODE` is exported. Pin
 > `mode: brokered` to keep an existing brokered stack unchanged.
 
 ---

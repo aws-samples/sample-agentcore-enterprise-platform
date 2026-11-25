@@ -1,13 +1,25 @@
 """identity.mode defaults per IdP when omitted; an explicit mode is honoured."""
 
+import os
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 import yaml
 
+from infra_utils import platform_config as pc
 from infra_utils.platform_config import IdentityConfig, identity_mode_warnings
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(autouse=True)
+def _clean_mode_env(monkeypatch):
+    monkeypatch.delenv("IDP_MODE", raising=False)
+    monkeypatch.setattr(pc, "_EMITTED_MODE_WARNINGS", set())
+
 
 _ENTRA = {
     "idp": "entra_id",
@@ -66,6 +78,62 @@ def test_omitted_mode_with_entra_warns_about_switch():
 def test_omitted_mode_resolving_brokered_does_not_warn(idp):
     identity = IdentityConfig.model_validate(dict(IDPS[idp][0]))
     assert identity_mode_warnings(identity) == []
+
+
+def test_loading_config_prints_switch_warning(capsys):
+    IdentityConfig.model_validate(dict(_ENTRA))
+    err = capsys.readouterr().err
+    assert "[WARN] identity.mode is not set" in err
+    assert "identity.mode: brokered" in err
+
+
+def test_pinned_brokered_load_prints_nothing(capsys):
+    IdentityConfig.model_validate({**_ENTRA, "mode": "brokered"})
+    assert "identity.mode is not set" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("override", ["brokered", "direct"])
+def test_explicit_env_mode_override_does_not_warn(monkeypatch, capsys, override):
+    monkeypatch.setenv("IDP_MODE", override)
+    identity = IdentityConfig.model_validate(dict(_ENTRA))
+    assert identity_mode_warnings(identity) == []
+    assert "identity.mode is not set" not in capsys.readouterr().err
+
+
+def _run_validate(env_extra=None):
+    manifest = {
+        "deployment": {"strategy": "centralized", "platform_account": "111111111111"},
+        "identity": dict(_ENTRA),
+    }
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("IDP_MODE", "PLATFORM_ALLOW_PLACEHOLDERS")
+    }
+    env.update(env_extra or {})
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "platform.yaml"
+        path.write_text(yaml.safe_dump(manifest))
+        return subprocess.run(
+            [sys.executable, "-m", "infra_utils.platform_config", str(path)],
+            check=False,
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+
+def test_validate_command_displays_switch_warning():
+    result = _run_validate()
+    assert "identity.mode is not set" in result.stderr
+    assert "identity.mode: brokered" in result.stderr
+
+
+def test_validate_command_respects_env_mode_override():
+    result = _run_validate({"IDP_MODE": "brokered"})
+    assert "identity.mode is not set" not in result.stderr
 
 
 @pytest.mark.parametrize("preset", ["production", "federated"])
