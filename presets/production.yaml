@@ -1,6 +1,7 @@
 # Production starting point: secure controls are mandatory and stateful
 # resources are retained. Replace every sentinel before deploying; synthesis
 # with placeholders is only a CI parity check, not production approval.
+schema_version: 1
 project: agentcore-production
 environment: prod
 region: us-east-1

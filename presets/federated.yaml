@@ -9,6 +9,7 @@
 # federation values from its outputs into `deployment.federation`, then deploy
 # the same file in each workload account. `deploy.sh design` shows which side
 # the current credentials will produce.
+schema_version: 1
 project: agentcore-workshop
 environment: dev
 region: us-east-1

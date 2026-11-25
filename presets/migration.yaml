@@ -3,6 +3,7 @@
 # Fill in the identity block from your IdP's app registration; the client
 # secret goes in Secrets Manager, only its NAME goes here.
 # Preview the migration before touching AWS:  deploy.sh migrate plan
+schema_version: 1
 project: agentcore-workshop
 environment: dev
 region: us-east-1

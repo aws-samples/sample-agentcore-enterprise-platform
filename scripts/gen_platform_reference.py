@@ -36,6 +36,7 @@ TODO = "TODO"
 # Dotted key → prose. Written from the model comments, README's config table
 # and docs/. Keep it "why", the table already says "what".
 DESCRIPTIONS: dict[str, str] = {
+    "schema_version": "Version of this file's schema, independent of the release `VERSION`; `1` is the v0.1.0 shape. Missing = a legacy v0.1.0 file, accepted with a migration message. Older versions are migrated on load; newer ones are rejected (upgrade the accelerator).",
     "project": "Name prefix for every stack, role and SSM parameter (`{project}-{environment}-…`). Changing it is a new deployment, not a rename.",
     "environment": "Second half of the stack prefix; lets one account hold `dev` and `prod` side by side.",
     "region": "Where everything deploys. Also decides whether `gateway.web_search: auto` turns on (launch regions only).",

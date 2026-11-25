@@ -1,5 +1,6 @@
 # Multi-agent: orchestrator + A2A sub-agents, long-term memory.
 # Modules: 3 4 5 6 7 8 9
+schema_version: 1
 project: agentcore-workshop
 environment: dev
 region: us-east-1

@@ -26,6 +26,7 @@ import json
 import os
 import re
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -166,6 +167,74 @@ def _refuse_placeholders(messages: list[str]) -> None:
         raise ValueError("\n".join(messages))
 
 
+# ── Schema version ──
+# Versioned independently of the release VERSION; 1 is the v0.1.0 shape.
+# MIGRATIONS maps N to a function rewriting an N document into N+1. Both are
+# read at call time so a future bump (and the tests) can extend the chain.
+CURRENT_SCHEMA_VERSION = 1
+MIGRATIONS: dict[int, Callable[[dict], dict]] = {}
+
+
+def normalize_schema_version(doc: dict) -> dict:
+    """Check schema_version and migrate an older document up to current.
+
+    A missing key is a legacy v0.1.0 file: accepted as version 1 with a
+    one-line migration message on stderr (a warning, not a failure).
+    """
+    current = CURRENT_SCHEMA_VERSION
+    out = dict(doc)
+    if "schema_version" not in out:
+        print(
+            "[WARN] platform.yaml has no schema_version: read as a v0.1.0 file "
+            "(schema_version 1). Add `schema_version: 1` at the top level.",
+            file=sys.stderr,
+        )
+        out["schema_version"] = 1
+    version = out["schema_version"]
+    if isinstance(version, bool) or not isinstance(version, int):
+        # ValueError, not TypeError: pydantic only turns ValueError raised in a
+        # validator into a ValidationError that names the field.
+        msg = f"schema_version must be an integer, got {version!r}"
+        raise ValueError(msg)  # noqa: TRY004
+    if version < 1:
+        raise ValueError(f"schema_version must be 1 or higher, got {version}")
+    if version > current:
+        raise ValueError(
+            f"schema_version {version} is newer than this accelerator supports "
+            f"({current}): upgrade the accelerator to read this file"
+        )
+    if version < current:
+        out = copy.deepcopy(out)
+        for n in range(version, current):
+            if n not in MIGRATIONS:
+                raise ValueError(
+                    f"no migration registered from schema_version {n} to {n + 1}"
+                )
+            out = MIGRATIONS[n](out)
+            out["schema_version"] = n + 1
+        print(
+            f"[INFO] platform.yaml schema_version {version} migrated to "
+            f"{current} in memory; set `schema_version: {current}` once the "
+            "file is updated.",
+            file=sys.stderr,
+        )
+    return out
+
+
+class _SchemaVersioned(BaseModel):
+    """Base for PlatformConfig: schema_version is checked and migrated
+    before any other validation runs."""
+
+    schema_version: int = 1
+
+    @model_validator(mode="before")
+    @classmethod
+    def _check_schema_version(cls, data: object) -> object:
+        if isinstance(data, dict):
+            return normalize_schema_version(data)
+        return data
+
+
 # ── Layered presets: journey x topology x posture ──
 # The eight flat presets bundle three independent choices. These layers are
 # those choices factored apart; presets/*.yaml stay as golden references and
@@ -185,6 +254,7 @@ _ENTRA_PLACEHOLDER_IDENTITY = {
 
 def _journey(agents: dict, **extra: object) -> dict:
     layer: dict = {
+        "schema_version": CURRENT_SCHEMA_VERSION,
         "project": "agentcore-workshop",
         "environment": "dev",
         "region": "us-east-1",
@@ -2051,7 +2121,7 @@ def discover_use_cases(root: Path = USE_CASES_DIR) -> dict[str, UseCaseManifest]
     return found
 
 
-class PlatformConfig(BaseModel):
+class PlatformConfig(_SchemaVersioned):
     """The root model — `platform.yaml` parses into exactly this."""
 
     project: str = Field(

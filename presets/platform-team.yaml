@@ -4,6 +4,7 @@
 # for the organisation; workload accounts run their own runtimes against it.
 # Replace the sentinel account ids below with real ones before deploying.
 # See docs/MULTI_ACCOUNT.md.
+schema_version: 1
 project: agentcore-workshop
 environment: dev
 region: us-east-1

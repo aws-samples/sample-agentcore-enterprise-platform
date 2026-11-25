@@ -29,6 +29,7 @@ before anything is created.
 
 | Key | Type | Default | Env override | Description |
 |---|---|---|---|---|
+| `schema_version` | int | `1` | — | Version of this file's schema, independent of the release `VERSION`; `1` is the v0.1.0 shape. Missing = a legacy v0.1.0 file, accepted with a migration message. Older versions are migrated on load; newer ones are rejected (upgrade the accelerator). |
 | `project` | str (matches `^[a-z][a-z0-9-]{2,32}$`) | `'agentcore-workshop'` | `PROJECT_NAME` | Name prefix for every stack, role and SSM parameter (`{project}-{environment}-…`). Changing it is a new deployment, not a rename. |
 | `environment` | str (matches `^[a-z][a-z0-9]{1,15}$`) | `'dev'` | `ENVIRONMENT` | Second half of the stack prefix; lets one account hold `dev` and `prod` side by side. |
 | `region` | str (matches `^[a-z]{2}(-[a-z]+)+-\d$`) | `'us-east-1'` | `AWS_REGION` | Where everything deploys. Also decides whether `gateway.web_search: auto` turns on (launch regions only). |
@@ -208,6 +209,7 @@ Each preset is a complete, validated `platform.yaml`; `--profile <name>` copies 
 # are what keep the copies consistent. Pick this when teams must not depend on
 # each other's uptime or change windows. See docs/MULTI_ACCOUNT.md.
 # Modules: 3 4 5 6 9
+schema_version: 1
 project: agentcore-workshop
 environment: dev
 region: us-east-1
@@ -243,6 +245,7 @@ observability:
 # federation values from its outputs into `deployment.federation`, then deploy
 # the same file in each workload account. `deploy.sh design` shows which side
 # the current credentials will produce.
+schema_version: 1
 project: agentcore-workshop
 environment: dev
 region: us-east-1
@@ -280,6 +283,7 @@ observability:
 ```yaml
 # Greenfield: first agent platform, one account, defaults everywhere.
 # Modules: 3 4 5 6 9
+schema_version: 1
 project: agentcore-workshop
 environment: dev
 region: us-east-1
@@ -314,6 +318,7 @@ observability:
 # Fill in the identity block from your IdP's app registration; the client
 # secret goes in Secrets Manager, only its NAME goes here.
 # Preview the migration before touching AWS:  deploy.sh migrate plan
+schema_version: 1
 project: agentcore-workshop
 environment: dev
 region: us-east-1
@@ -378,6 +383,7 @@ migration:
 ```yaml
 # Multi-agent: orchestrator + A2A sub-agents, long-term memory.
 # Modules: 3 4 5 6 7 8 9
+schema_version: 1
 project: agentcore-workshop
 environment: dev
 region: us-east-1
@@ -418,6 +424,7 @@ observability:
 # for the organisation; workload accounts run their own runtimes against it.
 # Replace the sentinel account ids below with real ones before deploying.
 # See docs/MULTI_ACCOUNT.md.
+schema_version: 1
 project: agentcore-workshop
 environment: dev
 region: us-east-1
@@ -464,6 +471,7 @@ observability:
 # Production starting point: secure controls are mandatory and stateful
 # resources are retained. Replace every sentinel before deploying; synthesis
 # with placeholders is only a CI parity check, not production approval.
+schema_version: 1
 project: agentcore-production
 environment: prod
 region: us-east-1
@@ -522,6 +530,7 @@ observability:
 # Modules: 3 4 5 6 9 E
 # Flip cedar.mode to ENFORCE only after inspecting decision logs on live
 # traffic (docs/SECURITY_CONTROLS.md).
+schema_version: 1
 project: agentcore-workshop
 environment: dev
 region: us-east-1

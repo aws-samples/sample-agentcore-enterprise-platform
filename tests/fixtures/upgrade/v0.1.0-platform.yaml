@@ -1,0 +1,23 @@
+# Greenfield: first agent platform, one account, defaults everywhere.
+# Modules: 3 4 5 6 9
+project: agentcore-workshop
+environment: dev
+region: us-east-1
+
+deployment:
+  strategy: centralized
+
+identity:
+  idp: cognito
+
+agents:
+  pattern: orchestrator
+
+gateway:
+  web_search: auto
+  tools: [sample-tool]
+
+security: {}          # every control opt-in; enable deliberately
+
+observability:
+  transaction_search: true
