@@ -157,12 +157,11 @@ def main() -> int:
                 "\n  → the app registration has no service principal in the tenant: "
                 "az ad sp create --id <client-id>"
             )
-        # Only the exception type and the OAuth error code are printed: the raw text of a
+        # Only fixed words and the OAuth error code are printed: the raw text of a
         # failed token request can carry the client credentials (CodeQL
         # py/clear-text-logging-sensitive-data). The hint above already names the fix.
-        detail = (
-            f"{type(exc).__name__}, OAuth error: {code}" if code else type(exc).__name__
-        )
+        kind = "HTTP error" if isinstance(exc, urllib.error.HTTPError) else "request failed"
+        detail = f"{kind}, OAuth error: {code}" if code else kind
         print(f"FAIL: could not mint an M2M token ({detail}){hint}")
         return 1
 
