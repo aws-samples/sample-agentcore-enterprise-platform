@@ -56,7 +56,7 @@ Who issues the tokens the platform trusts.
 | Key | Type | Default | Env override | Description |
 |---|---|---|---|---|
 | `identity.idp` | one of: `cognito`, `entra_id`, `okta`, `ping` | `'cognito'` | `IDP_TYPE` | Who authenticates users. `cognito` is self-contained; the others federate Cognito to your enterprise IdP (docs/ENTERPRISE_IDP.md). |
-| `identity.mode` | one of: `brokered`, `direct` | `'brokered'` | `IDP_MODE` | Who issues the tokens. `brokered`: Cognito issues them and the IdP only signs users in — works with no IdP at all. `direct`: the IdP issues them and no Cognito user pool is deployed; `entra_id` only, and the app registration needs a service principal and v2 access tokens (docs/ENTERPRISE_IDP.md, Direct mode). |
+| `identity.mode` | one of: `brokered`, `direct` | `'brokered'` | `IDP_MODE` | Who issues the tokens. When omitted it resolves per IdP: `direct` for `entra_id`, `brokered` for `cognito`, `okta` and `ping`; an omitted mode that resolves to `direct` warns, because a stack deployed earlier as brokered would switch (pin `mode: brokered` to keep it). `brokered`: Cognito issues them and the IdP only signs users in — works with no IdP at all. `direct`: the IdP issues them and no Cognito user pool is deployed; `entra_id` only, and the app registration needs a service principal and v2 access tokens (docs/ENTERPRISE_IDP.md, Direct mode). |
 | `identity.tenant_id` | str | `""` | `IDP_TENANT_ID` | Entra ID tenant. Required when `idp: entra_id`. |
 | `identity.client_id` | str | `""` | `IDP_CLIENT_ID` | App registration / OIDC client id at your IdP. |
 | `identity.issuer_url` | str | `""` | `IDP_ISSUER_URL` | OIDC issuer of your IdP. Required for `okta` and `ping` (Entra derives it from the tenant). |
@@ -256,6 +256,7 @@ deployment:
     m2m_client_secret_name: "agentcore/platform-m2m"   # pragma: allowlist secret — a NAME in the workload account
 identity:
   idp: entra_id
+  mode: direct
   tenant_id: "00000000-0000-0000-0000-000000000000"   # sentinel — your Entra tenant id
   client_id: "REPLACE_ME"                             # sentinel — the app registration's client id
   client_secret_name: "agentcore/idp-client-secret"   # pragma: allowlist secret — a NAME, not a value
@@ -472,7 +473,7 @@ deployment:
 
 identity:
   idp: entra_id
-  mode: brokered
+  mode: direct
   tenant_id: 00000000-0000-0000-0000-000000000000
   client_id: REPLACE_ME
   client_secret_name: agentcore/idp-client-secret
