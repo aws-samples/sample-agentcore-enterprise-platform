@@ -160,7 +160,11 @@ def main() -> int:
         # Only fixed words and the OAuth error code are printed: the raw text of a
         # failed token request can carry the client credentials (CodeQL
         # py/clear-text-logging-sensitive-data). The hint above already names the fix.
-        kind = "HTTP error" if isinstance(exc, urllib.error.HTTPError) else "request failed"
+        kind = (
+            "HTTP error"
+            if isinstance(exc, urllib.error.HTTPError)
+            else "request failed"
+        )
         detail = f"{kind}, OAuth error: {code}" if code else kind
         print(f"FAIL: could not mint an M2M token ({detail}){hint}")
         return 1
