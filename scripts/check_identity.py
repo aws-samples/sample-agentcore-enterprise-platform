@@ -94,6 +94,9 @@ OAUTH_ERRORS = (
     "invalid_scope",
 )
 
+# What is printed for each code: built from the constants above, looked up by the code.
+OAUTH_TEXT = {c: f", OAuth error: {c}" for c in OAUTH_ERRORS}
+
 
 def oauth_error_code(exc: BaseException) -> str:
     """The OAuth `error` code (RFC 6749 5.2) from a token endpoint's
@@ -165,8 +168,9 @@ def main() -> int:
             if isinstance(exc, urllib.error.HTTPError)
             else "request failed"
         )
-        detail = f"{kind}, OAuth error: {code}" if code else kind
-        print(f"FAIL: could not mint an M2M token ({detail}){hint}")
+        print(
+            f"FAIL: could not mint an M2M token ({kind}{OAUTH_TEXT.get(code, '')}){hint}"
+        )
         return 1
 
     ok = True
