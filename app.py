@@ -319,7 +319,7 @@ if production_mode:
             ),
             (
                 "identity.mode",
-                idp_mode != "direct" or idp_type == "entra_id",
+                idp_mode != "direct" or idp_type in ("entra_id", "okta"),
             ),
             ("observability.transaction_search", enable_transaction_search),
             ("observability.alarms", enable_alarms),
@@ -353,6 +353,9 @@ idp_config = {
     "client_id": cfg("idp_client_id", "IDP_CLIENT_ID", ""),
     "client_secret_name": cfg("idp_client_secret_name", "IDP_CLIENT_SECRET_NAME", ""),
     "issuer_url": cfg("idp_issuer_url", "IDP_ISSUER_URL", ""),
+    # Okta direct mode: authorization-server audience and the custom M2M scope.
+    "audience": cfg("idp_audience", "IDP_AUDIENCE", ""),
+    "m2m_scope": cfg("idp_m2m_scope", "IDP_M2M_SCOPE", ""),
 }
 
 # OAuth provider credentials (3LO). Secrets travel as Secrets Manager secret
@@ -525,8 +528,20 @@ if is_fed_workload:
     legacy_m2m_client_secret = None
     allowed_clients = [fed.m2m_client_id]
     if idp_mode == "direct":
-        allowed_clients, allowed_audience = [], [fed.m2m_client_id]
-        gateway_token_scopes = f"{fed.m2m_client_id}/.default"
+        allowed_clients = []
+        if idp_type == "okta":
+            # Okta: aud = the authorization server's audience, a custom scope.
+            if not (idp_config["audience"] and idp_config["m2m_scope"]):
+                raise ValueError(
+                    "Okta direct mode in a federated workload account requires "
+                    "identity.audience and identity.m2m_scope (the same values "
+                    "the platform account deployed with)"
+                )
+            allowed_audience = [idp_config["audience"]]
+            gateway_token_scopes = idp_config["m2m_scope"]
+        else:
+            allowed_audience = [fed.m2m_client_id]
+            gateway_token_scopes = f"{fed.m2m_client_id}/.default"
     elif retired_m2m_client_id:
         allowed_clients.append(retired_m2m_client_id)
 else:
@@ -551,8 +566,10 @@ else:
         else None
     )
     if auth_stack.is_direct:
-        allowed_clients, allowed_audience = [], [auth_stack.app_client_id]
-        gateway_token_scopes = f"{auth_stack.app_client_id}/.default"
+        # Entra: aud = the app's client id, scope <client_id>/.default.
+        # Okta: aud = the authorization server's audience, a custom scope.
+        allowed_clients, allowed_audience = [], [auth_stack.direct_audience]
+        gateway_token_scopes = auth_stack.direct_m2m_scope
     else:
         allowed_clients = [auth_stack.app_client_id, auth_stack.m2m_client_id]
         if retired_m2m_client_id:

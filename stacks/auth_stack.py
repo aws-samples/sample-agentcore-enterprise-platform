@@ -8,6 +8,9 @@ Implements Requirement 5: Identity Provider Integration
 - SSM Parameters published for cross-stack consumption
 """
 
+import re
+from urllib.parse import urlparse
+
 import aws_cdk as cdk
 from aws_cdk import aws_cognito as cognito
 from aws_cdk import aws_secretsmanager as secretsmanager
@@ -409,16 +412,44 @@ class AuthStack(cdk.Stack):
         for every consumer. The M2M credential is the IdP app's own client
         secret, already in Secrets Manager under client_secret_name for the
         brokered path; direct mode just reads it for a different purpose.
-        Only Entra is wired today (IdentityConfig enforces this)."""
-        if idp_type != "entra_id":
-            raise ValueError("idp_mode='direct' supports idp_type 'entra_id' only")
-        for key in ("tenant_id", "client_id", "client_secret_name"):
+        Entra and Okta are wired (IdentityConfig enforces this)."""
+        if idp_type not in ("entra_id", "okta"):
+            raise ValueError(
+                "idp_mode='direct' supports idp_type 'entra_id' or 'okta' only"
+            )
+        if idp_type == "okta":
+            required = (
+                "issuer_url",
+                "client_id",
+                "client_secret_name",
+                "audience",
+                "m2m_scope",
+            )
+        else:
+            required = ("tenant_id", "client_id", "client_secret_name")
+        for key in required:
             if not idp_config.get(key):
                 raise ValueError(f"idp_mode='direct' requires idp_{key}")
-        tenant_id = idp_config["tenant_id"]
-        self._direct_issuer = f"https://login.microsoftonline.com/{tenant_id}/v2.0"
         self._direct_client_id = idp_config["client_id"]
         self._direct_secret_name = idp_config["client_secret_name"]
+        if idp_type == "okta":
+            issuer = idp_config["issuer_url"].rstrip("/")
+            # Raw -c context bypasses IdentityConfig: refuse the org AS here too.
+            if not re.search(r"/oauth2/[^/]+", urlparse(issuer).path):
+                raise ValueError(
+                    f"idp_issuer_url {issuer!r} is not an Okta custom authorization "
+                    "server (https://<org>.okta.com/oauth2/<authServerId>); "
+                    "org authorization server tokens cannot be validated by "
+                    "third parties"
+                )
+            self._direct_issuer = issuer
+            self._direct_audience = idp_config["audience"]
+            self._direct_m2m_scope = idp_config["m2m_scope"]
+        else:
+            tenant_id = idp_config["tenant_id"]
+            self._direct_issuer = f"https://login.microsoftonline.com/{tenant_id}/v2.0"
+            self._direct_audience = self._direct_client_id
+            self._direct_m2m_scope = f"{self._direct_client_id}/.default"
         self._publish(
             project_name,
             environment,
@@ -430,7 +461,7 @@ class AuthStack(cdk.Stack):
                 "app-client-id": self._direct_client_id,
                 "m2m-client-id": self._direct_client_id,
                 "m2m-client-secret-name": idp_config["client_secret_name"],
-                "m2m-scope": f"{self._direct_client_id}/.default",
+                "m2m-scope": self._direct_m2m_scope,
             },
         )
         cdk.CfnOutput(self, "IssuerUrl", value=self.issuer_url)
@@ -453,6 +484,17 @@ class AuthStack(cdk.Stack):
     @property
     def is_direct(self) -> bool:
         return self._mode == "direct"
+
+    @property
+    def direct_audience(self) -> str:
+        """The `aud` authorizers pin in direct mode (Okta: AS audience,
+        Entra: the app's client id)."""
+        return self._direct_audience
+
+    @property
+    def direct_m2m_scope(self) -> str:
+        """client_credentials scope in direct mode."""
+        return self._direct_m2m_scope
 
     @property
     def issuer_url(self) -> str:

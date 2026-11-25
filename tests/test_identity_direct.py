@@ -58,16 +58,17 @@ def test_default_mode_is_brokered_and_absent_from_old_files():
     assert to_env(c)["IDP_MODE"] == "brokered"
 
 
-def test_direct_requires_entra():
+def test_direct_refuses_ping():
+    # Okta direct is supported (tests/test_identity_okta_direct.py); Ping is next.
     with pytest.raises(ValidationError, match="supported for idp 'entra_id'"):
         PlatformConfig.model_validate(
             {
                 "identity": {
-                    "idp": "okta",
+                    "idp": "ping",
                     "mode": "direct",
-                    "issuer_url": "https://corp.okta.com/oauth2/default",
+                    "issuer_url": "https://auth.pingone.com/abc/as",
                     "client_id": "abc",
-                    "client_secret_name": "agentcore/okta",
+                    "client_secret_name": "agentcore/ping",
                 }
             }
         )
@@ -138,8 +139,10 @@ def test_both_stacks_use_the_shared_authorizer():
 def test_app_switches_to_audience_and_scope_in_direct_mode():
     src = (REPO / "app.py").read_text()
     assert 'idp_mode = cfg("idp_mode", "IDP_MODE", "brokered")' in src
-    assert "allowed_clients, allowed_audience = [], [auth_stack.app_client_id]" in src
-    assert 'gateway_token_scopes = f"{auth_stack.app_client_id}/.default"' in src
+    # Entra pins its client id, Okta the authorization server's audience —
+    # both resolved by the auth stack (stacks/auth_stack.py direct_audience).
+    assert "allowed_clients, allowed_audience = [], [auth_stack.direct_audience]" in src
+    assert "gateway_token_scopes = auth_stack.direct_m2m_scope" in src
     # Empty env values are rejected at deploy time — the scope var is conditional.
     assert (
         '{"GATEWAY_TOKEN_SCOPES": gateway_token_scopes} if gateway_token_scopes' in src
@@ -223,6 +226,7 @@ def test_direct_token_uses_discovered_endpoint_and_app_default_scope(monkeypatch
         else:
             seen["url"] = url
             seen["body"] = dict(p.split("=", 1) for p in req.data.decode().split("&"))
+            seen["auth"] = req.get_header("Authorization")
             body = {"access_token": "stub-token-from-fake-idp"}
         return io.BytesIO(json.dumps(body).encode())
 
@@ -234,6 +238,8 @@ def test_direct_token_uses_discovered_endpoint_and_app_default_scope(monkeypatch
     assert seen["body"]["grant_type"] == "client_credentials"
     assert seen["body"]["client_id"] == CLIENT
     assert seen["body"]["scope"] == f"{CLIENT}%2F.default"
+    # Entra keeps client_secret_post: no Basic header.
+    assert seen["auth"] is None
 
 
 def test_missing_mode_parameter_means_brokered(monkeypatch):
@@ -245,6 +251,93 @@ def test_missing_mode_parameter_means_brokered(monkeypatch):
 
     monkeypatch.setattr(utils.boto3, "client", lambda *a, **kw: NoMode())
     assert utils.auth_mode("proj", "dev") == "brokered"
+
+
+def test_federated_workload_uses_okta_audience_and_scope():
+    src = (REPO / "app.py").read_text()
+    fed_branch = src.split("if is_fed_workload:\n    issuer_url", 1)[1].split(
+        "\nelse:", 1
+    )[0]
+    assert 'allowed_audience = [idp_config["audience"]]' in fed_branch
+    assert 'gateway_token_scopes = idp_config["m2m_scope"]' in fed_branch
+
+
+def test_check_identity_reads_okta_audience_from_platform_yaml(monkeypatch):
+    monkeypatch.delenv("PLATFORM_ALLOW_PLACEHOLDERS", raising=False)
+    import check_identity
+
+    okta = PlatformConfig.model_validate(
+        {
+            "deployment": {"platform_account": "111122223333"},
+            "identity": {
+                "idp": "okta",
+                "mode": "direct",
+                "issuer_url": "https://acme.okta.com/oauth2/default",
+                "client_id": "0oa1abcdefg",
+                "client_secret_name": "agentcore/okta-client-secret",
+                "audience": "api://agentcore",
+                "m2m_scope": "agentcore.invoke",
+            },
+        }
+    )
+    # An existing file stands in for platform.yaml; the loader is stubbed so
+    # the test needs no temporary directory.
+    cfg = REPO / "app.py"
+    loaded = []
+
+    def fake_load(path):
+        loaded.append(path)
+        return okta
+
+    monkeypatch.setattr(check_identity, "load_platform_config", fake_load)
+    assert (
+        check_identity.configured_audience({"PLATFORM_CONFIG": str(cfg)})
+        == "api://agentcore"
+    )
+    assert loaded == [str(cfg)]
+    assert (
+        check_identity.configured_audience(
+            {"PLATFORM_CONFIG": str(cfg), "IDP_AUDIENCE": "api://override"}
+        )
+        == "api://override"
+    )
+    missing = REPO / "does-not-exist-platform.yaml"
+    assert check_identity.configured_audience({"PLATFORM_CONFIG": str(missing)}) == ""
+
+
+def test_check_identity_prints_okta_hint_from_http_error(monkeypatch, capsys):
+    import urllib.error
+
+    import check_identity
+
+    issuer = "https://acme.okta.com/oauth2/default"
+    monkeypatch.setenv("IDP_MODE", "direct")
+    monkeypatch.setenv("IDP_TYPE", "okta")
+    monkeypatch.setenv("IDP_AUDIENCE", "api://agentcore")
+    monkeypatch.setattr(check_identity, "auth_mode", lambda p, e: "direct")
+    monkeypatch.setattr(check_identity, "get_ssm_param", lambda *a, **k: issuer)
+    monkeypatch.setattr(check_identity, "oidc_discovery", lambda i: {"issuer": i})
+    body = json.dumps(
+        {"error": "invalid_scope", "error_description": "free text not printed"}
+    ).encode()
+
+    def fail(*a, **k):
+        raise urllib.error.HTTPError(
+            f"{issuer}/v1/token", 400, "Bad Request", None, io.BytesIO(body)
+        )
+
+    monkeypatch.setattr(check_identity, "get_m2m_token", fail)
+    assert check_identity.main() == 1
+    out = capsys.readouterr().out
+    assert "OAuth error" not in out  # only fixed words; the hint names the fix
+    assert "define the custom scope" in out
+    assert "free text not printed" not in out
+
+
+def test_oauth_error_code_ignores_non_http_errors():
+    import check_identity
+
+    assert check_identity.oauth_error_code(RuntimeError("invalid_scope")) == ""
 
 
 def test_check_identity_decodes_claims():
