@@ -12,7 +12,7 @@ deployment:
 
 identity:
   idp: entra_id
-  mode: brokered
+  mode: direct
   tenant_id: 00000000-0000-0000-0000-000000000000
   client_id: REPLACE_ME
   client_secret_name: agentcore/idp-client-secret

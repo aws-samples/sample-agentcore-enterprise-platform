@@ -9,6 +9,7 @@ environment: dev
 region: us-east-1
 deployment:
   strategy: distributed
+  platform_account: "000000000000"  # REPLACE: aws sts get-caller-identity
 identity:
   idp: cognito
 agents:

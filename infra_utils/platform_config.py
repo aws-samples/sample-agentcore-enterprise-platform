@@ -19,6 +19,7 @@ platform.yaml is optional — every existing flag keeps working without it.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import ipaddress
 import json
@@ -43,6 +44,82 @@ from pydantic import (
 
 # Where the Web Search built-in gateway connector exists (launch regions).
 WEB_SEARCH_REGIONS = {"us-east-1", "eu-west-1", "ap-northeast-1"}
+
+# ── Region tables (static; see docs/SUPPORT_MATRIX.md for how to update) ──
+# Base model ids offered as cross-region inference profiles per geo prefix.
+# These drift from AWS: findings derived from them are warnings only; `doctor`
+# and `verify` remain the authoritative live checks.
+INFERENCE_PROFILES_BY_GEO: dict[str, frozenset[str]] = {
+    "us": frozenset(
+        {
+            "anthropic.claude-sonnet-4-6",
+            "anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "anthropic.claude-sonnet-4-20250514-v1:0",
+            "anthropic.claude-3-7-sonnet-20250219-v1:0",
+            "anthropic.claude-haiku-4-5-20251001-v1:0",
+            "anthropic.claude-3-5-haiku-20241022-v1:0",
+            "anthropic.claude-opus-4-1-20250805-v1:0",
+            "amazon.nova-pro-v1:0",
+            "amazon.nova-lite-v1:0",
+            "amazon.nova-micro-v1:0",
+        }
+    ),
+    "eu": frozenset(
+        {
+            "anthropic.claude-sonnet-4-6",
+            "anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "anthropic.claude-sonnet-4-20250514-v1:0",
+            "anthropic.claude-3-7-sonnet-20250219-v1:0",
+            "anthropic.claude-haiku-4-5-20251001-v1:0",
+            "amazon.nova-pro-v1:0",
+            "amazon.nova-lite-v1:0",
+            "amazon.nova-micro-v1:0",
+        }
+    ),
+    "apac": frozenset(
+        {
+            "anthropic.claude-sonnet-4-6",
+            "anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "anthropic.claude-sonnet-4-20250514-v1:0",
+            "anthropic.claude-3-7-sonnet-20250219-v1:0",
+            "anthropic.claude-haiku-4-5-20251001-v1:0",
+            "amazon.nova-pro-v1:0",
+            "amazon.nova-lite-v1:0",
+            "amazon.nova-micro-v1:0",
+        }
+    ),
+    "global": frozenset(
+        {
+            "anthropic.claude-sonnet-4-6",
+            "anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "anthropic.claude-sonnet-4-20250514-v1:0",
+            "anthropic.claude-haiku-4-5-20251001-v1:0",
+        }
+    ),
+}
+
+# Region -> the geo prefix of the cross-region inference profiles it serves.
+REGION_GEO: dict[str, str] = {
+    "us-east-1": "us",
+    "us-east-2": "us",
+    "us-west-1": "us",
+    "us-west-2": "us",
+    "eu-central-1": "eu",
+    "eu-central-2": "eu",
+    "eu-north-1": "eu",
+    "eu-south-1": "eu",
+    "eu-south-2": "eu",
+    "eu-west-1": "eu",
+    "eu-west-2": "eu",
+    "eu-west-3": "eu",
+    "ap-northeast-1": "apac",
+    "ap-northeast-2": "apac",
+    "ap-northeast-3": "apac",
+    "ap-south-1": "apac",
+    "ap-south-2": "apac",
+    "ap-southeast-1": "apac",
+    "ap-southeast-2": "apac",
+}
 
 _ACCOUNT_RE = r"^\d{12}$"
 _REGION_RE = r"^[a-z]{2}(-[a-z]+)+-\d$"
@@ -87,6 +164,354 @@ def placeholders_allowed() -> bool:
 def _refuse_placeholders(messages: list[str]) -> None:
     if messages and not placeholders_allowed():
         raise ValueError("\n".join(messages))
+
+
+# ── Layered presets: journey x topology x posture ──
+# The eight flat presets bundle three independent choices. These layers are
+# those choices factored apart; presets/*.yaml stay as golden references and
+# tests/test_preset_layers.py proves every shortcut composes to the same
+# design. Merge rules: layers apply journey -> topology -> posture; mappings
+# merge recursively, scalars and lists are replaced by the later layer, so
+# posture wins for security:. The agents: subtree is owned by the journey:
+# a later layer may only fill agents keys the journey leaves unset, never
+# change one. Shortcut overlays apply last and may set any key.
+_ENTRA_PLACEHOLDER_IDENTITY = {
+    "idp": "entra_id",
+    "tenant_id": "00000000-0000-0000-0000-000000000000",
+    "client_id": "REPLACE_ME",
+    "client_secret_name": "agentcore/idp-client-secret",  # pragma: allowlist secret
+}
+
+
+def _journey(agents: dict, **extra: object) -> dict:
+    layer: dict = {
+        "project": "agentcore-workshop",
+        "environment": "dev",
+        "region": "us-east-1",
+        "identity": {"idp": "cognito"},
+        "agents": agents,
+        "gateway": {"web_search": "auto", "tools": ["sample-tool"]},
+        "security": {},
+        "observability": {"transaction_search": True},
+    }
+    layer.update(extra)
+    return layer
+
+
+JOURNEYS: dict[str, dict] = {
+    "greenfield": _journey({"pattern": "orchestrator"}),
+    "migration": _journey(
+        {"pattern": "langgraph-agent"},
+        deployment={"platform_account": "000000000000"},
+        identity=dict(_ENTRA_PLACEHOLDER_IDENTITY),
+        migration={
+            "source": {
+                "platform": "openshift",
+                "build": {
+                    "context": "./migration/simulation/existing-ec2-agent",
+                    "dockerfile": "Dockerfile",
+                },
+                "port": 8000,
+                "invoke_path": "/run",
+                "health_path": "/healthz",
+                "trigger": "webhook",
+                "env": {},
+                "secrets": ["JIRA_TOKEN", "GIT_TOKEN"],
+            },
+            "target": {"runtime": "agentcore", "mode": "adapter"},
+            "network": {"private_dependencies": [], "connectivity": "none"},
+            "stages": {
+                "runtime": {},
+                "data": {"strategy": "none"},
+                "triggers": {"strategy": "none"},
+                "traffic": {"strategy": "none"},
+            },
+        },
+    ),
+    "multi-agent": _journey(
+        {
+            "pattern": "claude-sdk-multi-agent",
+            "a2a": True,
+            "memory": {"long_term": True, "top_k": 10, "relevance_score": 0.3},
+        }
+    ),
+}
+
+TOPOLOGIES: dict[str, dict] = {
+    "centralized": {"deployment": {"strategy": "centralized"}},
+    "distributed": {
+        "deployment": {"strategy": "distributed", "platform_account": "000000000000"}
+    },
+    "federated": {
+        "deployment": {
+            "strategy": "federated",
+            "platform_account": "000000000000",
+            "workload_accounts": ["123456789012"],
+            "federation": {
+                "gateway_url": (
+                    "https://REPLACE_ME.gateway.bedrock-agentcore"
+                    ".us-east-1.amazonaws.com/mcp"
+                ),
+                "issuer_url": (
+                    "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_REPLACEME"
+                ),
+                "m2m_client_id": "REPLACE_ME",
+                "m2m_client_secret_name": "agentcore/platform-m2m",  # pragma: allowlist secret
+            },
+        }
+    },
+}
+
+POSTURES: dict[str, dict] = {
+    "dev": {"deployment": {"mode": "workshop"}},
+    "hardened": {
+        "security": {
+            "networking": True,
+            "cloudtrail_alerting": True,
+            "traceability": True,
+        },
+        "observability": {"alarms": True},
+    },
+    "production": {
+        "project": "agentcore-production",
+        "environment": "prod",
+        "deployment": {"mode": "production", "platform_account": "000000000000"},
+        "identity": {**_ENTRA_PLACEHOLDER_IDENTITY, "mode": "direct"},
+        "agents": {
+            "model_id": "us.anthropic.claude-sonnet-4-6",
+            "allowed_models": ["us.anthropic.claude-sonnet-4-6"],
+            "memory": {"event_expiry_days": 30},
+        },
+        "gateway": {"web_search": "off"},
+        "security": {
+            "networking": True,
+            "cloudtrail_alerting": True,
+            "resource_policies": True,
+            "egress_filter": True,
+            "require_guardrails": True,
+            "cedar": {"enabled": True, "mode": "ENFORCE"},
+            "traceability": True,
+            "org_id": "o-example1234",
+        },
+        "observability": {
+            "alarms": True,
+            "alarm_email": "ops@REPLACE_ME.invalid",
+            "log_retention_days": 90,
+        },
+    },
+}
+
+# The eight flat preset names, each a journey x topology x posture plus a
+# small overlay for the keys that are not a pure product of the axes.
+SHORTCUTS: dict[str, dict] = {
+    "greenfield": {
+        "journey": "greenfield",
+        "topology": "centralized",
+        "posture": "dev",
+    },
+    "migration": {"journey": "migration", "topology": "centralized", "posture": "dev"},
+    "multi-agent": {
+        "journey": "multi-agent",
+        "topology": "centralized",
+        "posture": "dev",
+    },
+    "distributed": {
+        "journey": "greenfield",
+        "topology": "distributed",
+        "posture": "dev",
+    },
+    "federated": {
+        "journey": "greenfield",
+        "topology": "federated",
+        "posture": "dev",
+        "overlay": {
+            "identity": {**_ENTRA_PLACEHOLDER_IDENTITY, "mode": "direct"},
+            "agents": {"pattern": "strands-agent"},
+        },
+    },
+    "platform-team": {
+        "journey": "greenfield",
+        "topology": "federated",
+        "posture": "hardened",
+        "overlay": {"agents": {"a2a": True, "memory": {"long_term": True}}},
+    },
+    "security-focused": {
+        "journey": "greenfield",
+        "topology": "centralized",
+        "posture": "hardened",
+        "overlay": {
+            "agents": {
+                "model_id": "us.anthropic.claude-sonnet-4-6",
+                "allowed_models": ["us.anthropic.claude-sonnet-4-6"],
+            },
+            "security": {
+                "resource_policies": True,
+                "egress_filter": True,
+                "require_guardrails": True,
+                "cedar": {"enabled": True, "mode": "LOG_ONLY"},
+                "org_id": "",
+            },
+            "observability": {"alarms": False},
+        },
+    },
+    "production": {
+        "journey": "greenfield",
+        "topology": "centralized",
+        "posture": "production",
+        "overlay": {"agents": {"pattern": "strands-agent"}},
+    },
+}
+
+# Partial combinations (any subset of journey/topology/posture/runner) that
+# are refused outright, each with the reason shown to the user.
+REFUSE: list[dict] = [
+    {
+        "when": {"posture": "production", "runner": "workshop"},
+        "reason": (
+            "the production profile is design/build only and refuses the "
+            "guided workshop runner"
+        ),
+    },
+    {
+        "when": {"journey": "multi-agent", "posture": "production"},
+        "reason": (
+            "the multi-agent journey uses a claude-sdk-* pattern, which cannot "
+            "attach the Bedrock Guardrail the production posture requires"
+        ),
+    },
+]
+
+
+def _deep_merge(base: dict, over: dict, *, keep_existing: bool = False) -> dict:
+    """Recursive mapping merge; scalars and lists from ``over`` replace.
+
+    With ``keep_existing`` a key already set in ``base`` is never replaced,
+    only missing keys are filled (how the journey owns agents:).
+    """
+    out = copy.deepcopy(base)
+    for key, value in over.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_merge(out[key], value, keep_existing=keep_existing)
+        elif keep_existing and key in out:
+            continue
+        else:
+            out[key] = copy.deepcopy(value)
+    return out
+
+
+def _merge_layers(layers: list[dict]) -> dict:
+    doc = copy.deepcopy(layers[0])
+    for layer in layers[1:]:
+        rest = {k: v for k, v in layer.items() if k != "agents"}
+        doc = _deep_merge(doc, rest)
+        if "agents" in layer:
+            doc["agents"] = _deep_merge(
+                doc.get("agents", {}), layer["agents"], keep_existing=True
+            )
+    return doc
+
+
+def _layer(kind: str, table: dict[str, dict], name: str) -> dict:
+    if name not in table:
+        raise ValueError(
+            f"unknown {kind} layer {name!r}; choose one of: {', '.join(table)}"
+        )
+    return table[name]
+
+
+def refusal_reason(**choice: str | None) -> str | None:
+    """The reason of the first REFUSE entry the choice matches, else None."""
+    for entry in REFUSE:
+        if all(choice.get(k) == v for k, v in entry["when"].items()):
+            return entry["reason"]
+    return None
+
+
+def _compose(
+    journey: str,
+    topology: str,
+    posture: str,
+    region: str | None,
+    runner: str | None,
+    overlay: dict | None,
+) -> dict:
+    layers = [
+        _layer("journey", JOURNEYS, journey),
+        _layer("topology", TOPOLOGIES, topology),
+        _layer("posture", POSTURES, posture),
+    ]
+    reason = refusal_reason(
+        journey=journey, topology=topology, posture=posture, runner=runner
+    )
+    if reason:
+        combo = f"journey={journey} topology={topology} posture={posture}"
+        if runner:
+            combo += f" runner={runner}"
+        raise ValueError(f"refused ({combo}): {reason}")
+    doc = _merge_layers(layers)
+    if overlay:
+        doc = _deep_merge(doc, overlay)
+    if region:
+        doc["region"] = region
+    return doc
+
+
+def compose_layers(
+    journey: str,
+    topology: str,
+    posture: str,
+    region: str | None = None,
+    runner: str | None = None,
+) -> dict:
+    """Compose one platform.yaml document from the three preset layers.
+
+    Raises ValueError naming an unknown layer or the matched refusal reason.
+    The result is unvalidated: run it through validate_composed (or write it
+    and let `deploy.sh design` validate it as today).
+    """
+    return _compose(journey, topology, posture, region, runner, None)
+
+
+def resolve_shortcut(
+    name: str, region: str | None = None, runner: str | None = None
+) -> dict:
+    """Compose the design one of the eight legacy preset names stands for."""
+    if name not in SHORTCUTS:
+        raise ValueError(
+            f"unknown shortcut {name!r}; choose one of: {', '.join(SHORTCUTS)}"
+        )
+    s = SHORTCUTS[name]
+    return _compose(
+        s["journey"], s["topology"], s["posture"], region, runner, s.get("overlay")
+    )
+
+
+def validate_composed(doc: dict) -> PlatformConfig:
+    """The same model validation every platform.yaml goes through."""
+    return PlatformConfig.model_validate(doc)
+
+
+def compose_cli(argv: list[str]) -> int:
+    """deploy.sh entry: PATH JOURNEY TOPOLOGY POSTURE [REGION] -> platform.yaml."""
+    path, journey, topology, posture, *rest = argv
+    region = rest[0] if rest else ""
+    try:
+        doc = compose_layers(journey, topology, posture, region=region or None)
+    except ValueError as exc:
+        print(exc)
+        return 1
+    header = (
+        f"# Generated from presets/ layers by deploy.sh (journey={journey}, "
+        f"topology={topology}, posture={posture}).\n"
+        "# Safe to edit; this header only marks that design may regenerate "
+        "the file.\n"
+    )
+    Path(path).write_text(header + yaml.safe_dump(doc, sort_keys=False))
+    print(
+        f"Layers journey={journey} topology={topology} posture={posture} "
+        f"materialized as {path}"
+    )
+    return 0
 
 
 class FederationConfig(BaseModel):
@@ -232,10 +657,18 @@ def deployment_placeholders(deployment: DeploymentConfig) -> list[str]:
     return out
 
 
+# IdPs whose identity.mode resolves to direct when the key is omitted. okta
+# joins once Okta direct is accepted by the validator; ping once it exists.
+_DIRECT_DEFAULT_IDPS = frozenset({"entra_id"})
+
+
 class IdentityConfig(BaseModel):
     """Who issues the tokens the platform trusts.
 
-    brokered (default) — Cognito is the issuer; a corporate IdP, when set,
+    Omitted mode resolves per IdP: direct for entra_id, brokered for cognito,
+    okta and ping. An explicit mode is always honoured unchanged.
+
+    brokered — Cognito is the issuer; a corporate IdP, when set,
         is federated THROUGH it (users sign in at the IdP, Cognito mints the
         token). One issuer whatever the IdP, platform-owned M2M clients,
         works with no IdP at all.
@@ -260,6 +693,8 @@ class IdentityConfig(BaseModel):
     # and the custom scope requested with client_credentials.
     audience: str = ""
     m2m_scope: str = ""
+    # True when mode was omitted and resolved to direct from the IdP default.
+    _mode_defaulted: bool = PrivateAttr(default=False)
 
     @property
     def direct_issuer_url(self) -> str:
@@ -294,6 +729,9 @@ class IdentityConfig(BaseModel):
 
     @model_validator(mode="after")
     def _federated_idp_fields(self) -> IdentityConfig:
+        if "mode" not in self.model_fields_set and self.idp in _DIRECT_DEFAULT_IDPS:
+            self.mode = "direct"
+            self._mode_defaulted = True
         if self.mode == "direct" and self.idp not in ("entra_id", "okta"):
             raise ValueError(
                 f"identity.mode 'direct' is supported for idp 'entra_id' and "
@@ -319,6 +757,10 @@ class IdentityConfig(BaseModel):
             if errors:
                 raise ValueError("\n".join(errors))
         _refuse_placeholders(identity_placeholders(self))
+        # Every entry point (design, doctor, build via app.py) loads the
+        # config through this model, so the upgrade warning is printed
+        # before any stack can change.
+        emit_identity_mode_warnings(self)
         return self
 
 
@@ -347,6 +789,36 @@ def _okta_direct_errors(identity: IdentityConfig) -> list[str]:
             "Authorization Servers > <server> > Scopes, e.g. agentcore.invoke)"
         )
     return errors
+# Messages already printed in this process: one load path may validate the
+# same identity block more than once.
+_EMITTED_MODE_WARNINGS: set[str] = set()
+
+
+def identity_mode_warnings(identity: IdentityConfig) -> list[str]:
+    """Warn when an omitted identity.mode resolved to direct (the default
+    used to be brokered for every IdP). An explicit IDP_MODE override in the
+    environment decides the effective mode, so it does not warn."""
+    if not identity._mode_defaulted or identity.mode != "direct":
+        return []
+    if os.environ.get("IDP_MODE"):
+        return []
+    return [
+        (
+            f"identity.mode is not set: it now resolves to 'direct' for idp "
+            f"{identity.idp!r}. A stack deployed earlier in brokered mode will "
+            "change on the next build unless platform.yaml pins "
+            "`identity.mode: brokered`."
+        )
+    ]
+
+
+def emit_identity_mode_warnings(identity: IdentityConfig) -> None:
+    """Print identity_mode_warnings on stderr, once per message per process."""
+    for message in identity_mode_warnings(identity):
+        if message in _EMITTED_MODE_WARNINGS:
+            continue
+        _EMITTED_MODE_WARNINGS.add(message)
+        print(f"[WARN] {message}", file=sys.stderr)
 
 
 def identity_placeholders(identity: IdentityConfig) -> list[str]:
@@ -595,6 +1067,117 @@ def observability_placeholders(alarm_email: str) -> list[str]:
             )
         ]
     return []
+
+
+@dataclass(frozen=True)
+class RegionFinding:
+    level: Literal["error", "warning"]
+    code: str
+    message: str
+
+    def render(self) -> str:
+        prefix = "[ERROR]" if self.level == "error" else "[WARN]"
+        return f"{prefix} {self.message}"
+
+
+def _config_region(config) -> str:
+    region = getattr(config, "region", "") or ""
+    if not region:
+        region = getattr(getattr(config, "project", None), "region", "") or ""
+    return region
+
+
+def _split_profile(model_id: str) -> tuple[str, str]:
+    head, sep, rest = model_id.partition(".")
+    if sep and head in INFERENCE_PROFILES_BY_GEO:
+        return head, rest
+    return "", model_id
+
+
+def region_findings(config, region: str | None = None) -> list[RegionFinding]:
+    """Static, region-aware design checks. Never calls AWS.
+
+    `config` needs `security.networking`, `agents.model_id`,
+    `agents.allowed_models` and `gateway.web_search`. The Region is taken from
+    `region` or, failing that, from the config. Every message names it.
+    """
+    # Lazy import keeps platform_config importable without a cycle; infra_utils
+    # must never import stacks (scripts/check_repository_structure.py).
+    from infra_utils.runtime_network import SUPPORTED_ZONE_IDS
+
+    region = region or _config_region(config)
+    out: list[RegionFinding] = []
+
+    # A missing entry is not proof the Region is unsupported: the runtime
+    # helper deliberately applies no zone restriction for unknown Regions so a
+    # stale table never blocks a Region AgentCore has since added. Warn only.
+    if config.security.networking and region not in SUPPORTED_ZONE_IDS:
+        out.append(
+            RegionFinding(
+                "warning",
+                "zones-unknown",
+                f"security.networking is on but region {region} has no "
+                "SUPPORTED_ZONE_IDS entry (infra_utils/runtime_network.py), so "
+                "AgentCore zone support could not be checked statically; no "
+                f"zone restriction is applied. Run doctor in {region} to confirm",
+            )
+        )
+
+    agents = config.agents
+    models = [m for m in [agents.model_id, *agents.allowed_models] if m]
+    models = list(dict.fromkeys(models))
+    geo = REGION_GEO.get(region)
+    if models and geo is None:
+        out.append(
+            RegionFinding(
+                "warning",
+                "model-region-unknown",
+                f"model availability could not be checked: region {region} is "
+                "not in REGION_GEO",
+            )
+        )
+    elif geo is not None:
+        known = set().union(*INFERENCE_PROFILES_BY_GEO.values())
+        for model in models:
+            prefix, base = _split_profile(model)
+            if base not in known:
+                out.append(
+                    RegionFinding(
+                        "warning",
+                        "model-unknown",
+                        f"model {model} is not a known cross-region inference "
+                        f"profile in {region}",
+                    )
+                )
+            elif prefix and prefix not in ("global", geo):
+                out.append(
+                    RegionFinding(
+                        "warning",
+                        "model-geo-mismatch",
+                        f"model {model} uses the '{prefix}.' profile but region "
+                        f"{region} serves '{geo}.' (or 'global.') profiles",
+                    )
+                )
+            elif prefix and base not in INFERENCE_PROFILES_BY_GEO[prefix]:
+                out.append(
+                    RegionFinding(
+                        "warning",
+                        "model-unknown",
+                        f"model {model} is not a known cross-region inference "
+                        f"profile in {region}",
+                    )
+                )
+
+    if config.gateway.web_search == "on" and region not in WEB_SEARCH_REGIONS:
+        out.append(
+            RegionFinding(
+                "warning",
+                "web-search-region",
+                f"gateway.web_search is on but region {region} is not a Web "
+                f"Search launch region ({', '.join(sorted(WEB_SEARCH_REGIONS))})",
+            )
+        )
+    return out
 
 
 # ── Migration ──
@@ -2964,7 +3547,12 @@ def _main() -> int:
         return 0
     if "--design" in flags:
         print("\n".join(design_plan(config, os.environ.get("CDK_DEFAULT_ACCOUNT", ""))))
-        return 0
+        findings = region_findings(config)
+        if findings:
+            print("\nRegion checks (static tables, no AWS calls):")
+            for finding in findings:
+                print(f"  {finding.render()}")
+        return 1 if any(f.level == "error" for f in findings) else 0
     if "--plan" in flags:
         print(
             "\n".join(migration_plan(config, os.environ.get("CDK_DEFAULT_ACCOUNT", "")))

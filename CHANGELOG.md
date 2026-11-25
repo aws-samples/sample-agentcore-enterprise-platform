@@ -2,6 +2,30 @@
 
 All notable changes to the accelerator are recorded here.
 
+## [Unreleased]
+
+### Changed
+
+- `identity.mode` now defaults per IdP when omitted: `direct` for `entra_id`,
+  `brokered` for `cognito`, `okta` and `ping` (Okta and Ping keep brokered
+  until their direct mode exists). An explicit `mode` is always honoured.
+- `presets/production.yaml` and `presets/federated.yaml` pin
+  `identity.mode: direct` explicitly.
+
+### Upgrade note
+
+- Existing `entra_id` deployments whose `platform.yaml` omits `identity.mode`
+  were brokered and will switch to direct on the next build. To keep them
+  brokered, pin it:
+
+  ```yaml
+  identity:
+    idp: entra_id
+    mode: brokered
+  ```
+
+  The same applies to `okta` once Okta direct becomes its default.
+
 ## [0.1.0] - 2026-09-21
 
 Initial numbered release.

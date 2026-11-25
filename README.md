@@ -70,6 +70,10 @@ guided workshop runner. Multi-account topologies have their own presets,
 `federated` and `distributed`; see
 [`docs/MULTI_ACCOUNT.md`](docs/MULTI_ACCOUNT.md).
 
+To see side by side which security and observability settings the workshop,
+secure and production postures set, read the generated
+[`docs/POSTURE_TIERS.md`](docs/POSTURE_TIERS.md).
+
 The production preset is a secure template, not a launch approval. Replace all
 sentinels, complete the DRAFT governance artifacts under
 [`docs/`](docs/PRODUCTION_READINESS_PLAN.md), and pass the release gates for the
@@ -128,6 +132,8 @@ pip install -r requirements.txt
 # Pick a profile: writes platform.yaml, validates it, prints the stacks it produces
 ./scripts/deploy.sh design --profile greenfield
 # Other profiles: migration | multi-agent | platform-team | security-focused | production
+# Or compose the axes (posture wins for security:, journey owns agents:):
+#   ./scripts/deploy.sh design --journey migration --topology federated --posture hardened
 
 # Edit platform.yaml (accounts, IdP and identity.mode, framework, controls...)
 # and re-run `design` to re-validate. Every key: docs/PLATFORM_YAML.md

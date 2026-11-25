@@ -56,7 +56,7 @@ Who issues the tokens the platform trusts.
 | Key | Type | Default | Env override | Description |
 |---|---|---|---|---|
 | `identity.idp` | one of: `cognito`, `entra_id`, `okta`, `ping` | `'cognito'` | `IDP_TYPE` | Who authenticates users. `cognito` is self-contained; the others federate Cognito to your enterprise IdP (docs/ENTERPRISE_IDP.md). |
-| `identity.mode` | one of: `brokered`, `direct` | `'brokered'` | `IDP_MODE` | Who issues the tokens. `brokered`: Cognito issues them and the IdP only signs users in — works with no IdP at all. `direct`: the IdP issues them and no Cognito user pool is deployed; `entra_id` (the app registration needs a service principal and v2 access tokens) or `okta` (needs a custom authorization server, `audience` and `m2m_scope`), see docs/ENTERPRISE_IDP.md. |
+| `identity.mode` | one of: `brokered`, `direct` | `'brokered'` | `IDP_MODE` | Who issues the tokens. When omitted it resolves per IdP: `direct` for `entra_id`, `brokered` for `cognito`, `okta` and `ping`; an omitted mode that resolves to `direct` warns, because a stack deployed earlier as brokered would switch (pin `mode: brokered` to keep it). `brokered`: Cognito issues them and the IdP only signs users in — works with no IdP at all. `direct`: the IdP issues them and no Cognito user pool is deployed; `entra_id` (the app registration needs a service principal and v2 access tokens) or `okta` (needs a custom authorization server, `audience` and `m2m_scope`), see docs/ENTERPRISE_IDP.md. |
 | `identity.tenant_id` | str | `""` | `IDP_TENANT_ID` | Entra ID tenant. Required when `idp: entra_id`. |
 | `identity.client_id` | str | `""` | `IDP_CLIENT_ID` | App registration / OIDC client id at your IdP. |
 | `identity.issuer_url` | str | `""` | `IDP_ISSUER_URL` | OIDC issuer of your IdP. Required for `okta` and `ping` (Entra derives it from the tenant). |
@@ -213,6 +213,7 @@ environment: dev
 region: us-east-1
 deployment:
   strategy: distributed
+  platform_account: "000000000000"  # REPLACE: aws sts get-caller-identity
 identity:
   idp: cognito
 agents:
@@ -257,6 +258,7 @@ deployment:
     m2m_client_secret_name: "agentcore/platform-m2m"   # pragma: allowlist secret — a NAME in the workload account
 identity:
   idp: entra_id
+  mode: direct
   tenant_id: "00000000-0000-0000-0000-000000000000"   # sentinel — your Entra tenant id
   client_id: "REPLACE_ME"                             # sentinel — the app registration's client id
   client_secret_name: "agentcore/idp-client-secret"   # pragma: allowlist secret — a NAME, not a value
@@ -410,17 +412,25 @@ observability:
 <summary><code>presets/platform-team.yaml</code></summary>
 
 ```yaml
-# Platform team: the full build — every module, distributed-ready.
+# Platform team: the full build — every module, as shared infrastructure.
 # Modules: 3 4 5 A 6 7 8 9 C E
-# Distributed strategy: each workload team deploys its own copy of this file
-# into its own account; org guardrails under control-library/terraform/ apply
-# org-wide once.
+# Federated strategy: one shared platform account runs auth and the gateway
+# for the organisation; workload accounts run their own runtimes against it.
+# Replace the sentinel account ids below with real ones before deploying.
+# See docs/MULTI_ACCOUNT.md.
 project: agentcore-workshop
 environment: dev
 region: us-east-1
 
 deployment:
-  strategy: distributed
+  strategy: federated
+  platform_account: "000000000000"      # REPLACE: aws sts get-caller-identity
+  workload_accounts: ["123456789012"]   # REPLACE: each workload account id
+  federation:                      # sentinels — copy from the platform account's `deploy.sh export`
+    gateway_url: "https://REPLACE_ME.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp"
+    issuer_url: "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_REPLACEME"
+    m2m_client_id: "REPLACE_ME"
+    m2m_client_secret_name: "agentcore/platform-m2m"   # pragma: allowlist secret — a NAME in the workload account
 
 identity:
   idp: cognito
@@ -465,7 +475,7 @@ deployment:
 
 identity:
   idp: entra_id
-  mode: brokered
+  mode: direct
   tenant_id: 00000000-0000-0000-0000-000000000000
   client_id: REPLACE_ME
   client_secret_name: agentcore/idp-client-secret

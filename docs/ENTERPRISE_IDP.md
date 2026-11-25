@@ -4,29 +4,24 @@ Module 4's headline is that your users keep their corporate logins. This is how
 you actually wire that up, verified end to end against a real Microsoft Entra ID
 tenant.
 
-The stack supports **Entra ID**, **Okta**, and **Ping** as OIDC providers into
-Cognito (`stacks/auth_stack.py`). Cognito stays in the path — it is the token
-issuer every agent and the gateway validate against — and your IdP becomes the
-place where humans actually authenticate.
+`identity.mode` decides who issues the tokens the platform trusts:
 
-```
-Browser → Cognito Hosted UI → your IdP (login, MFA, conditional access)
-                            ← id_token
-        ← Cognito code → tokens minted by COGNITO (what agents verify)
-```
+- **`direct`, the default for Entra ID.** Your IdP is the OAuth
+  authorization server. It issues the tokens the Gateway and runtimes
+  validate, and no Cognito user pool is deployed. Start with
+  [Direct mode](#direct-mode-entra-id-issues-the-tokens).
+- **`brokered`, the default for `cognito`, `okta` and `ping`.** Cognito stays
+  in the path as the token issuer, and your IdP only signs humans in.
+  Use it in the cases listed in [When to use brokered](#when-to-use-brokered).
 
-Two consequences worth understanding before you start:
+In both modes the **client secret lives in Secrets Manager**, never in CDK
+context or `platform.yaml`. Only the secret's *name* is configuration.
 
-- **Agents never see your IdP's tokens.** They verify Cognito-issued JWTs
-  (`docs/IDENTITY.md`), so nothing downstream changes when you federate.
-- **The client secret lives in Secrets Manager**, never in CDK context or
-  `platform.yaml`. Only the secret's *name* is configuration.
-
-That is `identity.mode: brokered`, the default. If your organisation
-standardises on Entra ID as *the* OAuth authorization server and does not
-want a second token issuer in the path, see
-[Direct mode: Entra ID issues the tokens](#direct-mode-entra-id-issues-the-tokens)
-below — no user pool is deployed at all.
+> **Upgrading an existing Entra ID deployment?** A `platform.yaml` that omits
+> `identity.mode` used to resolve to brokered and now resolves to direct.
+> Loading the config (`deploy.sh design`, `doctor`, `build`) prints a
+> `[WARN]` on stderr when this happens, unless `IDP_MODE` is exported. Pin
+> `mode: brokered` to keep an existing brokered stack unchanged.
 
 ---
 
@@ -51,7 +46,7 @@ Client (human or machine) → Entra ID → access token (aud = client_id)
 
 What changes, and what does not:
 
-| | brokered (default) | direct |
+| | brokered | direct (default for Entra ID) |
 |---|---|---|
 | Token issuer | Cognito | `https://login.microsoftonline.com/<tenant>/v2.0` |
 | Cognito user pool | deployed; Entra federated into it | **not deployed** — the `auth` stack only publishes the issuer facts |
@@ -161,6 +156,42 @@ issuer or audience mismatch.
 
 ---
 
+## When to use brokered
+
+Brokered stays fully supported and is the fallback in two cases:
+
+- **(a) Your IdP gives the platform no machine-to-machine access.** Direct
+  mode mints machine tokens from the IdP app registration with
+  `client_credentials`. If that is not allowed (for example, no service
+  principal, or no client secret for M2M), Cognito's own M2M client does the
+  job instead.
+- **(b) You need several IdPs at once.** Direct mode trusts exactly one
+  issuer. Brokered federates the IdPs into one Cognito pool, so agents still
+  verify a single issuer.
+
+Pin it explicitly:
+
+```yaml
+identity:
+  idp: entra_id
+  mode: brokered
+  tenant_id: "<tenant-id>"
+  client_id: "<appId>"
+  client_secret_name: agentcore/entra-client-secret
+```
+
+```
+Browser → Cognito Hosted UI → your IdP (login, MFA, conditional access)
+                            ← id_token
+        ← Cognito code → tokens minted by COGNITO (what agents verify)
+```
+
+In brokered mode **agents never see your IdP's tokens.** They verify
+Cognito-issued JWTs (`docs/IDENTITY.md`), so nothing downstream changes when
+you federate. The walkthrough below sets up brokered Entra ID end to end.
+
+---
+
 ## Entra ID, end to end
 
 Everything below was run against a live tenant. Substitute your own tenant id
@@ -256,6 +287,7 @@ deployment:
 
 identity:
   idp: entra_id
+  mode: brokered          # omitted, entra_id now resolves to direct
   tenant_id: "<tenant-id>"
   client_id: "<appId>"
   client_secret_name: agentcore/entra-client-secret

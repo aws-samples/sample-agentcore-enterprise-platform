@@ -21,6 +21,7 @@ test stacks.
 
 import json
 import os
+import sys
 
 import aws_cdk as cdk
 
@@ -399,6 +400,40 @@ cdk.Tags.of(app).add("DeploymentMode", deployment_mode)
 # ── Optional: Networking (VPC, subnets, endpoints) ──
 networking_stack = None
 if enable_networking:
+    import boto3
+    from botocore.exceptions import BotoCoreError, ClientError
+
+    from infra_utils.runtime_network import resolve_vpc_zones
+
+    # AZ names map to different AZ ids per account, and AgentCore VPC mode
+    # supports only some ids. Pin the VPC to supported ids at synth time only
+    # when the default pick is unsupported. Lookup failures, an account
+    # mismatch, or too few supported zones fail the synth on purpose
+    # (AGENTCORE_SKIP_AZ_PINNING=1 skips the lookup entirely so an offline
+    # synth such as scripts/check-contract.sh keeps max_azs=2).
+    # An existing VPC in unsupported AZs gets a destroy-and-redeploy warning.
+    networking_azs, _az_map = resolve_vpc_zones(
+        region,
+        account,
+        lambda service: boto3.client(service, region_name=region),
+        # BotoCoreError covers missing credentials, unreachable endpoints,
+        # timeouts and missing profiles: all become one clear synth error.
+        (BotoCoreError, ClientError),
+        vpc_name=f"{prefix}-vpc",
+    )
+    if networking_azs:
+        print(
+            "Networking AZs: "
+            + ", ".join(f"{n} ({_az_map[n]})" for n in networking_azs),
+            file=sys.stderr,
+        )
+        if account:
+            # Seed CDK's AZ lookup so it validates the pinned names
+            # against the real list instead of its dummy placeholders.
+            app.node.set_context(
+                f"availability-zones:account={account}:region={region}",
+                sorted(_az_map),
+            )
     networking_stack = NetworkingStack(
         app,
         f"{prefix}-networking",
@@ -410,6 +445,7 @@ if enable_networking:
         migration_ca_bundle_secret_name=migration_ca_bundle_secret_name,
         log_retention_days=log_retention_days,
         retain_data=production_mode,
+        availability_zones=networking_azs,
         env=cdk_env,
     )
 
