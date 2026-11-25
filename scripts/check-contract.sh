@@ -27,6 +27,8 @@ export ORG_ID="${ORG_ID:-o-paritycheck123}"
 # account ids) on purpose; a real deploy refuses them. The gate only proves the
 # presets synthesize, so it downgrades those refusals to warnings.
 export PLATFORM_ALLOW_PLACEHOLDERS=1
+# The parity synth runs offline; AZ pinning needs credentials to read the account's AZ ids.
+export AGENTCORE_SKIP_AZ_PINNING=1
 export JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1
 
 # The networking VPC's AZ lookup needs context to synth offline; CDK only

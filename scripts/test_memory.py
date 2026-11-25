@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Adapted from fullstack-solution-template-for-agentcore
 """
 Test script for AgentCore Memory
@@ -16,12 +15,9 @@ import argparse
 import sys
 import time
 from datetime import UTC, datetime
-from typing import Tuple
 
-import boto3
 from botocore.exceptions import ClientError
 from colorama import Fore, Style
-
 from utils import (
     create_bedrock_client,
     generate_session_id,
@@ -32,17 +28,32 @@ from utils import (
 )
 
 
-def test_create_event(client, memory_id: str, actor_id: str, session_id: str) -> bool:
+def check_create_event(client, memory_id: str, actor_id: str, session_id: str) -> bool:
     """Test creating conversation events in memory."""
     print("Test 1: Creating conversation events...")
     try:
         payload = [
-            {"conversational": {"content": {"text": "What's the weather like today?"}, "role": "USER"}},
-            {"conversational": {"content": {"text": "I don't have access to real-time weather data."}, "role": "ASSISTANT"}},
+            {
+                "conversational": {
+                    "content": {"text": "What's the weather like today?"},
+                    "role": "USER",
+                }
+            },
+            {
+                "conversational": {
+                    "content": {
+                        "text": "I don't have access to real-time weather data."
+                    },
+                    "role": "ASSISTANT",
+                }
+            },
         ]
         response = client.create_event(
-            memoryId=memory_id, actorId=actor_id, sessionId=session_id,
-            eventTimestamp=datetime.now(UTC), payload=payload,
+            memoryId=memory_id,
+            actorId=actor_id,
+            sessionId=session_id,
+            eventTimestamp=datetime.now(UTC),
+            payload=payload,
         )
         event_id = response.get("event", {}).get("eventId")
         if event_id:
@@ -51,12 +62,12 @@ def test_create_event(client, memory_id: str, actor_id: str, session_id: str) ->
             return True
         print_msg("Test 1 failed - No event ID returned", "error")
         return False
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - operator script reports any failure
         print_msg(f"Test 1 failed - {e}", "error")
         return False
 
 
-def test_list_events(client, memory_id: str, actor_id: str, session_id: str) -> bool:
+def check_list_events(client, memory_id: str, actor_id: str, session_id: str) -> bool:
     """Test listing events from memory."""
     print("\nTest 2: Listing conversation events...")
     try:
@@ -66,12 +77,12 @@ def test_list_events(client, memory_id: str, actor_id: str, session_id: str) -> 
         events = response.get("events", [])
         print_msg(f"Test 2 passed - {len(events)} events found", "success")
         return True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - operator script reports any failure
         print_msg(f"Test 2 failed - {e}", "error")
         return False
 
 
-def test_get_event(client, memory_id: str, actor_id: str, session_id: str) -> bool:
+def check_get_event(client, memory_id: str, actor_id: str, session_id: str) -> bool:
     """Test getting a specific event by ID."""
     print("\nTest 3: Getting specific event...")
     try:
@@ -90,20 +101,29 @@ def test_get_event(client, memory_id: str, actor_id: str, session_id: str) -> bo
             return True
         print_msg("Test 3 failed - Event mismatch", "error")
         return False
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - operator script reports any failure
         print_msg(f"Test 3 failed - {e}", "error")
         return False
 
 
-def test_pagination(client, memory_id: str, actor_id: str, session_id: str) -> bool:
+def check_pagination(client, memory_id: str, actor_id: str, session_id: str) -> bool:
     """Test pagination with maxResults."""
     print("\nTest 4: Testing pagination...")
     try:
         for i in range(3):
             client.create_event(
-                memoryId=memory_id, actorId=actor_id, sessionId=session_id,
+                memoryId=memory_id,
+                actorId=actor_id,
+                sessionId=session_id,
                 eventTimestamp=datetime.now(UTC),
-                payload=[{"conversational": {"content": {"text": f"Test message {i + 1}"}, "role": "USER"}}],
+                payload=[
+                    {
+                        "conversational": {
+                            "content": {"text": f"Test message {i + 1}"},
+                            "role": "USER",
+                        }
+                    }
+                ],
             )
         time.sleep(1)
         response = client.list_events(
@@ -113,27 +133,31 @@ def test_pagination(client, memory_id: str, actor_id: str, session_id: str) -> b
         print(f"  Events in page: {len(response.get('events', []))}")
         print(f"  Next token: {bool(response.get('nextToken'))}")
         return True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - operator script reports any failure
         print_msg(f"Test 4 failed - {e}", "error")
         return False
 
 
-def test_invalid_memory_id(client) -> bool:
+def check_invalid_memory_id(client) -> bool:
     """Test error handling with invalid memory ID."""
     print("\nTest 5: Testing error handling (invalid memory ID)...")
     try:
-        client.list_events(memoryId="invalid-memory-id-12345", actorId="test", sessionId=generate_session_id())
+        client.list_events(
+            memoryId="invalid-memory-id-12345",
+            actorId="test",
+            sessionId=generate_session_id(),
+        )
         print_msg("Test 5 failed - Invalid memory ID was accepted", "error")
         return False
     except ClientError:
         print_msg("Test 5 passed - Invalid memory ID correctly rejected", "success")
         return True
-    except Exception:
+    except Exception:  # noqa: BLE001 - any rejection counts as handled
         print_msg("Test 5 passed - Error handled gracefully", "success")
         return True
 
 
-def run_tests(client, memory_id: str) -> Tuple[int, int]:
+def run_checks(client, memory_id: str) -> tuple[int, int]:
     """Run all tests and return (passed, failed)."""
     print_section("Running Tests")
     actor_id = "test-user-12345"
@@ -141,11 +165,11 @@ def run_tests(client, memory_id: str) -> Tuple[int, int]:
     print(f"Actor ID: {actor_id}\nSession ID: {session_id}\n")
 
     tests = [
-        lambda: test_create_event(client, memory_id, actor_id, session_id),
-        lambda: test_list_events(client, memory_id, actor_id, session_id),
-        lambda: test_get_event(client, memory_id, actor_id, session_id),
-        lambda: test_pagination(client, memory_id, actor_id, session_id),
-        lambda: test_invalid_memory_id(client),
+        lambda: check_create_event(client, memory_id, actor_id, session_id),
+        lambda: check_list_events(client, memory_id, actor_id, session_id),
+        lambda: check_get_event(client, memory_id, actor_id, session_id),
+        lambda: check_pagination(client, memory_id, actor_id, session_id),
+        lambda: check_invalid_memory_id(client),
     ]
 
     passed = sum(1 for t in tests if t())
@@ -159,7 +183,9 @@ def main():
     print("=" * 60 + "\n")
 
     parser = argparse.ArgumentParser(description="Test AgentCore Memory operations")
-    parser.add_argument("--memory-arn", type=str, help="Memory ARN (overrides SSM lookup)")
+    parser.add_argument(
+        "--memory-arn", type=str, help="Memory ARN (overrides SSM lookup)"
+    )
     parser.add_argument("--project", default=None, help="Project name")
     parser.add_argument("--env", default=None, help="Environment")
     args = parser.parse_args()
@@ -181,7 +207,7 @@ def main():
     client = create_bedrock_client(region)
     print_msg(f"Client initialized (region: {region})", "success")
 
-    passed, failed = run_tests(client, memory_id)
+    passed, failed = run_checks(client, memory_id)
 
     print("\n" + "=" * 60)
     print("Test Summary")

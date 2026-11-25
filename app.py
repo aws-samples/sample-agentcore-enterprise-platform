@@ -21,6 +21,7 @@ test stacks.
 
 import json
 import os
+import sys
 
 import aws_cdk as cdk
 
@@ -420,7 +421,8 @@ if enable_networking:
     if networking_azs:
         print(
             "Networking AZs: "
-            + ", ".join(f"{n} ({_az_map[n]})" for n in networking_azs)
+            + ", ".join(f"{n} ({_az_map[n]})" for n in networking_azs),
+            file=sys.stderr,
         )
         if account:
             # Seed CDK's AZ lookup so it validates the pinned names
