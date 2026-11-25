@@ -25,7 +25,6 @@ Usage:
 import base64
 import json
 import os
-import re
 import sys
 import urllib.error
 from pathlib import Path
@@ -85,6 +84,17 @@ def okta_mint_hint(msg: str) -> str:
     return ""
 
 
+# RFC 6749 section 5.2 error codes.
+OAUTH_ERRORS = (
+    "invalid_request",
+    "invalid_client",
+    "invalid_grant",
+    "unauthorized_client",
+    "unsupported_grant_type",
+    "invalid_scope",
+)
+
+
 def oauth_error_code(exc: BaseException) -> str:
     """The OAuth `error` code (RFC 6749 5.2) from a token endpoint's
     HTTPError body, or "". Only that field is read: str(HTTPError) carries just
@@ -96,9 +106,9 @@ def oauth_error_code(exc: BaseException) -> str:
     except (ValueError, OSError, AttributeError):
         return ""
     code = body.get("error") if isinstance(body, dict) else None
-    if isinstance(code, str) and re.fullmatch(r"[a-z_]{1,64}", code):
-        return code
-    return ""
+    # Return our own constant, never the response's string: what is printed can then hold
+    # nothing the token request carried.
+    return next((known for known in OAUTH_ERRORS if known == code), "")
 
 
 def claims(token: str) -> dict:
