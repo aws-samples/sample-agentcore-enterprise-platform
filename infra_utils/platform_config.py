@@ -789,6 +789,8 @@ def _okta_direct_errors(identity: IdentityConfig) -> list[str]:
             "Authorization Servers > <server> > Scopes, e.g. agentcore.invoke)"
         )
     return errors
+
+
 # Messages already printed in this process: one load path may validate the
 # same identity block more than once.
 _EMITTED_MODE_WARNINGS: set[str] = set()
