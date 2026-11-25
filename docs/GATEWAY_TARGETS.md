@@ -6,12 +6,12 @@ picks it up on its next discovery, **with no agent redeploy**.
 
 Two kinds of target, and the choice is usually obvious:
 
-| | Built-in connector | Lambda target |
-|---|---|---|
-| You write | nothing | a Lambda handler + tool schema |
-| Good for | capabilities AWS already operates (web search) | your APIs, your data, your business logic |
-| Credentials | none — the gateway's IAM role | whatever your Lambda needs |
-| Example in this repo | `web-search` (`stacks/gateway_stack.py`) | `sample-tool` (`tools/sample_tool/`) |
+| | Built-in connector | Lambda target | OpenAPI target |
+|---|---|---|---|
+| You write | nothing | a Lambda handler + tool schema | an OpenAPI spec |
+| Good for | capabilities AWS already operates (web search) | your APIs, your data, your business logic | an existing HTTP API |
+| Credentials | none — the gateway's IAM role | whatever your Lambda needs | an AgentCore Identity credential provider (API key or OAuth) |
+| Example in this repo | `web-search` (`stacks/gateway_stack.py`) | `sample-tool` (`tools/sample_tool/`) | `tests/fixtures/openapi/sample.json` |
 
 Both are declared in the gateway stack and appear to agents as ordinary MCP
 tools. Start by seeing what is registered today:
@@ -105,8 +105,25 @@ Return shape: `{"content": [{"type": "text", "text": ...}]}` on success,
 
 ### 2. The schema
 
-Declare the tool in `app.py`'s `tool_configs`, beside `sample-tool`. Note the
-**PascalCase** keys — this is the CloudFormation shape, not the MCP JSON:
+Put the tool schema in `tools/my_tool/tool_spec.json` and declare the target
+in `platform.yaml`. `app.py`'s `DEFAULT_TOOL_CONFIGS` (in
+`stacks/gateway_stack.py`) is only the default used when `gateway.tools` is
+absent; once you list targets, list `sample-tool` too if you still want it:
+
+```yaml
+gateway:
+  tools:
+    - sample-tool                 # the built-in default
+    - my-tool                     # tools/my_tool/ + tools/my_tool/tool_spec.json
+    - name: other-tool            # explicit form
+      type: lambda
+      source_dir: tools/other_tool
+      env_vars: {LOG_LEVEL: info}
+```
+
+`tool_spec.json` is a JSON list in the **PascalCase** CloudFormation shape,
+not the MCP JSON. This is the Python equivalent of what
+`DEFAULT_TOOL_CONFIGS` holds:
 
 ```python
 "my-tool": {
@@ -149,6 +166,47 @@ Then confirm an agent will actually *use* it. Remember the default
 AGENT_PATTERN=strands-agent ./scripts/deploy.sh deploy --module 6
 python scripts/invoke.py "Use my_tool on '…' and report what it returns."
 ```
+
+---
+
+## Path C — an OpenAPI target (an existing HTTP API)
+
+Point the gateway at an OpenAPI spec and an existing AgentCore Identity
+credential provider; each operation becomes a tool.
+
+```yaml
+gateway:
+  tools:
+    - sample-tool
+    - name: weather-api
+      type: openapi
+      schema_path: specs/weather.json      # JSON or YAML, read at synth time
+      credential_provider:
+        type: api_key                      # or oauth
+        arn: arn:aws:bedrock-agentcore:us-east-1:111122223333:token-vault/default/apikeycredentialprovider/weather-key
+        # scopes: [read]                   # oauth only
+```
+
+Validation (`python -m infra_utils.platform_config platform.yaml`) rejects an
+unknown `type`, a missing `schema_path` file, a missing or malformed provider
+ARN (and an ARN whose kind does not match `type`), `scopes` on an API key, and
+duplicate target names, all in one pass. The spec is inlined as the target's
+`OpenApiSchema.InlinePayload`. The gateway role gets
+`bedrock-agentcore:GetWorkloadAccessToken` plus
+`GetResourceApiKey`/`GetResourceOauth2Token` on the declared provider ARNs and
+their vaults only. Confirm those action names against the current AgentCore
+Identity API before relying on them. Also check whether the service needs
+Secrets Manager access to the provider's stored credential.
+
+Caveats:
+
+- **Cedar**: `control-library/cedar/gateway-default` only permits read tools,
+  so new OpenAPI tools are denied under `cedar_mode=ENFORCE` until you add
+  permits for them.
+- **SCPs**: `targets-restrict-type` and `targets-restrict-credential-provider`
+  (`control-library/scp/gateway/`) may block OpenAPI targets in governed orgs.
+- **Federated**: the gateway deploys only in the platform account, so
+  `schema_path` must resolve where that deploy runs.
 
 ---
 
