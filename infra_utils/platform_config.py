@@ -275,7 +275,7 @@ POSTURES: dict[str, dict] = {
         "project": "agentcore-production",
         "environment": "prod",
         "deployment": {"mode": "production", "platform_account": "000000000000"},
-        "identity": {**_ENTRA_PLACEHOLDER_IDENTITY, "mode": "brokered"},
+        "identity": {**_ENTRA_PLACEHOLDER_IDENTITY, "mode": "direct"},
         "agents": {
             "model_id": "us.anthropic.claude-sonnet-4-6",
             "allowed_models": ["us.anthropic.claude-sonnet-4-6"],
@@ -324,7 +324,7 @@ SHORTCUTS: dict[str, dict] = {
         "topology": "federated",
         "posture": "dev",
         "overlay": {
-            "identity": dict(_ENTRA_PLACEHOLDER_IDENTITY),
+            "identity": {**_ENTRA_PLACEHOLDER_IDENTITY, "mode": "direct"},
             "agents": {"pattern": "strands-agent"},
         },
     },
@@ -656,10 +656,18 @@ def deployment_placeholders(deployment: DeploymentConfig) -> list[str]:
     return out
 
 
+# IdPs whose identity.mode resolves to direct when the key is omitted. okta
+# joins once Okta direct is accepted by the validator; ping once it exists.
+_DIRECT_DEFAULT_IDPS = frozenset({"entra_id"})
+
+
 class IdentityConfig(BaseModel):
     """Who issues the tokens the platform trusts.
 
-    brokered (default) — Cognito is the issuer; a corporate IdP, when set,
+    Omitted mode resolves per IdP: direct for entra_id, brokered for cognito,
+    okta and ping. An explicit mode is always honoured unchanged.
+
+    brokered — Cognito is the issuer; a corporate IdP, when set,
         is federated THROUGH it (users sign in at the IdP, Cognito mints the
         token). One issuer whatever the IdP, platform-owned M2M clients,
         works with no IdP at all.
@@ -677,6 +685,8 @@ class IdentityConfig(BaseModel):
     issuer_url: str = ""
     # Secrets Manager secret NAME — the secret itself never goes in this file.
     client_secret_name: str = ""
+    # True when mode was omitted and resolved to direct from the IdP default.
+    _mode_defaulted: bool = PrivateAttr(default=False)
 
     @property
     def direct_issuer_url(self) -> str:
@@ -700,6 +710,9 @@ class IdentityConfig(BaseModel):
 
     @model_validator(mode="after")
     def _federated_idp_fields(self) -> IdentityConfig:
+        if "mode" not in self.model_fields_set and self.idp in _DIRECT_DEFAULT_IDPS:
+            self.mode = "direct"
+            self._mode_defaulted = True
         if self.mode == "direct" and self.idp != "entra_id":
             raise ValueError(
                 f"identity.mode 'direct' is supported for idp 'entra_id' today; "
@@ -722,6 +735,21 @@ class IdentityConfig(BaseModel):
             )
         _refuse_placeholders(identity_placeholders(self))
         return self
+
+
+def identity_mode_warnings(identity: IdentityConfig) -> list[str]:
+    """Warn when an omitted identity.mode resolved to direct (the default
+    used to be brokered for every IdP)."""
+    if not identity._mode_defaulted or identity.mode != "direct":
+        return []
+    return [
+        (
+            f"identity.mode is not set: it now resolves to 'direct' for idp "
+            f"{identity.idp!r}. A stack deployed earlier in brokered mode will "
+            "change on the next build unless platform.yaml pins "
+            "`identity.mode: brokered`."
+        )
+    ]
 
 
 def identity_placeholders(identity: IdentityConfig) -> list[str]:

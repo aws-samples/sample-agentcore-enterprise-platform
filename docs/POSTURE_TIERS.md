@@ -14,7 +14,7 @@ Each posture tier maps to one preset: **workshop** is `presets/greenfield.yaml`,
 | **`identity.client_id`** | **— (default)** | **— (default)** | **`REPLACE_ME`** |
 | **`identity.client_secret_name`** | **— (default)** | **— (default)** | **`agentcore/idp-client-secret`** |
 | **`identity.idp`** | **`cognito`** | **`cognito`** | **`entra_id`** |
-| **`identity.mode`** | **— (default)** | **— (default)** | **`brokered`** |
+| **`identity.mode`** | **— (default)** | **— (default)** | **`direct`** |
 | **`identity.tenant_id`** | **— (default)** | **— (default)** | **`00000000-0000-0000-0000-000000000000`** |
 | **`observability.alarm_email`** | **— (default)** | **— (default)** | **`ops@REPLACE_ME.invalid`** |
 | **`observability.alarms`** | **— (default)** | **— (default)** | **`true`** |

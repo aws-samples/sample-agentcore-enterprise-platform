@@ -51,7 +51,7 @@ DESCRIPTIONS: dict[str, str] = {
     "deployment.federation.m2m_client_secret_name": "Secrets Manager NAME in the workload account holding the M2M client secret. The secret itself never goes in this file.",
     # identity
     "identity.idp": "Who authenticates users. `cognito` is self-contained; the others federate Cognito to your enterprise IdP (docs/ENTERPRISE_IDP.md).",
-    "identity.mode": "Who issues the tokens. `brokered`: Cognito issues them and the IdP only signs users in — works with no IdP at all. `direct`: the IdP issues them and no Cognito user pool is deployed; `entra_id` only, and the app registration needs a service principal and v2 access tokens (docs/ENTERPRISE_IDP.md, Direct mode).",
+    "identity.mode": "Who issues the tokens. When omitted it resolves per IdP: `direct` for `entra_id`, `brokered` for `cognito`, `okta` and `ping`; an omitted mode that resolves to `direct` warns, because a stack deployed earlier as brokered would switch (pin `mode: brokered` to keep it). `brokered`: Cognito issues them and the IdP only signs users in — works with no IdP at all. `direct`: the IdP issues them and no Cognito user pool is deployed; `entra_id` only, and the app registration needs a service principal and v2 access tokens (docs/ENTERPRISE_IDP.md, Direct mode).",
     "identity.tenant_id": "Entra ID tenant. Required when `idp: entra_id`.",
     "identity.client_id": "App registration / OIDC client id at your IdP.",
     "identity.issuer_url": "OIDC issuer of your IdP. Required for `okta` and `ping` (Entra derives it from the tenant).",
@@ -236,6 +236,7 @@ _FULL = {
     },
     "identity": {
         "idp": "entra_id",
+        "mode": "brokered",
         # Real-shaped values: the placeholder rules (feat/design-placeholders)
         # refuse sentinels, and this fixture must keep validating after they land.
         "tenant_id": "3f2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
