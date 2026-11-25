@@ -102,6 +102,38 @@ def test_manifest_openapi_target_synthesizes_with_its_credential_provider():
     assert API_KEY_ARN in policies and OAUTH_ARN in policies
 
 
+def test_openapi_targets_read_only_the_secrets_behind_their_providers():
+    config = PlatformConfig.model_validate(
+        {
+            "gateway": {
+                "tools": [
+                    _openapi("weather-api", {"type": "api_key", "arn": API_KEY_ARN}),
+                    _openapi("crm-api", {"type": "oauth", "arn": OAUTH_ARN}),
+                ]
+            }
+        }
+    )
+    template = _synth(gateway_tool_configs(config.gateway.tools, DEFAULT_TOOL_CONFIGS))
+    statements = [
+        s
+        for policy in template.find_resources("AWS::IAM::Policy").values()
+        for s in policy["Properties"]["PolicyDocument"]["Statement"]
+    ]
+    secrets = [s for s in statements if s.get("Sid") == "GetTargetCredentialSecrets"]
+    assert len(secrets) == 1
+    assert secrets[0]["Action"] == "secretsmanager:GetSecretValue"
+    prefix = (
+        "arn:aws:secretsmanager:us-east-1:111122223333:secret:"
+        "bedrock-agentcore-identity!default"
+    )
+    assert sorted(secrets[0]["Resource"]) == sorted(
+        [
+            f"{prefix}/apikey/weather-key-??????",
+            f"{prefix}/oauth2/crm-oauth-??????",
+        ]
+    )
+
+
 def test_without_gateway_tools_the_sample_tool_lambda_still_deploys():
     config = PlatformConfig.model_validate({})
     tool_configs = gateway_tool_configs(config.gateway.tools, DEFAULT_TOOL_CONFIGS)
@@ -115,6 +147,7 @@ def test_without_gateway_tools_the_sample_tool_lambda_still_deploys():
     assert lam["ToolSchema"]["InlinePayload"][0]["Name"] == "text_analysis_tool"
     policies = json.dumps(template.find_resources("AWS::IAM::Policy"))
     assert "GetResourceApiKey" not in policies
+    assert "secretsmanager:GetSecretValue" not in policies
 
 
 def test_invalid_entries_fail_with_every_error_reported():

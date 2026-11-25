@@ -194,9 +194,13 @@ duplicate target names, all in one pass. The spec is inlined as the target's
 `OpenApiSchema.InlinePayload`. The gateway role gets
 `bedrock-agentcore:GetWorkloadAccessToken` plus
 `GetResourceApiKey`/`GetResourceOauth2Token` on the declared provider ARNs and
-their vaults only. Confirm those action names against the current AgentCore
-Identity API before relying on them. Also check whether the service needs
-Secrets Manager access to the provider's stored credential.
+their vaults only. It also gets `secretsmanager:GetSecretValue` on exactly
+the secrets backing those providers. AgentCore Identity names them
+`bedrock-agentcore-identity!<vault>/apikey|oauth2/<name>-??????`. Without
+that access the target deploys but every call fails at credential retrieval.
+Confirm the action names and the secret naming against the current AgentCore
+Identity API before relying on them. A provider secret encrypted with a
+customer-managed KMS key also needs `kms:Decrypt` on that key.
 
 Caveats:
 

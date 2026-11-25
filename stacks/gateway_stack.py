@@ -70,6 +70,23 @@ def _openapi_credential(provider: dict) -> dict:
     }
 
 
+def _provider_secret_arn(provider_arn: str) -> str:
+    """Secrets Manager ARN pattern of the secret backing a credential provider.
+
+    AgentCore Identity stores a provider's API key or OAuth client secret in a
+    service-managed secret named bedrock-agentcore-identity!<vault>/<kind>/<name>
+    (plus Secrets Manager's random six-character suffix) in the provider's own
+    account and region.
+    """
+    _, partition, _, region, account, resource = provider_arn.split(":", 5)
+    _, vault, kind, name = resource.split("/")
+    folder = "apikey" if kind == "apikeycredentialprovider" else "oauth2"
+    return (
+        f"arn:{partition}:secretsmanager:{region}:{account}:secret:"
+        f"bedrock-agentcore-identity!{vault}/{folder}/{name}-??????"
+    )
+
+
 class GatewayStack(cdk.Stack):
     def __init__(
         self,
@@ -389,6 +406,16 @@ class GatewayStack(cdk.Stack):
                         "bedrock-agentcore:GetResourceOauth2Token",
                     ],
                     resources=arns + vaults,
+                )
+            )
+            # Registering the provider ARN does not grant access to the secret
+            # holding its credential; the gateway reads it during outbound
+            # auth, so allow exactly the secrets behind the declared providers.
+            gw_role.add_to_policy(
+                iam.PolicyStatement(
+                    sid="GetTargetCredentialSecrets",
+                    actions=["secretsmanager:GetSecretValue"],
+                    resources=[_provider_secret_arn(arn) for arn in arns],
                 )
             )
 
