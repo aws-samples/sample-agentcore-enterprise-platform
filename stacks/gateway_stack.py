@@ -324,6 +324,16 @@ class GatewayStack(cdk.Stack):
                     resources=[kms_key_arn],
                 )
             )
+            # AWS documents kms:CreateGrant as required for a gateway CMK; the
+            # condition limits it to grants AWS services create for the gateway.
+            gw_role.add_to_policy(
+                iam.PolicyStatement(
+                    sid="GatewayKmsCreateGrant",
+                    actions=["kms:CreateGrant"],
+                    resources=[kms_key_arn],
+                    conditions={"Bool": {"kms:GrantIsForAWSResource": "true"}},
+                )
+            )
         self._gateway = agentcore.CfnGateway(self, "Gateway", **gateway_props)
         # role_arn only orders the Gateway after the Role, not after its
         # DefaultPolicy (KMS / Lambda / web-search grants). A construct-level

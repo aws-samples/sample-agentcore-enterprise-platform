@@ -86,6 +86,56 @@ def test_security_retains_and_encrypts_a_multi_region_audit_trail() -> None:
     assert not resources(template, "Custom::S3AutoDeleteObjects")
 
 
+def test_production_trail_uses_the_cmk_with_cloudtrail_key_policy() -> None:
+    app = cdk.App()
+    template = synth(
+        SecurityStack(
+            app,
+            "ProductionSecurityTrailKms",
+            project_name="prodtest",
+            environment="prod",
+            retain_data=True,
+            env=ENV,
+        )
+    )
+    key_id = next(
+        logical_id
+        for logical_id, resource in template["Resources"].items()
+        if resource["Type"] == "AWS::KMS::Key"
+    )
+    trail = resources(template, "AWS::CloudTrail::Trail")[0]["Properties"]
+    assert trail["KmsKeyId"] == {"Fn::GetAtt": [key_id, "Arn"]}
+
+    statements = template["Resources"][key_id]["Properties"]["KeyPolicy"]["Statement"]
+    by_sid = {statement.get("Sid"): statement for statement in statements}
+    encrypt = by_sid["AllowCloudTrailEncryptLogs"]
+    assert encrypt["Principal"] == {"Service": "cloudtrail.amazonaws.com"}
+    assert encrypt["Action"] == "kms:GenerateDataKey*"
+    assert "aws:SourceArn" in encrypt["Condition"]["StringEquals"]
+    assert (
+        "kms:EncryptionContext:aws:cloudtrail:arn" in encrypt["Condition"]["StringLike"]
+    )
+    describe = by_sid["AllowCloudTrailDescribeKey"]
+    assert describe["Principal"] == {"Service": "cloudtrail.amazonaws.com"}
+    assert describe["Action"] == "kms:DescribeKey"
+    assert "aws:SourceArn" in describe["Condition"]["StringEquals"]
+
+
+def test_workshop_trail_does_not_use_sse_kms() -> None:
+    app = cdk.App()
+    template = synth(
+        SecurityStack(
+            app,
+            "WorkshopSecurity",
+            project_name="workshoptest",
+            environment="dev",
+            env=ENV,
+        )
+    )
+    trail = resources(template, "AWS::CloudTrail::Trail")[0]["Properties"]
+    assert "KmsKeyId" not in trail
+
+
 def test_memory_and_logs_are_retained_for_bounded_periods() -> None:
     app = cdk.App()
     memory = synth(

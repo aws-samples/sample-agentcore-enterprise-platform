@@ -27,6 +27,9 @@ from aws_cdk import (
     aws_iam as iam,
 )
 from aws_cdk import (
+    aws_kms as kms,
+)
+from aws_cdk import (
     aws_logs as logs,
 )
 from aws_cdk import (
@@ -76,6 +79,66 @@ class ObservabilityStack(cdk.Stack):
         }
         if log_retention_days not in retention_by_days:
             raise ValueError("log_retention_days must be one of 30, 90, 180, or 365")
+
+        # ── Production: CMK for the SNS topics and the vended log groups ──
+        self.encryption_key = None
+        if retain_data:
+            self.encryption_key = kms.Key(
+                self,
+                "ObservabilityKey",
+                alias=f"alias/{prefix}-observability",
+                description=f"CMK for {prefix} alarm topics and log groups",
+                enable_key_rotation=True,
+                removal_policy=cdk.RemovalPolicy.RETAIN,
+            )
+            self.encryption_key.add_to_resource_policy(
+                iam.PolicyStatement(
+                    sid="AllowCloudWatchLogs",
+                    principals=[
+                        iam.ServicePrincipal(f"logs.{self.region}.amazonaws.com")
+                    ],
+                    actions=[
+                        "kms:Encrypt*",
+                        "kms:Decrypt*",
+                        "kms:ReEncrypt*",
+                        "kms:GenerateDataKey*",
+                        "kms:Describe*",
+                    ],
+                    resources=["*"],
+                    conditions={
+                        "ArnLike": {
+                            "kms:EncryptionContext:aws:logs:arn": (
+                                f"arn:{self.partition}:logs:{self.region}:"
+                                f"{self.account}:log-group:*"
+                            )
+                        }
+                    },
+                )
+            )
+            # CloudWatch alarms publish to the encrypted topics; scoped to this
+            # account's alarms.
+            self.encryption_key.add_to_resource_policy(
+                iam.PolicyStatement(
+                    sid="AllowAlarmPublishers",
+                    principals=[iam.ServicePrincipal("cloudwatch.amazonaws.com")],
+                    actions=["kms:Decrypt", "kms:GenerateDataKey*"],
+                    resources=["*"],
+                    conditions={"StringEquals": {"aws:SourceAccount": self.account}},
+                )
+            )
+            # EventBridge publishes the security alerts. It gets no source
+            # conditions: the SNS docs state that aws:SourceAccount, SourceArn
+            # and SourceOrgID are not supported in a KMS key policy for
+            # EventBridge-to-encrypted-topic delivery
+            # (https://docs.aws.amazon.com/sns/latest/dg/sns-key-management.html).
+            self.encryption_key.add_to_resource_policy(
+                iam.PolicyStatement(
+                    sid="AllowEventBridgePublisher",
+                    principals=[iam.ServicePrincipal("events.amazonaws.com")],
+                    actions=["kms:Decrypt", "kms:GenerateDataKey*"],
+                    resources=["*"],
+                )
+            )
 
         # ── CloudWatch Transaction Search (prerequisite for any tracing) ──
         # The runtimes emit OTLP spans whether or not this is configured; with
@@ -158,6 +221,7 @@ class ObservabilityStack(cdk.Stack):
                 f"Logs{safe_name}",
                 log_group_name=f"/aws/bedrock-agentcore/{prefix}/{resource_name}",
                 retention=retention_by_days[log_retention_days],
+                encryption_key=self.encryption_key,
                 removal_policy=(
                     cdk.RemovalPolicy.RETAIN
                     if retain_data
@@ -212,6 +276,7 @@ class ObservabilityStack(cdk.Stack):
                 "PlatformAlarms",
                 topic_name=f"{prefix}-platform-alarms",
                 display_name="Platform CloudWatch alarms",
+                master_key=self.encryption_key,
             )
             if alarm_email:
                 # SNS mails a confirmation link; nothing flows until clicked.
@@ -568,6 +633,7 @@ class ObservabilityStack(cdk.Stack):
                 "SecurityAlerts",
                 topic_name=f"{prefix}-agentcore-security-alerts",
                 display_name="AgentCore security alerts",
+                master_key=self.encryption_key,
             )
             rule = events.Rule(
                 self,
