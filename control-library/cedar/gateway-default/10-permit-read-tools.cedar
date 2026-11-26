@@ -8,10 +8,13 @@
 // (three underscores between the gateway target name and the tool name).
 // Resource is the gateway:        AgentCore::Gateway::"<gateway-arn>"
 //
+// The resource MUST be constrained: AgentCore rejects a tool-specific permit whose resource
+// is unconstrained. <<gateway_arn>> is injected at deploy time with the gateway's ARN.
+//
 // To extend: add each read/low-risk tool's action to the list below. Do NOT add write,
 // update, delete, or payment tools here — leaving them out keeps them denied by default.
 permit(
   principal,
   action in [AgentCore::Action::"<<read_action>>"],
-  resource
+  resource == AgentCore::Gateway::"<<gateway_arn>>"
 );
