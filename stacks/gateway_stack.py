@@ -163,6 +163,7 @@ class GatewayStack(cdk.Stack):
         # default-deny (no permit means deny), so only explicit read permits are shipped —
         # a blanket forbid would override every permit. Runs in LOG_ONLY by default
         # (evaluate + log, no block); set cedar_mode=ENFORCE once decision logs are validated.
+        policy_engine = None
         policy_engine_configuration = None
         if enable_cedar:
             policy_engine = agentcore.CfnPolicyEngine(
@@ -171,23 +172,28 @@ class GatewayStack(cdk.Stack):
                 name=f"{project_name}_{environment}_policy_engine".replace("-", "_"),
                 description=f"Cedar policy engine for {project_name}/{environment} gateway.",
             )
-            # One CfnPolicy per Cedar artifact in the control-library.
-            cedar_controls = {
-                "PermitReadTools": "cedar.gateway-default.permit-read",
-            }
-            for construct_id, control_id in cedar_controls.items():
-                statement = load_control_text(control_id)
-                agentcore.CfnPolicy(
-                    self,
-                    construct_id,
-                    name=construct_id,
-                    policy_engine_id=policy_engine.attr_policy_engine_id,
-                    definition=agentcore.CfnPolicy.PolicyDefinitionProperty(
-                        cedar=agentcore.CfnPolicy.CedarPolicyProperty(
-                            statement=statement
-                        ),
-                    ),
+            # CreateGateway with a policy engine requires the gateway role to read the
+            # engine and to authorize actions against it and this account's gateways.
+            gw_role.add_to_policy(
+                iam.PolicyStatement(
+                    sid="GetPolicyEngine",
+                    actions=["bedrock-agentcore:GetPolicyEngine"],
+                    resources=[policy_engine.attr_policy_engine_arn],
                 )
+            )
+            gw_role.add_to_policy(
+                iam.PolicyStatement(
+                    sid="AuthorizeWithPolicyEngine",
+                    actions=[
+                        "bedrock-agentcore:AuthorizeAction",
+                        "bedrock-agentcore:PartiallyAuthorizeActions",
+                    ],
+                    resources=[
+                        policy_engine.attr_policy_engine_arn,
+                        f"arn:aws:bedrock-agentcore:{self.region}:{self.account}:gateway/*",
+                    ],
+                )
+            )
             policy_engine_configuration = (
                 agentcore.CfnGateway.GatewayPolicyEngineConfigurationProperty(
                     arn=policy_engine.attr_policy_engine_arn,
@@ -248,6 +254,7 @@ class GatewayStack(cdk.Stack):
         )
 
         # Deploy Lambda tools and register as gateway targets
+        gateway_targets: list[agentcore.CfnGatewayTarget] = []
         for tool_name, config in (tool_configs or {}).items():
             fn = _lambda.Function(
                 self,
@@ -290,6 +297,7 @@ class GatewayStack(cdk.Stack):
                     },
                 },
             )
+            gateway_targets.append(target)
 
         # Web Search built-in connector target: Amazon-operated search index
         # exposed as a standard MCP tool. No Lambda, no API key, and queries
@@ -317,6 +325,37 @@ class GatewayStack(cdk.Stack):
                     "Configurations": [{"Name": "WebSearch", "ParameterValues": {}}],
                 },
             )
+            gateway_targets.append(web_search)
+
+        # ── Cedar policies: created after the gateway and every target ──
+        # A policy referencing a tool action is rejected ("unrecognized action") if the
+        # target defining it does not exist yet, so depend on all of them explicitly.
+        if policy_engine is not None:
+            # One CfnPolicy per Cedar artifact in the control-library.
+            cedar_controls = {
+                "PermitReadTools": "cedar.gateway-default.permit-read",
+            }
+            for construct_id, control_id in cedar_controls.items():
+                statement = load_control_text(
+                    control_id, {"gateway_arn": self._gateway.attr_gateway_arn}
+                )
+                policy = agentcore.CfnPolicy(
+                    self,
+                    construct_id,
+                    # Unique per deployment: a fixed name collides (409) across stacks.
+                    name=f"{project_name}_{environment}_{construct_id}".replace(
+                        "-", "_"
+                    ),
+                    policy_engine_id=policy_engine.attr_policy_engine_id,
+                    definition=agentcore.CfnPolicy.PolicyDefinitionProperty(
+                        cedar=agentcore.CfnPolicy.CedarPolicyProperty(
+                            statement=statement
+                        ),
+                    ),
+                )
+                policy.node.add_dependency(self._gateway)
+                for gateway_target in gateway_targets:
+                    policy.node.add_dependency(gateway_target)
 
         # SSM
         ssm.StringParameter(

@@ -134,9 +134,25 @@ What that means in practice, before you describe this as a default-deny gateway:
 1. `enable_cedar` defaults off, so no policy engine is attached and no Cedar evaluation happens.
 2. `cedar_mode` defaults to `LOG_ONLY`, so decisions are logged, not enforced. Nothing is
    actually denied until `cedar_mode=ENFORCE`.
-3. The one shipped policy is unconstrained on principal and resource
-   (`permit(principal, action in [AgentCore::Action::"<<read_action>>"], resource);`), so any
-   authenticated caller may invoke the sample tool on any gateway. Narrow it before enforcing.
+3. The one shipped policy is scoped to this deployment's gateway but unconstrained on
+   principal
+   (`permit(principal, action in [AgentCore::Action::"<<read_action>>"], resource == AgentCore::Gateway::"<<gateway_arn>>");`),
+   so any authenticated caller may invoke the sample tool on this gateway. Narrow the
+   principal before enforcing. AgentCore rejects a tool-specific permit with an
+   unconstrained `resource`, so `gateway_arn` is a required parameter, injected by
+   `gateway_stack.py` from the gateway's ARN.
+
+How `gateway_stack.py` deploys it:
+
+- **Role actions.** The gateway execution role gets `bedrock-agentcore:GetPolicyEngine` on
+  the engine, plus `AuthorizeAction` and `PartiallyAuthorizeActions` on the engine and
+  `arn:aws:bedrock-agentcore:<region>:<account>:gateway/*`. Without them `CreateGateway` is
+  denied.
+- **Ordering.** Each `CfnPolicy` explicitly depends on the gateway and on every gateway
+  target. A policy created before its target exists fails with "unrecognized action".
+- **Naming.** Policy names are `<project>_<environment>_<PolicyId>` with `-` replaced by `_`
+  (for example `myproj_dev_PermitReadTools`). Two deployments in one account therefore do
+  not collide with a 409 `ConflictException`.
 
 ## Adding a control
 
@@ -232,7 +248,7 @@ repo uses today.
 ## Safe rollout
 
 - Cedar ships `LOG_ONLY`; validate decision logs before `cedar_mode=ENFORCE`, and narrow the
-  shipped permit's principal/resource first.
+  shipped permit's principal first (its resource is already scoped to the gateway).
 - SCPs are additive-deny; attach to a sandbox OU first.
 - Guardrail resolves to the `DRAFT` version (via `guardrail.attr_version`, not a hardcoded
   string); pin a published version for production.
