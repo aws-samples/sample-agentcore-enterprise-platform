@@ -35,6 +35,7 @@ from urllib.parse import urlparse
 import yaml
 from pydantic import (
     BaseModel,
+    ConfigDict,
     Field,
     PrivateAttr,
     ValidationError,
@@ -962,10 +963,161 @@ class AgentsConfig(BaseModel):
         return self
 
 
+# An existing AgentCore Identity credential provider in a token vault.
+_PROVIDER_ARN_RE = re.compile(
+    r"^arn:aws[a-z-]*:bedrock-agentcore:[a-z]{2}(-[a-z]+)+-\d:\d{12}:"
+    r"token-vault/[A-Za-z0-9_-]+/"
+    r"(?P<kind>apikeycredentialprovider|oauth2credentialprovider)/[A-Za-z0-9_.-]+$"
+)
+_PROVIDER_KIND = {
+    "api_key": "apikeycredentialprovider",
+    "oauth": "oauth2credentialprovider",
+}
+
+
+def read_openapi_schema(path: str) -> dict:
+    """Parse a local OpenAPI file (JSON by suffix, YAML otherwise)."""
+    text = Path(path).read_text()
+    doc = json.loads(text) if path.endswith(".json") else yaml.safe_load(text)
+    if not isinstance(doc, dict) or not ({"openapi", "swagger"} & set(doc)):
+        raise ValueError("not an OpenAPI document (no top-level 'openapi' key)")
+    return doc
+
+
+class CredentialProviderConfig(BaseModel):
+    """Outbound auth for an OpenAPI target: an existing provider, by ARN."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["api_key", "oauth"]
+    arn: str
+    scopes: list[str] = Field(default_factory=list)
+
+    @field_validator("arn")
+    @classmethod
+    def _arn_shape(cls, v: str) -> str:
+        if not _PROVIDER_ARN_RE.fullmatch(v):
+            raise ValueError(
+                f"not an AgentCore Identity credential provider ARN: {v!r}. "
+                "Expected arn:aws:bedrock-agentcore:<region>:<account>:token-vault/"
+                "<vault>/(apikeycredentialprovider|oauth2credentialprovider)/<name>"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _kind_matches_type(self) -> CredentialProviderConfig:
+        errors: list[str] = []
+        kind = _PROVIDER_ARN_RE.fullmatch(self.arn).group("kind")
+        if kind != _PROVIDER_KIND[self.type]:
+            errors.append(
+                f"credential_provider.type {self.type!r} needs a "
+                f"{_PROVIDER_KIND[self.type]} ARN, got a {kind} ARN"
+            )
+        if self.scopes and self.type != "oauth":
+            errors.append("credential_provider.scopes apply only to type 'oauth'")
+        if errors:
+            raise ValueError("\n".join(errors))
+        return self
+
+
+class GatewayTarget(BaseModel):
+    """One typed gateway target. Relative paths resolve from the repo root."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(pattern=r"^[a-zA-Z0-9]+(-[a-zA-Z0-9]+)*$", max_length=48)
+    type: Literal["lambda", "openapi"]
+    # lambda: handler directory (default tools/<name>) and its tool schema
+    # (default <source_dir>/tool_spec.json, the CloudFormation PascalCase list).
+    source_dir: str = ""
+    tool_spec: str = ""
+    env_vars: dict[str, str] = Field(default_factory=dict)
+    # openapi: local spec inlined at synth, plus the outbound credential.
+    schema_path: str = ""
+    credential_provider: CredentialProviderConfig | None = None
+
+    @model_validator(mode="after")
+    def _fields_match_type(self) -> GatewayTarget:
+        where = f"gateway target {self.name!r}"
+        errors: list[str] = []
+        if self.type == "lambda":
+            for field in ("schema_path", "credential_provider"):
+                if getattr(self, field):
+                    errors.append(f"{where}: {field} is only for type 'openapi'")
+            self.source_dir = self.source_dir or f"tools/{self.name.replace('-', '_')}"
+            self.tool_spec = self.tool_spec or f"{self.source_dir}/tool_spec.json"
+            if not Path(self.tool_spec).is_file():
+                errors.append(
+                    f"{where}: tool_spec {self.tool_spec!r} is not a file "
+                    "(the Lambda's tool schema)"
+                )
+        else:
+            for field in ("source_dir", "tool_spec", "env_vars"):
+                if getattr(self, field):
+                    errors.append(f"{where}: {field} is only for type 'lambda'")
+            if not self.schema_path:
+                errors.append(f"{where}: type 'openapi' requires schema_path")
+            elif not Path(self.schema_path).is_file():
+                errors.append(
+                    f"{where}: schema_path {self.schema_path!r} is not a file"
+                )
+            else:
+                try:
+                    read_openapi_schema(self.schema_path)
+                except (ValueError, yaml.YAMLError) as exc:
+                    errors.append(f"{where}: schema_path {self.schema_path!r}: {exc}")
+            if self.credential_provider is None:
+                errors.append(
+                    f"{where}: type 'openapi' requires credential_provider "
+                    "(type and arn of an AgentCore Identity credential provider)"
+                )
+        if errors:
+            raise ValueError("\n".join(errors))
+        return self
+
+
+def gateway_tool_configs(
+    tools: list[str | GatewayTarget], defaults: dict[str, dict]
+) -> dict[str, dict]:
+    """gateway.tools -> the tool_configs mapping GatewayStack consumes.
+
+    A bare name in ``defaults`` (sample-tool) is passed through unchanged; any
+    other bare name is a Lambda under tools/<name> with its tool_spec.json.
+    """
+    configs: dict[str, dict] = {}
+    for entry in tools:
+        if isinstance(entry, str):
+            if entry in defaults:
+                configs[entry] = copy.deepcopy(defaults[entry])
+                continue
+            entry = GatewayTarget(name=entry, type="lambda")
+        if entry.type == "lambda":
+            spec = json.loads(Path(entry.tool_spec).read_text())
+            if not isinstance(spec, list):
+                raise ValueError(
+                    f"{entry.tool_spec}: tool_spec must be a JSON list of tools"
+                )
+            configs[entry.name] = {
+                "type": "lambda",
+                "source_dir": entry.source_dir,
+                "env_vars": dict(entry.env_vars),
+                "tool_schema": spec,
+            }
+        else:
+            configs[entry.name] = {
+                "type": "openapi",
+                "openapi_schema": json.dumps(read_openapi_schema(entry.schema_path)),
+                "credential_provider": entry.credential_provider.model_dump(),
+            }
+    return configs
+
+
 class GatewayConfig(BaseModel):
     # auto = on where the built-in connector exists (WEB_SEARCH_REGIONS).
     web_search: Literal["auto", "on", "off"] = "auto"
-    tools: list[str] = Field(default_factory=lambda: ["sample-tool"])
+    # A bare name is a Lambda tool (the sample-tool default or tools/<name>/);
+    # a block is a typed target (lambda or openapi), see GatewayTarget.
+    tools: list[str | GatewayTarget] = Field(default_factory=lambda: ["sample-tool"])
 
     @field_validator("web_search", mode="before")
     @classmethod
@@ -976,6 +1128,17 @@ class GatewayConfig(BaseModel):
         if isinstance(v, bool):
             return "on" if v else "off"
         return v
+
+    @model_validator(mode="after")
+    def _unique_target_names(self) -> GatewayConfig:
+        names = [t if isinstance(t, str) else t.name for t in self.tools]
+        dupes = sorted({n for n in names if names.count(n) > 1})
+        if dupes:
+            raise ValueError(
+                f"gateway.tools: duplicate target names {dupes}; each target "
+                "needs a unique name"
+            )
+        return self
 
 
 class CedarConfig(BaseModel):

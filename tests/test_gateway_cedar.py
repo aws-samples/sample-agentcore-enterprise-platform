@@ -116,3 +116,51 @@ def test_policy_name_is_unique_per_project():
     assert name_a == "proj_a_dev_PermitReadTools"
     assert name_b == "proj_b_dev_PermitReadTools"
     assert name_a != name_b
+
+
+def test_policy_depends_on_openapi_targets():
+    from infra_utils.platform_config import PlatformConfig, gateway_tool_configs
+    from stacks.gateway_stack import DEFAULT_TOOL_CONFIGS
+
+    fixture = Path(__file__).resolve().parent / "fixtures" / "openapi" / "sample.json"
+    arn = (
+        f"arn:aws:bedrock-agentcore:{REGION}:{ACCOUNT}:token-vault/default"
+        "/apikeycredentialprovider/weather-key"
+    )
+    config = PlatformConfig.model_validate(
+        {
+            "gateway": {
+                "tools": [
+                    {
+                        "name": "weather-api",
+                        "type": "openapi",
+                        "schema_path": str(fixture),
+                        "credential_provider": {"type": "api_key", "arn": arn},
+                    }
+                ]
+            }
+        }
+    )
+    app = cdk.App()
+    stack = GatewayStack(
+        app,
+        "proj-gateway",
+        project_name="proj",
+        environment="dev",
+        cognito_issuer_url="https://cognito-idp.us-east-1.amazonaws.com/us-east-1_example",
+        cognito_allowed_clients=["client-id"],
+        tool_configs=gateway_tool_configs(config.gateway.tools, DEFAULT_TOOL_CONFIGS),
+        enable_cedar=True,
+        cedar_mode="ENFORCE",
+        env=cdk.Environment(account=ACCOUNT, region=REGION),
+    )
+    template = Template.from_stack(stack).to_json()
+    targets = _of_type(template, "AWS::BedrockAgentCore::GatewayTarget")
+    openapi = [
+        lid for lid, r in targets.items() if r["Properties"]["Name"] == "weather-api"
+    ]
+    assert openapi
+    policies = _of_type(template, "AWS::BedrockAgentCore::Policy").values()
+    assert policies
+    for policy in policies:
+        assert openapi[0] in policy.get("DependsOn", [])
