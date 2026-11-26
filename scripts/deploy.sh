@@ -246,19 +246,52 @@ fi
 
 # Placeholders are useful discovery warnings in a read-only migration plan,
 # but no build/deploy/design path may inherit the parity gate's escape hatch.
+DEPLOY_ACTION="${1:-}"
 if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "plan" ]; then
+    export PLATFORM_ALLOW_PLACEHOLDERS=1
+elif [ "${1:-}" = "destroy" ]; then
+    # Tearing down must not depend on placeholders being replaced or the org
+    # id being known; nothing is created.
     export PLATFORM_ALLOW_PLACEHOLDERS=1
 else
     unset PLATFORM_ALLOW_PLACEHOLDERS
 fi
 
+# cd: infra_utils must be importable; this runs before the main-flow cd.
+validate_manifest() {
+    (cd "$PROJECT_DIR" && "$1" -m infra_utils.platform_config --export --effective-env "$PLATFORM_CONFIG" 2>&1)
+}
+
 apply_platform_config() {
     [ -f "$PLATFORM_CONFIG" ] || return 0
     local py="$PROJECT_DIR/.venv/bin/python"
     [ -x "$py" ] || py="python3"
-    local exports key value
-    # cd: infra_utils must be importable; this runs before the main-flow cd.
-    if ! exports=$(cd "$PROJECT_DIR" && "$py" -m infra_utils.platform_config --export --effective-env "$PLATFORM_CONFIG" 2>&1); then
+    local exports key value org="" ok=0
+    if exports=$(validate_manifest "$py"); then
+        ok=1
+    elif [ -z "${ORG_ID:-}" ] \
+        && echo "$exports" | grep -q "security.resource_policies requires security.org_id"; then
+        # The manifest leaves org_id empty. This runs before load_config, so
+        # an ORG_ID saved in workshop.env (platform.yaml > workshop.env >
+        # prompt) has not been read yet: supply it, or prompt as
+        # check_org_id would, then validate again. Only on this failure, so
+        # a saved value never overrides an org_id the manifest sets.
+        if [ -f "$CONFIG_FILE" ]; then
+            org=$(sed -n 's/^ORG_ID=//p' "$CONFIG_FILE" | tail -1)
+        fi
+        if [ -z "$org" ] && [ "${NON_INTERACTIVE:-0}" != "1" ]; then
+            echo ""
+            log_warn "Resource policies are enabled and require your AWS Organizations ID."
+            read -rp "  AWS Organizations ID (o-xxxx): " org
+            if [ -n "$org" ]; then ORG_ID_PROMPTED=1; fi
+        fi
+        if [ -n "$org" ]; then
+            ORG_ID="$org"
+            export ORG_ID
+            if exports=$(validate_manifest "$py"); then ok=1; fi
+        fi
+    fi
+    if [ "$ok" != "1" ]; then
         # Two different failures, two different messages. Missing dependencies:
         # continue without the file. Anything else is the manifest itself
         # (placeholders, a typo'd key): a malformed file must not silently
@@ -315,6 +348,12 @@ fi
 DEPLOY_ACTION="${1:-deploy}"
 apply_platform_config
 load_config
+
+# destroy still synthesizes the app; the memory stack cannot render resource
+# policies without an org id, and the value is irrelevant to a teardown.
+if [ "$DEPLOY_ACTION" = "destroy" ] && [ "${ENABLE_RESOURCE_POLICIES:-}" = "true" ] && [ -z "${ORG_ID:-}" ]; then
+    export ORG_ID="o-xxxxxxxxxx"
+fi
 
 # ── Configuration ──
 PROJECT_NAME="${PROJECT_NAME:-agentcore-workshop}"
@@ -588,8 +627,17 @@ check_declared_secrets() {
 # ORG_ID Validation (fail fast before any CDK command)
 # ═══════════════════════════════════════════════════════════════
 check_org_id() {
+    # destroy never needs the org id.
+    if [ "${DEPLOY_ACTION:-}" = "destroy" ]; then
+        return 0
+    fi
     # enable_resource_policies=true makes the memory stack raise a ValueError
     # mid-deploy when org_id is empty — catch that here instead.
+    local org_prompted=0
+    # Prompted during apply_platform_config: persist it like a prompt here.
+    if [ "${ORG_ID_PROMPTED:-0}" = "1" ]; then
+        org_prompted=1
+    fi
     if [ "${ENABLE_RESOURCE_POLICIES:-}" = "true" ] && [ -z "${ORG_ID:-}" ]; then
         if [ "${NON_INTERACTIVE:-0}" != "1" ]; then
             echo ""
@@ -603,6 +651,23 @@ check_org_id() {
             log_error "(Find it with: aws organizations describe-organization --query Organization.Id --output text)"
             exit 1
         fi
+        org_prompted=1
+    fi
+    # Validate every org id, not only a prompted one: a value from
+    # platform.yaml or the environment (e.g. the security-focused preset's
+    # o-xxxxxxxxxx) must be refused like the Python validator refuses it.
+    if [ -n "${ORG_ID:-}" ]; then
+        if ! [[ "$ORG_ID" =~ ^o-[a-z0-9]{10,32}$ ]]; then
+            log_error "security.org_id '$ORG_ID' is not an AWS Organizations id (o- followed by 10-32 lowercase letters/digits)."
+            exit 1
+        fi
+        if [[ "$ORG_ID" =~ ^o-x{10,}$ ]] || [[ "$ORG_ID" =~ (replace|changeme|example) ]]; then
+            log_error "security.org_id is a placeholder ('$ORG_ID'): set it to your AWS Organizations id."
+            log_error "(Find it with: aws organizations describe-organization --query Organization.Id --output text)"
+            exit 1
+        fi
+    fi
+    if [ "$org_prompted" = "1" ]; then
         export ORG_ID
         save_config
     fi
@@ -2071,7 +2136,7 @@ if [ "$ACTION" = "design" ]; then
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --profile) require_flag_value "--profile" "$#"; shift 2 ;;
-            *) log_error "Unknown option for design: '$1' (valid: --profile PROFILE)"; exit 1 ;;
+            *) log_error "Unknown option for design: '$1' (valid: --profile PROFILE, or --journey J --topology T --posture P [--region R]; plus --dry-run, --yes)"; exit 1 ;;
         esac
     done
     if [ ! -f "$PLATFORM_CONFIG" ]; then

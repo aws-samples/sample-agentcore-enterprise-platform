@@ -44,7 +44,7 @@ against the exact lowercase string `"true"`; `-c enable_cedar=True` silently doe
 | 3 | **AgentCore Cedar policies** | `enable_cedar`, `cedar_mode` | `gateway_stack.py` ← `control-library/cedar/` | LOG_ONLY |
 | 4 | **Resource-based policy: Memory in-account-only** | `enable_resource_policies`, `org_id` | `memory_stack.py` ← `control-library/resource-policies/` | enforce |
 | 5+6 | **Bedrock Guardrails + egress Lambda interceptor** | `enable_egress_filter` | `gateway_stack.py`, `tools/egress_interceptor/` ← `control-library/guardrails/` | **masking**, not blocking (see below) |
-| 6b | **Guardrailed-only Bedrock inference** — IAM `Null`-deny on the runtime roles for inference calls carrying no `bedrock:GuardrailIdentifier`, plus a baseline guardrail per runtime (same `control-library` artifact as item 5+6) injected into the agents via `GUARDRAIL_ID`/`GUARDRAIL_VERSION`, with `bedrock:ApplyGuardrail` allowed only on that guardrail. Incompatible with the claude-sdk patterns (they cannot attach a guardrail; the config validator refuses the combination). Verify live with `scripts/check_guardrail_enforcement.py` | `require_guardrails` | `stacks/runtime_stack.py` ← `control-library/guardrails/` | off |
+| 6b | **Guardrailed-only Bedrock inference** — IAM `Null`-deny on the runtime roles for inference calls carrying no `bedrock:GuardrailIdentifier`, plus a baseline guardrail per runtime (same `control-library` artifact as item 5+6) with a published `CfnGuardrailVersion`, injected into the agents via `GUARDRAIL_ID`/`GUARDRAIL_VERSION` (agents refuse to start without a published version; `DRAFT` needs `GUARDRAIL_ALLOW_DRAFT=true`, workshop only), with `bedrock:ApplyGuardrail` allowed only on that guardrail. Incompatible with the claude-sdk patterns (they cannot attach a guardrail; the config validator refuses the combination). Verify live with `scripts/check_guardrail_enforcement.py`. It also fails if a plain benign prompt is blocked | `require_guardrails` | `stacks/runtime_stack.py` ← `control-library/guardrails/` | off |
 | 7 | **Observability: SNS + EventBridge alerting** | `enable_traceability` | `observability_stack.py` | off |
 | 8 | **AgentCore Identity: deny unverified-userId workload tokens**, plus a scoped credential-provider IAM reference policy | `enable_scp_identity_deny_token_for_userid` (Terraform var) | `control-library/terraform/org-guardrails/identity.tf` ← `control-library/scp/identity/`, `control-library/iam/` | enforce (denies everyone) |
 
@@ -114,13 +114,56 @@ accelerator never uses.
   Guardrails (`ApplyGuardrail`), config sourced from `control-library/guardrails/`. It performs
   **no authorization** — Cedar (item 3) is a separate control behind a separate flag, and
   `enable_egress_filter` alone gives you none of it.
-- **Masking, not blocking:** the handler raises only when an assessment comes back
-  `action == "BLOCKED"`; otherwise it substitutes anonymized text and the request proceeds.
-- **Caveats:** the `gatewayRequest`/`gatewayResponse` shape is unvalidated, so the handler
-  scans every string leaf generically and passes payload shapes it does not recognise through
-  **unchanged**. There is no try/except around `ApplyGuardrail`, so a Bedrock throttle surfaces
-  as a Lambda failure rather than a defined fail-open/fail-closed decision. Validate against
-  live Gateway traces before relying on it in production.
+- **Masking, not blocking:** the handler blocks only when an assessment comes back
+  `action == "BLOCKED"`; otherwise it substitutes anonymized text and the call proceeds.
+- **Event detection:** AgentCore response events carry both `gatewayRequest` and
+  `gatewayResponse`, so the handler checks `gatewayResponse` first. Any event that has it is
+  a RESPONSE interception, and the guardrail runs with `source=OUTPUT`. Otherwise it is a
+  REQUEST interception, scanned with `source=INPUT`.
+- **Only content is scanned, never protocol fields:**
+  - For `tools/call` requests, only `params.arguments` is scanned. Other request methods are
+    not scanned.
+  - For responses, only `result.content`, `result.structuredContent` and `error.message` are
+    scanned.
+  - Tool names, descriptions, input schemas and the JSON-RPC envelope are never sent to
+    `ApplyGuardrail` and never rewritten, so masking cannot break tool routing.
+- **Output contract:**
+  - Request pass or mask: `mcp.transformedGatewayRequest = {body}`.
+  - Response pass or mask: `mcp.transformedGatewayResponse = {statusCode, headers, body}`.
+  - Request block: short-circuits with a `transformedGatewayResponse`, so the target is
+    never called.
+  - Response block: replaces the response with a `transformedGatewayResponse`.
+  - Both block cases return status 200. The body depends on the request method:
+    - For `tools/call`, a JSON-RPC `result` with `isError: true` and the text "Blocked by
+      egress guardrail."
+    - For every other method (for example `tools/list` or `prompts/get`), a JSON-RPC error
+      `{"code": -32000, "message": "Blocked by egress guardrail."}`. An `isError` result
+      would lack the method's required fields and cause a protocol error in the client.
+- **Logging:** no log line contains a request or response body. The handler logs only:
+  - the interception point;
+  - the Lambda request id;
+  - the JSON-RPC id, only when it is an int or a string of at most 64 characters (otherwise
+    its type and length, since the client chooses it);
+  - the body size;
+  - the decision (`pass`, `masked` or `blocked`);
+  - for blocks, the guardrail filter or PII type.
+- **Invoke permission:** the gateway role holds `lambda:InvokeFunction` on the
+  `<prefix>-tool-*` functions and on exactly the interceptor function (sid
+  `InvokeEgressInterceptor`). Without it every gateway call fails with AccessDenied.
+- **`tools/list` with the filter on:**
+  - *Before this fix:* the response event was treated as a request and answered with
+    `transformedGatewayRequest`, so the gateway never got a usable response body. Clients
+    saw an error or an empty tool list.
+  - *Now:* the `tools/list` result is not scanned, because tools are protocol fields, not
+    content. It passes through unchanged.
+  - *If a `tools/list` response is blocked:* this can only happen through a scanned
+    `error.message`. The client then receives the JSON-RPC error above and surfaces it as an
+    error. It does not see an empty list.
+- **Caveats:**
+  - There is no try/except around `ApplyGuardrail`, so a Bedrock throttle surfaces as a
+    Lambda failure, not a defined fail-open or fail-closed decision.
+  - Every string leaf inside the scanned content fields is one `ApplyGuardrail` call.
+  - Validate against live Gateway traces before relying on it in production.
 - **Toggle:** `enable_egress_filter`, deployed by `gateway_stack.py` like every other flag.
 
 ## Cedar authorization (item 3)
@@ -267,8 +310,20 @@ repo uses today.
 - Cedar ships `LOG_ONLY`; validate decision logs before `cedar_mode=ENFORCE`, and narrow the
   shipped permit's principal first (its resource is already scoped to the gateway).
 - SCPs are additive-deny; attach to a sandbox OU first.
-- Guardrail resolves to the `DRAFT` version (via `guardrail.attr_version`, not a hardcoded
-  string); pin a published version for production.
+- Guardrails are published and pinned. Each runtime and gateway guardrail gets a
+  `CfnGuardrailVersion`, and its version number (not `DRAFT`) is what the runtimes and the
+  egress interceptor receive. Each description carries a sha256 of the guardrail definition,
+  so a definition change publishes a new version. Agents fail at start-up when
+  `GUARDRAIL_ID` is set without a published version. A workshop can still use `DRAFT`
+  explicitly with `GUARDRAIL_VERSION=DRAFT` and `GUARDRAIL_ALLOW_DRAFT=true`. That opt-in
+  is ignored when `ENVIRONMENT` is `prod`. The egress interceptor applies the same rule and
+  fails closed at cold start, using one pinned version for every `ApplyGuardrail` call.
+- The runtime stack records the pinned guardrail in SSM
+  (`/<project>/<env>/runtimes/<component>/guardrail/{id,version}`).
+  `scripts/check_guardrail_enforcement.py` verifies that exact version, not the latest one.
+- The `PROMPT_ATTACK` filter runs at `MEDIUM` input strength. `HIGH` blocked the benign
+  prompt "Health check: reply with one word." live. `scripts/check_guardrail_enforcement.py`
+  fails if a plain greeting is blocked.
 - Subscribe an endpoint to the item-7 SNS topic to actually receive alerts. The topic is not
   KMS-encrypted — add a CMK if alert contents are sensitive in your environment.
 - Item 7 needs CloudTrail management events, so enable it together with `enable_security`.

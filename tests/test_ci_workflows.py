@@ -120,7 +120,11 @@ def test_ash_scan_is_blocking(name):
     steps = _steps(data)
     for step in steps:
         assert not step.get("continue-on-error"), step.get("name")
-    scans = [s for s in steps if re.search(r"^ash ", s.get("run", ""), re.MULTILINE)]
+    scans = [
+        s
+        for s in steps
+        if re.search(r"^\s*ash --mode ", s.get("run", ""), re.MULTILINE)
+    ]
     assert len(scans) == 1
     run = scans[0]["run"]
     assert "set -o pipefail" in run
@@ -138,7 +142,11 @@ def test_ash_scan_is_blocking(name):
 
 def _ash_scan_run(name):
     steps = _steps(_workflow(name))
-    scans = [s for s in steps if re.search(r"^ash ", s.get("run", ""), re.MULTILINE)]
+    scans = [
+        s
+        for s in steps
+        if re.search(r"^\s*ash --mode ", s.get("run", ""), re.MULTILINE)
+    ]
     assert len(scans) == 1
     return scans[0]["run"]
 
@@ -215,3 +223,11 @@ def test_comment_workflow_does_not_interpolate_artifact():
     data = _workflow("ash-security-comment.yml")
     for step in _steps(data):
         assert "ash-results" not in step.get("run", ""), step.get("name")
+
+
+@pytest.mark.parametrize("name", ASH_WORKFLOWS)
+def test_ash_retries_only_a_failed_image_build(name):
+    run = _ash_scan_run(name)
+    assert "for attempt in 1 2 3" in run
+    assert 'grep -q "Error building ASH image"' in run
+    assert 'exit "$rc"' in run

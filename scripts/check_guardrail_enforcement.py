@@ -10,7 +10,16 @@ invoke, no model call:
   2. The same call WITH a guardrail identifier must come back allowed: the
      deny steps aside and the BedrockModels allow applies.
 
-Exit code 0 = the role enforces what security.require_guardrails promises.
+Then a benign-prompt check against the deployed baseline guardrail:
+
+  3. The guardrail version the runtime stack pinned (its SSM parameters
+     /<project>/<env>/runtimes/orchestrator/guardrail/{id,version}) must be
+     published and not DRAFT. ApplyGuardrail on that exact version with plain greetings, such as "Health
+     check: reply with one word.", must not intervene. An over-strict
+     PROMPT_ATTACK filter would otherwise make every agent unusable.
+
+Exit code 0 = the role enforces what security.require_guardrails promises,
+and the guardrail lets ordinary prompts through.
 Run it after the runtime stacks are deployed with the flag on.
 
 Usage:
@@ -23,6 +32,7 @@ import sys
 from pathlib import Path
 
 import boto3
+from botocore.exceptions import ClientError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -36,6 +46,13 @@ from infra_utils.platform_config import (
 
 REGION = resolve_region()
 REPO = Path(__file__).resolve().parents[1]
+
+# Plain prompts that must never be blocked. The second one was blocked live
+# while PROMPT_ATTACK ran at HIGH input strength.
+BENIGN_PROMPTS = (
+    "Hello! How are you today?",
+    "Health check: reply with one word.",
+)
 
 
 def fail(message: str) -> None:
@@ -86,6 +103,71 @@ def simulate(role_arn: str, context_entries: list[dict]) -> str:
     return result["EvaluationResults"][0]["EvalDecision"]
 
 
+def _list_guardrails(client, **kwargs):
+    token = None
+    while True:
+        extra = {"nextToken": token} if token else {}
+        page = client.list_guardrails(**kwargs, **extra)
+        yield from page.get("guardrails", [])
+        token = page.get("nextToken")
+        if not token:
+            return
+
+
+def pinned_guardrail(
+    project: str, environment: str, component: str = "orchestrator"
+) -> tuple[str, str]:
+    """(id, version) that the runtime stack pinned, read from its SSM parameters.
+
+    The highest published version is not necessarily the one the runtime
+    runs, so the check verifies the exact pin the stack injected.
+    """
+    ssm = boto3.client("ssm", region_name=REGION)
+    base = f"/{project}/{environment}/runtimes/{component}/guardrail"
+    try:
+        guardrail_id = ssm.get_parameter(Name=f"{base}/id")["Parameter"]["Value"]
+        version = ssm.get_parameter(Name=f"{base}/version")["Parameter"]["Value"]
+    except ClientError as exc:
+        fail(
+            f"pinned guardrail parameters under {base} not readable ({exc}) — "
+            "deploy the runtime stack with require_guardrails=true"
+        )
+    if not version or version.upper() == "DRAFT":
+        fail(f"the runtime pins guardrail version {version!r}, not a published one")
+    client = boto3.client("bedrock", region_name=REGION)
+    published = {
+        g.get("version")
+        for g in _list_guardrails(client, guardrailIdentifier=guardrail_id)
+    }
+    if version not in published:
+        fail(
+            f"pinned guardrail version {version} of {guardrail_id} is not "
+            "published. Redeploy the runtime stack."
+        )
+    return guardrail_id, version
+
+
+def check_benign_prompts(guardrail_id: str, version: str) -> None:
+    """Fail if the guardrail intervenes on any plain, benign prompt."""
+    runtime = boto3.client("bedrock-runtime", region_name=REGION)
+    for prompt in BENIGN_PROMPTS:
+        result = runtime.apply_guardrail(
+            guardrailIdentifier=guardrail_id,
+            guardrailVersion=version,
+            source="INPUT",
+            # ApplyGuardrail runs the PROMPT_ATTACK filter only on text that
+            # carries the guard_content qualifier. Without it, this check would
+            # skip the very filter whose strength it is meant to validate.
+            content=[{"text": {"text": prompt, "qualifiers": ["guard_content"]}}],
+        )
+        if result.get("action") == "GUARDRAIL_INTERVENED":
+            fail(
+                f"the guardrail blocked the benign prompt {prompt!r} — the "
+                "PROMPT_ATTACK input strength is too high for real traffic"
+            )
+        print(f"PASS: benign prompt not blocked: {prompt!r}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Verify the runtime role denies inference without a guardrail"
@@ -131,6 +213,10 @@ def main() -> None:
             "every agent instead of governing them."
         )
     print("PASS: inference with a guardrail is allowed")
+
+    guardrail_id, version = pinned_guardrail(project, environment)
+    print(f"Checking pinned guardrail {guardrail_id} version {version}")
+    check_benign_prompts(guardrail_id, version)
     print("OK: the runtime role enforces guardrailed-only inference")
 
 
