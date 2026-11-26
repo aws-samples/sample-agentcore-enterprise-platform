@@ -40,7 +40,7 @@ against the exact lowercase string `"true"`; `-c enable_cedar=True` silently doe
 | 1 | **SCP: CMK-for-Memory** | `enable_scp_memory_enforce_cmk` + vars | `control-library/terraform/org-guardrails/` ← `control-library/scp/` | off (opt-in, see preflight) |
 | 1b | **SCP: Gateway configuration hardening** (CMK, no-auth, policy-engine=ENFORCE, approved IdP, protocol, private-endpoint targets, credential-provider, target-type) | `enable_gateway_scps` + vars | `control-library/terraform/org-guardrails/gateway.tf` ← `control-library/scp/gateway/` | off (opt-in, see preflight) |
 | 2 | **VPC endpoint policy** — action-scoped; org restriction covers **SigV4 callers only** (OAuth/JWT callers carry no IAM principal and pass via `Principal: "*"` per AWS docs). Requires `org_id`: without it the endpoint is created with **no policy at all** | `enable_networking`, `org_id` | `stacks/networking_stack.py` ← `control-library/vpce/` | org-scoped (SigV4) when `org_id` set |
-| 2b | **Least-privilege runtime IAM** — SSM reads are path-scoped in `infra_utils/agentcore_role.py`; `control-library/iam/runtime-execution-least-privilege.json` is a **reference policy, not deployed** by any stack (the live role still grants ECR/X-Ray/`PutMetricData` on `Resource: "*"`) | — | `infra_utils/agentcore_role.py` | partial |
+| 2b | **Least-privilege runtime IAM** — SSM reads are path-scoped in `infra_utils/agentcore_role.py`; `control-library/iam/runtime-execution-least-privilege.json` is a **reference policy, not deployed** by any stack (the live role still grants ECR/X-Ray/`PutMetricData` on `Resource: "*"`). The runtime role in `stacks/runtime_stack.py` holds **no** `GetWorkloadAccessTokenForUserId`; its remaining workload-token/vault actions are scoped to its own workload identity and the default token vault | — | `infra_utils/agentcore_role.py`, `stacks/runtime_stack.py` | partial |
 | 3 | **AgentCore Cedar policies** | `enable_cedar`, `cedar_mode` | `gateway_stack.py` ← `control-library/cedar/` | LOG_ONLY |
 | 4 | **Resource-based policy: Memory in-account-only** | `enable_resource_policies`, `org_id` | `memory_stack.py` ← `control-library/resource-policies/` | enforce |
 | 5+6 | **Bedrock Guardrails + egress Lambda interceptor** | `enable_egress_filter` | `gateway_stack.py`, `tools/egress_interceptor/` ← `control-library/guardrails/` | **masking**, not blocking (see below) |
@@ -155,6 +155,13 @@ user and read that user's stored credentials out of the token vault — no JWT, 
 identity anywhere in the call. Agents behind Runtime or Gateway inbound auth never need it:
 the caller's verified token arrives with the request, and `GetWorkloadAccessTokenForJWT` is
 the path that checks it.
+
+The deployed runtime roles (`stacks/runtime_stack.py`, statement `AgentCoreWorkloadIdentity`)
+do not hold `GetWorkloadAccessTokenForUserId` at all. `GetWorkloadAccessToken`,
+`GetWorkloadAccessTokenForJWT`, `GetResourceOauth2Token` and `CreateWorkloadIdentity` are
+scoped to the runtime's own workload identity (`workload-identity-directory/default/workload-identity/<runtime-name>-*`)
+and the default token vault, never `"*"`. `tests/test_runtime_role_scoping.py` synthesizes a
+runtime stack and asserts on the generated role policy that both hold.
 
 The exemption parameter defaults to a role ARN that cannot exist, so the control denies
 everyone until an operator supplies a real pattern. Narrow it only for a genuine break-glass

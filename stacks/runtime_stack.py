@@ -373,6 +373,7 @@ class RuntimeStack(cdk.Stack):
             runtime_role,
             repo.repository_arn,
             project_name=project_name,
+            workload_identity_name=rt_name,
             allowed_models=allowed_models,
             guardrail=guardrail,
         )
@@ -623,6 +624,7 @@ class RuntimeStack(cdk.Stack):
         ecr_repo_arn: str,
         *,
         project_name: str,
+        workload_identity_name: str,
         allowed_models: list[str] | None = None,
         guardrail: bedrock.CfnGuardrail | None = None,
     ) -> None:
@@ -632,6 +634,7 @@ class RuntimeStack(cdk.Stack):
         resource-level permissions; each one says so. Everything that can be
         scoped is scoped, because this role is what a compromised agent inherits.
         """
+        stack = cdk.Stack.of(role)
         statements = [
             # ECR image pull, limited to this component's own repository. It used
             # to be resources=["*"], which let any runtime role pull every image
@@ -742,13 +745,59 @@ class RuntimeStack(cdk.Stack):
                     "bedrock-agentcore:StartBrowserSession",
                     "bedrock-agentcore:StopBrowserSession",
                     "bedrock-agentcore:ConnectBrowserAutomationStream",
+                ],
+                resources=["*"],
+            ),
+            # AgentCore Identity (workload tokens + credential vault), scoped to
+            # this runtime's own workload identity and the default token vault.
+            # GetWorkloadAccessTokenForUserId is deliberately absent: it takes
+            # the user id as an unverified string, so holding it lets the agent
+            # mint a token for ANY user and read their vaulted credentials. The
+            # runtime receives the caller's workload token from the service
+            # (WorkloadAccessToken header), and ForJWT is the verified path.
+            # These actions declare several required resource types (directory,
+            # workload identity, token vault, provider), hence every parent ARN.
+            # The runtime's auto-created workload identity is named after the
+            # runtime (rt_name, a hyphen, then a service suffix); the role is
+            # built before the CfnRuntime exists, so it is matched as
+            # "{rt_name}-*" — the hyphen keeps a sibling runtime whose name
+            # merely starts with rt_name (e.g. a _g2 generation) out of scope.
+            iam.PolicyStatement(
+                sid="AgentCoreWorkloadIdentity",
+                actions=[
                     "bedrock-agentcore:GetResourceOauth2Token",
                     "bedrock-agentcore:CreateWorkloadIdentity",
                     "bedrock-agentcore:GetWorkloadAccessToken",
                     "bedrock-agentcore:GetWorkloadAccessTokenForJWT",
-                    "bedrock-agentcore:GetWorkloadAccessTokenForUserId",
                 ],
-                resources=["*"],
+                resources=[
+                    stack.format_arn(
+                        service="bedrock-agentcore",
+                        resource="workload-identity-directory",
+                        resource_name="default",
+                        arn_format=cdk.ArnFormat.SLASH_RESOURCE_NAME,
+                    ),
+                    stack.format_arn(
+                        service="bedrock-agentcore",
+                        resource="workload-identity-directory",
+                        resource_name=(
+                            f"default/workload-identity/{workload_identity_name}-*"
+                        ),
+                        arn_format=cdk.ArnFormat.SLASH_RESOURCE_NAME,
+                    ),
+                    stack.format_arn(
+                        service="bedrock-agentcore",
+                        resource="token-vault",
+                        resource_name="default",
+                        arn_format=cdk.ArnFormat.SLASH_RESOURCE_NAME,
+                    ),
+                    stack.format_arn(
+                        service="bedrock-agentcore",
+                        resource="token-vault",
+                        resource_name="default/*",
+                        arn_format=cdk.ArnFormat.SLASH_RESOURCE_NAME,
+                    ),
+                ],
             ),
             # The built-in Code Interpreter is session based: the agent must
             # start a session before InvokeCodeInterpreter and may stop it
