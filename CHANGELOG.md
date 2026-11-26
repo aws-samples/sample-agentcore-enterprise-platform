@@ -7,8 +7,20 @@ All notable changes to the accelerator are recorded here.
 ### Changed
 
 - `identity.mode` now defaults per IdP when omitted: `direct` for `entra_id`,
-  `brokered` for `cognito`, `okta` and `ping` (Okta and Ping keep brokered
-  until their direct mode exists). An explicit `mode` is always honoured.
+  `brokered` for `cognito`, `okta` and `ping`. Okta direct is supported
+  (live evidence pending) but stays opt-in; Ping has no direct mode. An
+  explicit `mode` is always honoured.
+- The synth region now follows `-c region`, then `platform.yaml` `region`;
+  `CDK_DEFAULT_REGION` only fills a missing value.
+- Synthesis refuses `security.cedar.mode: ENFORCE` with
+  `security.cedar.enabled: false`, an empty `gateway.tools` list, and unknown
+  bare tool names. ENFORCE with gateway tools no shipped Cedar permit covers
+  (for example web search) warns in workshop mode and is refused in
+  production.
+- Gateway and runtime IAM ARNs use the stack partition instead of a
+  hard-coded `aws`.
+- `docs/POSTURE_TIERS.md` documents the `dev`, `hardened` and `production`
+  posture layers, generated from `POSTURES`.
 - `presets/production.yaml` and `presets/federated.yaml` pin
   `identity.mode: direct` explicitly.
 

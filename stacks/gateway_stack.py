@@ -16,6 +16,7 @@ from aws_cdk import (
 from aws_cdk import (
     aws_ssm as ssm,
 )
+from aws_cdk import region_info
 from constructs import Construct
 
 from infra_utils.jwt_authorizer import custom_jwt_authorizer
@@ -48,6 +49,20 @@ DEFAULT_TOOL_CONFIGS: dict[str, dict] = {
         ],
     },
 }
+
+
+def stack_partition(stack: cdk.Stack) -> str:
+    """The stack's AWS partition (aws, aws-cn, ...).
+
+    A literal when the stack's region is concrete and known, so templates for
+    a fixed region stay readable; otherwise the AWS::Partition token.
+    """
+    region = stack.region
+    if not cdk.Token.is_unresolved(region):
+        partition = region_info.RegionInfo.get(region).partition
+        if partition:
+            return partition
+    return cdk.Aws.PARTITION
 
 
 def _openapi_credential(provider: dict) -> dict:
@@ -111,6 +126,7 @@ class GatewayStack(cdk.Stack):
 
         prefix = f"{project_name}-{environment}"
         gw_name = f"{project_name}-{environment}-gateway"
+        partition = stack_partition(self)
 
         # Gateway IAM role
         gw_role = iam.Role(
@@ -123,7 +139,7 @@ class GatewayStack(cdk.Stack):
             iam.PolicyStatement(
                 actions=["lambda:InvokeFunction"],
                 resources=[
-                    f"arn:aws:lambda:{self.region}:{self.account}:function:{prefix}-tool-*"
+                    f"arn:{partition}:lambda:{self.region}:{self.account}:function:{prefix}-tool-*"
                 ],
             )
         )
@@ -136,7 +152,7 @@ class GatewayStack(cdk.Stack):
                     sid="InvokeGateway",
                     actions=["bedrock-agentcore:InvokeGateway"],
                     resources=[
-                        f"arn:aws:bedrock-agentcore:{self.region}:{self.account}:gateway/*"
+                        f"arn:{partition}:bedrock-agentcore:{self.region}:{self.account}:gateway/*"
                     ],
                 )
             )
@@ -145,7 +161,7 @@ class GatewayStack(cdk.Stack):
                     sid="InvokeWebSearch",
                     actions=["bedrock-agentcore:InvokeWebSearch"],
                     resources=[
-                        f"arn:aws:bedrock-agentcore:{self.region}:aws:tool/web-search.v1"
+                        f"arn:{partition}:bedrock-agentcore:{self.region}:aws:tool/web-search.v1"
                     ],
                 )
             )
@@ -255,7 +271,7 @@ class GatewayStack(cdk.Stack):
                     ],
                     resources=[
                         policy_engine.attr_policy_engine_arn,
-                        f"arn:aws:bedrock-agentcore:{self.region}:{self.account}:gateway/*",
+                        f"arn:{partition}:bedrock-agentcore:{self.region}:{self.account}:gateway/*",
                     ],
                 )
             )
@@ -397,7 +413,7 @@ class GatewayStack(cdk.Stack):
             arns = sorted(set(provider_arns))
             vaults = sorted({arn.rsplit("/", 2)[0] for arn in arns})
             directory = (
-                f"arn:aws:bedrock-agentcore:{self.region}:{self.account}:"
+                f"arn:{partition}:bedrock-agentcore:{self.region}:{self.account}:"
                 "workload-identity-directory/default"
             )
             gw_role.add_to_policy(

@@ -54,6 +54,7 @@ from infra_utils.policy_loader import load_control
 from infra_utils.runtime_network import build_network_config
 from infra_utils.runtime_protocol import needs_jwt_authorizer, resolve_protocol
 from infra_utils.source_hash import component_image_tag, compute_source_hash
+from stacks.gateway_stack import stack_partition
 
 # CodeBuild image build limit, and the Provider waiter's total timeout, which
 # must cover it (tests/test_destroy_matching.py asserts the relation).
@@ -721,6 +722,7 @@ class RuntimeStack(cdk.Stack):
         scoped is scoped, because this role is what a compromised agent inherits.
         """
         stack = cdk.Stack.of(role)
+        partition = stack_partition(stack)
         statements = [
             # ECR image pull, limited to this component's own repository. It used
             # to be resources=["*"], which let any runtime role pull every image
@@ -752,7 +754,7 @@ class RuntimeStack(cdk.Stack):
                     "logs:PutResourcePolicy",
                 ],
                 resources=[
-                    "arn:aws:logs:*:*:log-group:/aws/bedrock-agentcore/runtimes/*"
+                    f"arn:{partition}:logs:*:*:log-group:/aws/bedrock-agentcore/runtimes/*"
                 ],
             ),
             # X-Ray tracing. These two actions accept no resource ARN, so "*" is
@@ -789,8 +791,8 @@ class RuntimeStack(cdk.Stack):
                     allowed_model_resources(allowed_models)
                     if allowed_models
                     else [
-                        "arn:aws:bedrock:*::foundation-model/*",
-                        "arn:aws:bedrock:*:*:inference-profile/*",
+                        f"arn:{partition}:bedrock:*::foundation-model/*",
+                        f"arn:{partition}:bedrock:*:*:inference-profile/*",
                     ]
                 ),
             ),
@@ -803,7 +805,7 @@ class RuntimeStack(cdk.Stack):
             iam.PolicyStatement(
                 sid="SSMAccess",
                 actions=["ssm:GetParameter", "ssm:GetParameters"],
-                resources=[f"arn:aws:ssm:*:*:parameter/{project_name}/*"],
+                resources=[f"arn:{partition}:ssm:*:*:parameter/{project_name}/*"],
             ),
             # AgentCore service access (Gateway, Memory, A2A, Registry, etc.).
             # Still "*", and knowingly so: scoping these needs the gateway,

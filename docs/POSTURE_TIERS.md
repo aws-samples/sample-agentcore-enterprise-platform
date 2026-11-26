@@ -29,3 +29,39 @@ Each posture tier maps to one preset: **workshop** is `presets/greenfield.yaml`,
 | **`security.require_guardrails`** | **— (default)** | **`true`** | **`true`** |
 | **`security.resource_policies`** | **— (default)** | **`true`** | **`true`** |
 | **`security.traceability`** | **— (default)** | **`true`** | **`true`** |
+
+## Posture layers
+
+`deploy.sh design` composes a design from a journey, a topology and one of these posture layers (`POSTURES` in `infra_utils/platform_config.py`):
+
+- **`dev`**: Workshop lifecycle (`deployment.mode: workshop`): disposable resources, every security control opt-in.
+- **`hardened`**: Workshop lifecycle with VPC networking, CloudTrail alerting, traceability and alarms on; the other controls stay opt-in.
+- **`production`**: Production lifecycle: retained state and every control production validation requires, including an enterprise IdP, Cedar `ENFORCE`, guardrails, a model allow-list and alarms.
+
+The tiers above are shortcuts built on these layers: **workshop** uses posture `dev`; **secure** uses posture `hardened` plus a shortcut overlay that sets `agents.allowed_models`, `observability.alarms`, `security.cedar.enabled`, `security.cedar.mode`, `security.egress_filter`, `security.org_id`, `security.require_guardrails`, `security.resource_policies`; **production** uses posture `production`.
+
+The table lists the security and observability keys each posture layer sets on its own, before any shortcut overlay. Rows in bold differ between layers.
+
+| key | dev | hardened | production |
+|---|---|---|---|
+| **`agents.allowed_models`** | **— (default)** | **— (default)** | **`[us.anthropic.claude-sonnet-4-6]`** |
+| **`agents.memory.event_expiry_days`** | **— (default)** | **— (default)** | **`30`** |
+| **`deployment.mode`** | **`workshop`** | **— (default)** | **`production`** |
+| **`gateway.web_search`** | **— (default)** | **— (default)** | **`off`** |
+| **`identity.client_id`** | **— (default)** | **— (default)** | **`REPLACE_ME`** |
+| **`identity.client_secret_name`** | **— (default)** | **— (default)** | **`agentcore/idp-client-secret`** |
+| **`identity.idp`** | **— (default)** | **— (default)** | **`entra_id`** |
+| **`identity.mode`** | **— (default)** | **— (default)** | **`direct`** |
+| **`identity.tenant_id`** | **— (default)** | **— (default)** | **`00000000-0000-0000-0000-000000000000`** |
+| **`observability.alarm_email`** | **— (default)** | **— (default)** | **`ops@REPLACE_ME.invalid`** |
+| **`observability.alarms`** | **— (default)** | **`true`** | **`true`** |
+| **`observability.log_retention_days`** | **— (default)** | **— (default)** | **`90`** |
+| **`security.cedar.enabled`** | **— (default)** | **— (default)** | **`true`** |
+| **`security.cedar.mode`** | **— (default)** | **— (default)** | **`ENFORCE`** |
+| **`security.cloudtrail_alerting`** | **— (default)** | **`true`** | **`true`** |
+| **`security.egress_filter`** | **— (default)** | **— (default)** | **`true`** |
+| **`security.networking`** | **— (default)** | **`true`** | **`true`** |
+| **`security.org_id`** | **— (default)** | **— (default)** | **`o-example1234`** |
+| **`security.require_guardrails`** | **— (default)** | **— (default)** | **`true`** |
+| **`security.resource_policies`** | **— (default)** | **— (default)** | **`true`** |
+| **`security.traceability`** | **— (default)** | **`true`** | **`true`** |
