@@ -5,6 +5,7 @@
 import json
 import logging
 import os
+import uuid
 
 from bedrock_agentcore.runtime import BedrockAgentCoreApp, RequestContext
 from claude_agent_sdk import (
@@ -97,7 +98,12 @@ async def main(payload, context: RequestContext):
     _code_int_session_id = payload.get("code_int_session_id", "")
     claude_session_id = _session_map.get(runtime_session_id)
 
-    user_id = extract_user_id_from_context(context)
+    try:
+        user_id = extract_user_id_from_context(context)
+    except ValueError as e:
+        logger.warning("Rejected unverified caller: %s", e)
+        yield {"status": "error", "error": "Unauthorized"}
+        return
     logger.info("[AGENT] User: %s, Session: %s", user_id, runtime_session_id)
 
     # Get Gateway URL and access token
@@ -229,19 +235,32 @@ Your response should:
                         _session_map[runtime_session_id] = msg.session_id
                     yield {"claude_session_id": msg.session_id}
 
-    try:
-        async for event in _process_messages(_build_options(claude_session_id)):
-            yield event
-    except ProcessError:
-        if claude_session_id:
+    async def _run_with_resume_fallback():
+        try:
+            async for event in _process_messages(_build_options(claude_session_id)):
+                yield event
+        except ProcessError:
+            if not claude_session_id:
+                raise
             logger.warning(
                 "Resume failed for session %s, starting fresh session",
                 claude_session_id,
             )
             async for event in _process_messages(_build_options(None)):
                 yield event
-        else:
-            raise
+
+    try:
+        async for event in _run_with_resume_fallback():
+            yield event
+    except Exception:
+        # Details stay in the server log; the caller gets only a correlation id.
+        correlation_id = uuid.uuid4().hex
+        logger.exception("Agent run failed (correlation_id=%s)", correlation_id)
+        yield {
+            "status": "error",
+            "error": f"Internal error (correlation id: {correlation_id})",
+            "correlation_id": correlation_id,
+        }
 
 
 if __name__ == "__main__":

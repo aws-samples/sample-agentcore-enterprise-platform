@@ -3,6 +3,7 @@
 
 import logging
 import os
+import uuid
 
 from bedrock_agentcore.runtime import BedrockAgentCoreApp, RequestContext
 from langchain.agents import create_agent
@@ -112,10 +113,15 @@ async def invocations(payload, context: RequestContext):
             message_chunk, _metadata = event
             yield message_chunk.model_dump()
 
-    except Exception as e:
-        error_msg = str(e) if str(e) else f"{type(e).__name__}: {e!r}"
-        logger.exception("Agent run failed")
-        yield {"status": "error", "error": error_msg}
+    except Exception:
+        # Details stay in the server log; the caller gets only a correlation id.
+        correlation_id = uuid.uuid4().hex
+        logger.exception("Agent run failed (correlation_id=%s)", correlation_id)
+        yield {
+            "status": "error",
+            "error": f"Internal error (correlation id: {correlation_id})",
+            "correlation_id": correlation_id,
+        }
 
 
 if __name__ == "__main__":

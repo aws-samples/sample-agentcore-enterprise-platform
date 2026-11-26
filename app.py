@@ -360,8 +360,6 @@ if production_mode:
 use_long_term_memory = (
     cfg("use_long_term_memory", "USE_LONG_TERM_MEMORY", "false") == "true"
 )
-ltm_top_k = int(cfg("ltm_top_k", "LTM_TOP_K", "10"))
-ltm_relevance_score = float(cfg("ltm_relevance_score", "LTM_RELEVANCE_SCORE", "0.3"))
 memory_event_expiry_days = int(
     cfg("memory_event_expiry_days", "MEMORY_EVENT_EXPIRY_DAYS", "30")
 )
@@ -751,10 +749,8 @@ if not is_fed_platform:
             # agent refuses the request rather than decoding it unverified.
             "COGNITO_ISSUER_URL": issuer_url,
             "COGNITO_ALLOWED_CLIENTS": ",".join(allowed_clients or allowed_audience),
-            "STACK_NAME": prefix,
-            "USE_LONG_TERM_MEMORY": str(use_long_term_memory).lower(),
-            "LTM_TOP_K": str(ltm_top_k),
-            "LTM_RELEVANCE_SCORE": str(ltm_relevance_score),
+            # Only vars an agent reads belong here; tests/test_agent_env_contract.py
+            # fails on dead or missing ones.
             **model_env,
         },
         **migration_kwargs,

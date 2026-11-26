@@ -6,11 +6,15 @@ thread so the runtime's /ping health check is served during long requests.
 """
 
 import asyncio
+import logging
 import os
+import uuid
 
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from strands import Agent
 from strands.models import BedrockModel
+
+logger = logging.getLogger(__name__)
 
 app = BedrockAgentCoreApp()
 
@@ -45,7 +49,17 @@ def _answer(query: str) -> str:
 @app.entrypoint
 async def invoke(payload=None):
     query = payload.get("prompt", "Hello!") if payload else "Hello!"
-    text = await asyncio.to_thread(_answer, query)
+    try:
+        text = await asyncio.to_thread(_answer, query)
+    except Exception:
+        # Details stay in the server log; the caller gets only a correlation id.
+        correlation_id = uuid.uuid4().hex
+        logger.exception("Agent run failed (correlation_id=%s)", correlation_id)
+        return {
+            "status": "error",
+            "error": f"Internal error (correlation id: {correlation_id})",
+            "correlation_id": correlation_id,
+        }
     return {"status": "success", "response": text}
 
 

@@ -7,6 +7,7 @@ AgentCore proxies these unchanged when deployed with --protocol AGUI.
 
 import logging
 import os
+import uuid
 
 from ag_ui.core import RunAgentInput, RunErrorEvent
 from ag_ui_strands import StrandsAgent
@@ -129,25 +130,27 @@ class ActorAwareStrandsAgent(StrandsAgent):
 
 @app.entrypoint
 async def invocations(payload: dict, context: RequestContext):
-    input_data = RunAgentInput.model_validate(payload)
-    user_id = extract_user_id_from_context(context)
-
-    agent = ActorAwareStrandsAgent(
-        user_id=user_id,
-        session_id=input_data.thread_id,
-        name="agui_strands_agent",
-        description="AG-UI Strands agent with Gateway MCP tools and Code Interpreter",
-    )
-
     try:
+        input_data = RunAgentInput.model_validate(payload)
+        user_id = extract_user_id_from_context(context)
+
+        agent = ActorAwareStrandsAgent(
+            user_id=user_id,
+            session_id=input_data.thread_id,
+            name="agui_strands_agent",
+            description="AG-UI Strands agent with Gateway MCP tools and Code Interpreter",
+        )
+
         async for event in agent.run(input_data):
             if event is not None:
                 yield event.model_dump(mode="json", by_alias=True, exclude_none=True)
-    except Exception as exc:
-        logger.exception("Agent run failed")
+    except Exception:
+        # Details stay in the server log; the caller gets only a correlation id.
+        correlation_id = uuid.uuid4().hex
+        logger.exception("Agent run failed (correlation_id=%s)", correlation_id)
         yield RunErrorEvent(
-            message=str(exc) or type(exc).__name__,
-            code=type(exc).__name__,
+            message=f"Internal error (correlation id: {correlation_id})",
+            code="INTERNAL_ERROR",
         ).model_dump(mode="json", by_alias=True, exclude_none=True)
 
 
