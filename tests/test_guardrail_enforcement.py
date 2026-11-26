@@ -289,6 +289,10 @@ def test_benign_check_passes_and_uses_the_pinned_version(monkeypatch):
     assert len(fake.calls) == len(mod.BENIGN_PROMPTS)
     assert all(c["guardrailVersion"] == "4" for c in fake.calls)
     assert all(c["source"] == "INPUT" for c in fake.calls)
+    # Without guard_content, ApplyGuardrail skips the PROMPT_ATTACK filter.
+    assert all(
+        c["content"][0]["text"]["qualifiers"] == ["guard_content"] for c in fake.calls
+    )
 
 
 def test_published_guardrail_picks_highest_non_draft(monkeypatch):

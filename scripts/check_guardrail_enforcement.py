@@ -139,7 +139,10 @@ def check_benign_prompts(guardrail_id: str, version: str) -> None:
             guardrailIdentifier=guardrail_id,
             guardrailVersion=version,
             source="INPUT",
-            content=[{"text": {"text": prompt}}],
+            # ApplyGuardrail runs the PROMPT_ATTACK filter only on text that
+            # carries the guard_content qualifier. Without it, this check would
+            # skip the very filter whose strength it is meant to validate.
+            content=[{"text": {"text": prompt, "qualifiers": ["guard_content"]}}],
         )
         if result.get("action") == "GUARDRAIL_INTERVENED":
             fail(
