@@ -473,10 +473,38 @@ def migration_production_error(mode: str, migration_enabled: bool) -> str | None
     return None
 
 
-# Cedar permits shipped for the gateway and the tools they cover. In ENFORCE
-# mode Cedar's implicit default-deny blocks every other tool.
+# The Cedar permit the gateway stack deploys (stacks/gateway_stack.py). In
+# ENFORCE mode Cedar's implicit default-deny blocks every tool it does not
+# permit, so coverage is read from that policy itself, never a second list.
 CEDAR_PERMIT_CONTROL = "control-library/cedar/gateway-default"
-CEDAR_PERMITTED_TOOLS = frozenset({"sample-tool"})
+CEDAR_PERMIT_CONTROL_ID = "cedar.gateway-default.permit-read"
+# Gateway tool actions are AgentCore::Action::"<target>___<tool>".
+_CEDAR_TOOL_ACTION_RE = re.compile(r'Action::"([^"]+?)___')
+# A permit whose head leaves action unconstrained covers every tool.
+_CEDAR_ANY_ACTION_RE = re.compile(r"permit\s*\(\s*principal[^,]*,\s*action\s*[,)]")
+_COVERAGE_GATEWAY_ARN = (
+    "arn:aws:bedrock-agentcore:us-east-1:111111111111:gateway/coverage-check"
+)
+
+
+def cedar_permitted_tools(policy_text: str | None = None) -> frozenset[str] | None:
+    """Gateway targets the deployed Cedar permit covers; None means all.
+
+    Without ``policy_text`` the policy the gateway stack deploys
+    (CEDAR_PERMIT_CONTROL_ID) is loaded, so adding a permit there is all a
+    custom tool needs.
+    """
+    if policy_text is None:
+        from infra_utils.policy_loader import load_control_text
+
+        policy_text = load_control_text(
+            CEDAR_PERMIT_CONTROL_ID, {"gateway_arn": _COVERAGE_GATEWAY_ARN}
+        )
+    if _CEDAR_ANY_ACTION_RE.search(policy_text):
+        return None
+    return frozenset(_CEDAR_TOOL_ACTION_RE.findall(policy_text))
+
+
 TOOLS_DIR = Path(__file__).resolve().parent.parent / "tools"
 
 
@@ -513,12 +541,19 @@ def gateway_tool_errors(tools: list, known: list[str] | None = None) -> list[str
 
 
 def cedar_findings(
-    *, enabled: bool, mode: str, tool_names: list[str], production: bool
+    *,
+    enabled: bool,
+    mode: str,
+    tool_names: list[str],
+    production: bool,
+    permitted_tools: frozenset[str] | None | Literal["deployed"] = "deployed",
 ) -> tuple[list[str], list[str]]:
     """(errors, warnings) for the Cedar settings against the gateway tools.
 
-    ENFORCE without the engine is an error. ENFORCE with tools no shipped
-    permit covers is an error in production and a warning in workshop.
+    ENFORCE without the engine is an error. ENFORCE with tools the deployed
+    permit does not cover is an error in production and a warning in
+    workshop. ``permitted_tools`` defaults to the deployed policy's coverage
+    (cedar_permitted_tools); None means every tool is covered.
     """
     errors: list[str] = []
     warnings: list[str] = []
@@ -528,14 +563,20 @@ def cedar_findings(
             "with the policy engine disabled the setting does nothing"
         )
     if enabled and mode == "ENFORCE":
-        uncovered = sorted(set(tool_names) - CEDAR_PERMITTED_TOOLS)
+        covered = (
+            cedar_permitted_tools()
+            if permitted_tools == "deployed"
+            else permitted_tools
+        )
+        uncovered = [] if covered is None else sorted(set(tool_names) - covered)
         if uncovered:
             message = (
                 "security.cedar.mode ENFORCE denies every gateway tool without a "
-                f"Cedar permit: {', '.join(uncovered)}. The shipped permits in "
-                f"{CEDAR_PERMIT_CONTROL} cover only "
-                f"{', '.join(sorted(CEDAR_PERMITTED_TOOLS))}; add a permit there "
-                "for each tool, remove the tools, or keep mode LOG_ONLY"
+                f"Cedar permit: {', '.join(uncovered)}. The deployed permit "
+                f"{CEDAR_PERMIT_CONTROL_ID} (in {CEDAR_PERMIT_CONTROL}) covers "
+                f"only {', '.join(sorted(covered)) or 'no tools'}; add the tool's "
+                'actions (AgentCore::Action::"<target>___<tool>") to that '
+                "permit, remove the tools, or keep mode LOG_ONLY"
             )
             (errors if production else warnings).append(message)
     return errors, warnings

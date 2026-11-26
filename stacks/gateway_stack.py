@@ -20,6 +20,7 @@ from aws_cdk import region_info
 from constructs import Construct
 
 from infra_utils.jwt_authorizer import custom_jwt_authorizer
+from infra_utils.platform_config import CEDAR_PERMIT_CONTROL_ID
 from infra_utils.policy_loader import load_control, load_control_text
 
 # The default target set when platform.yaml declares no gateway.tools.
@@ -476,9 +477,10 @@ class GatewayStack(cdk.Stack):
         # A policy referencing a tool action is rejected ("unrecognized action") if the
         # target defining it does not exist yet, so depend on all of them explicitly.
         if policy_engine is not None:
-            # One CfnPolicy per Cedar artifact in the control-library.
+            # One CfnPolicy per Cedar artifact in the control-library. The
+            # synth-time ENFORCE coverage check reads this same control.
             cedar_controls = {
-                "PermitReadTools": "cedar.gateway-default.permit-read",
+                "PermitReadTools": CEDAR_PERMIT_CONTROL_ID,
             }
             for construct_id, control_id in cedar_controls.items():
                 statement = load_control_text(

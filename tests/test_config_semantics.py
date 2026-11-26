@@ -5,7 +5,9 @@ from pathlib import Path
 
 from infra_utils.platform_config import (
     CEDAR_PERMIT_CONTROL,
+    CEDAR_PERMIT_CONTROL_ID,
     cedar_findings,
+    cedar_permitted_tools,
     gateway_tool_errors,
     known_gateway_tools,
 )
@@ -48,6 +50,51 @@ def test_enforce_with_covered_tools_and_log_only_pass():
     assert cedar_findings(
         enabled=True, mode="LOG_ONLY", tool_names=["web-search"], production=True
     ) == ([], [])
+
+
+def test_coverage_is_read_from_the_deployed_permit():
+    covered = cedar_permitted_tools()
+    assert covered is None or "sample-tool" in covered
+
+
+def test_custom_permit_covers_custom_tool():
+    policy = (
+        "permit(principal, action in ["
+        'AgentCore::Action::"sample-tool___text_analysis_tool", '
+        'AgentCore::Action::"crm___lookup"], resource);'
+    )
+    covered = cedar_permitted_tools(policy)
+    assert covered == frozenset({"sample-tool", "crm"})
+    assert cedar_findings(
+        enabled=True,
+        mode="ENFORCE",
+        tool_names=["sample-tool", "crm"],
+        production=True,
+        permitted_tools=covered,
+    ) == ([], [])
+
+
+def test_unconstrained_action_permit_covers_everything():
+    assert cedar_permitted_tools("permit(principal, action, resource);") is None
+    assert cedar_findings(
+        enabled=True,
+        mode="ENFORCE",
+        tool_names=["web-search"],
+        production=True,
+        permitted_tools=None,
+    ) == ([], [])
+
+
+def test_uncovered_message_names_the_deployed_permit():
+    errors, _ = cedar_findings(
+        enabled=True,
+        mode="ENFORCE",
+        tool_names=["crm"],
+        production=True,
+        permitted_tools=frozenset({"sample-tool"}),
+    )
+    assert errors and CEDAR_PERMIT_CONTROL_ID in errors[0]
+    assert "crm" in errors[0]
 
 
 def test_empty_tools_is_an_error():

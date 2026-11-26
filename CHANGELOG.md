@@ -14,9 +14,10 @@ All notable changes to the accelerator are recorded here.
   `CDK_DEFAULT_REGION` only fills a missing value.
 - Synthesis refuses `security.cedar.mode: ENFORCE` with
   `security.cedar.enabled: false`, an empty `gateway.tools` list, and unknown
-  bare tool names. ENFORCE with gateway tools no shipped Cedar permit covers
-  (for example web search) warns in workshop mode and is refused in
-  production.
+  bare tool names. ENFORCE with gateway tools the deployed Cedar permit
+  (`cedar.gateway-default.permit-read`) does not cover (for example web
+  search) warns in workshop mode and is refused in production; coverage is
+  read from that policy, so adding a tool's actions there is enough.
 - Gateway and runtime IAM ARNs use the stack partition instead of a
   hard-coded `aws`.
 - `docs/POSTURE_TIERS.md` documents the `dev`, `hardened` and `production`
