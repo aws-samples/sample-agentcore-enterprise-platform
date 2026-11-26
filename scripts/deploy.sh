@@ -312,7 +312,7 @@ if [ "${1:-}" = "doctor" ]; then
         --manifest "$PLATFORM_CONFIG" "$@"
 fi
 
-DEPLOY_ACTION="${1:-}"
+DEPLOY_ACTION="${1:-deploy}"
 apply_platform_config
 load_config
 
