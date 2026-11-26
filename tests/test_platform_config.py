@@ -16,6 +16,7 @@ from infra_utils.platform_config import (
     PlatformConfig,
     apply_environment_overrides,
     load_platform_config,
+    resolve_deployment_mode,
     resolve_region,
     to_env,
 )
@@ -259,6 +260,56 @@ def test_environment_override_to_production_is_revalidated():
         )
 
 
+def test_resolved_mode_replaces_raw_environment_mode():
+    """app.py passes the resolved deployment mode to the overrides, so a raw
+    DEPLOYMENT_MODE=workshop cannot validate a production synth as workshop."""
+    config = PlatformConfig.model_validate(_production_config())
+    raw = {"DEPLOYMENT_MODE": "workshop"}
+    effective = apply_environment_overrides(
+        config, {**raw, "DEPLOYMENT_MODE": "production"}
+    )
+    assert effective.deployment.mode == "production"
+    src = (REPO / "app.py").read_text()
+    assert '"DEPLOYMENT_MODE": deployment_mode' in src
+
+
+def _effective_mode(manifest: dict, environ: dict, allow_override=False) -> str:
+    """The effective config mode, resolved exactly as app.py does it."""
+    config = PlatformConfig.model_validate(manifest)
+    mode = resolve_deployment_mode(
+        config.deployment.mode, "", environ.get("DEPLOYMENT_MODE", ""), allow_override
+    )
+    effective = apply_environment_overrides(
+        config, {**environ, "DEPLOYMENT_MODE": mode}
+    )
+    return effective.deployment.mode
+
+
+def test_manifest_mode_decides_the_effective_config():
+    """A stray DEPLOYMENT_MODE must not change the effective mode: without
+    the fix, a production manifest plus DEPLOYMENT_MODE=workshop resolved to
+    an effective workshop config."""
+    production = _production_config()
+    assert _effective_mode(production, {}) == "production"
+    assert _effective_mode(production, {"DEPLOYMENT_MODE": "production"}) == (
+        "production"
+    )
+    assert _effective_mode({}, {}) == "workshop"
+    with pytest.raises(ValueError, match="allow_mode_override"):
+        _effective_mode(production, {"DEPLOYMENT_MODE": "workshop"})
+    with pytest.raises(ValueError, match="deployment.mode: workshop"):
+        _effective_mode({}, {"DEPLOYMENT_MODE": "production"})
+
+
+def test_mode_override_changes_the_effective_config(capsys):
+    production = _production_config()
+    mode = _effective_mode(
+        production, {"DEPLOYMENT_MODE": "workshop"}, allow_override=True
+    )
+    assert mode == "workshop"
+    assert "DEPLOYMENT MODE OVERRIDDEN" in capsys.readouterr().err
+
+
 def test_runtime_generation_is_durable_and_bounded():
     config = PlatformConfig.model_validate(
         {"agents": {"orchestrator_runtime_generation": 2}}
@@ -358,6 +409,9 @@ def test_app_py_resolves_through_cfg():
         "region",  # region merges CDK_DEFAULT_REGION explicitly
         "CDK_DEFAULT_ACCOUNT",
         "env_key",  # cfg()'s own body
+        # The deployment mode is compared against platform.yaml rather than
+        # layered over it (resolve_deployment_mode), so it must bypass cfg().
+        "DEPLOYMENT_MODE",
     )
     stale = []
     for i, line in enumerate(src.splitlines(), 1):

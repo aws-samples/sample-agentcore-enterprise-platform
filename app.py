@@ -30,6 +30,7 @@ from infra_utils.platform_config import (
     apply_environment_overrides,
     gateway_tool_configs,
     load_platform_config,
+    resolve_deployment_mode,
     to_env,
 )
 from stacks.auth_stack import AuthStack
@@ -56,11 +57,30 @@ _config_path = app.node.try_get_context("platform_config") or os.environ.get(
 )
 platform_config: PlatformConfig | None = None
 _yaml_env: dict[str, str] = {}
+# deployment.mode in platform.yaml is the source of truth: a differing
+# context/env value is refused unless -c allow_mode_override=true. The override
+# is context-only so a stray environment variable can never set it.
+_mode_context = str(app.node.try_get_context("deployment_mode") or "")
+_mode_env = os.environ.get("DEPLOYMENT_MODE", "")
+_allow_mode_override = (
+    str(app.node.try_get_context("allow_mode_override")).lower() == "true"
+)
+_manifest_mode: str | None = None
 if os.path.exists(_config_path):
+    _loaded_config = load_platform_config(_config_path)
+    # Read before apply_environment_overrides, which may rewrite the mode.
+    _manifest_mode = _loaded_config.deployment.mode
+    deployment_mode = resolve_deployment_mode(
+        _manifest_mode, _mode_context, _mode_env, _allow_mode_override
+    )
+    # Validate the overrides under the RESOLVED mode, not the raw
+    # DEPLOYMENT_MODE variable, so the config and the stacks share one mode.
     platform_config = apply_environment_overrides(
-        load_platform_config(_config_path), dict(os.environ)
+        _loaded_config, {**dict(os.environ), "DEPLOYMENT_MODE": deployment_mode}
     )
     _yaml_env = to_env(platform_config)
+else:
+    deployment_mode = resolve_deployment_mode(None, _mode_context, _mode_env)
 
 
 def cfg(context_key: str, env_key: str, default: str) -> str:
@@ -86,15 +106,8 @@ account = os.environ.get("CDK_DEFAULT_ACCOUNT", "")
 
 cdk_env = cdk.Environment(account=account, region=region)
 prefix = f"{project}-{env_name}"
-deployment_mode = cfg("deployment_mode", "DEPLOYMENT_MODE", "workshop")
-if deployment_mode not in {"workshop", "production"}:
-    raise ValueError(
-        f"deployment_mode must be 'workshop' or 'production', got {deployment_mode!r}"
-    )
 production_mode = deployment_mode == "production"
-if production_mode and (
-    platform_config is None or platform_config.deployment.mode != "production"
-):
+if production_mode and _manifest_mode != "production":
     raise ValueError(
         "Production mode must be declared in a validated platform.yaml; direct "
         "context/env flags cannot bypass the production control gate."
