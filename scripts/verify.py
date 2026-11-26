@@ -14,7 +14,9 @@ if any claim fails:
     gateway                     test_gateway.py       (MCP tools/list + call)
     memory                      test_memory.py        (event write/read)
     observability               check_observability.py
-    networking                  check_network.py      (runtimes really in VPC)
+    networking                  check_network.py      (runtimes really in VPC;
+                                                       not on a federated
+                                                       platform side)
     (require_guardrails flag)   check_guardrail_enforcement.py (IAM simulation)
     (observability.alarms flag) check_alarms.py       (alarms exist, none firing)
     runtime-orchestrator        invoke.py             (live invoke; migration
@@ -76,30 +78,37 @@ def checks_for(
     alarms: bool = False,
     use_cases: Sequence[str] = (),
     migration: bool = False,
+    role: str | None = None,
 ) -> list[tuple[str, list[str]]]:
     """Map a footprint onto the tools that verify it. Pure — unit-tested.
+
+    `role` is the federated side (PlatformConfig.federated_role). The platform
+    side runs no agents, so only platform resources (identity, gateway with its
+    policies, observability, alarms, use cases) are checked there; memory,
+    networking, guardrail-enforcement and runtime checks are skipped.
 
     `use_cases` are the names of enabled use cases; each contributes its own
     verify.py (CONTRIBUTING_USE_CASES.md), appended after the core checks.
     Paths are relative to scripts/, which is where main() runs every tool."""
     checks: list[tuple[str, list[str]]] = []
+    agents_here = role != "platform"
     if "auth" in suffixes:
         # First, deliberately: every later check mints a token through the same
         # issuer, and this one turns an opaque 401 into the IdP-side fix.
         checks.append(("identity", ["check_identity.py"]))
     if "gateway" in suffixes:
         checks.append(("gateway", ["test_gateway.py"]))
-    if "memory" in suffixes:
+    if "memory" in suffixes and agents_here:
         checks.append(("memory", ["test_memory.py"]))
     if "observability" in suffixes:
         checks.append(("observability", ["check_observability.py"]))
-    if "networking" in suffixes:
+    if "networking" in suffixes and agents_here:
         checks.append(("networking", ["check_network.py"]))
-    if require_guardrails:
+    if require_guardrails and agents_here:
         checks.append(("guardrail enforcement", ["check_guardrail_enforcement.py"]))
     if alarms:
         checks.append(("alarms", ["check_alarms.py"]))
-    if "runtime-orchestrator" in suffixes:
+    if "runtime-orchestrator" in suffixes and agents_here:
         if migration:
             # A migrated image comes from migration.source, not agents.pattern.
             # Prove its AgentCore HTTP contract with a real invoke, without
@@ -121,11 +130,11 @@ def checks_for(
                     CODE_INTERPRETER_PROMPT,
                 ]
         checks.append(("orchestrator invoke", invoke_args))
-    if "runtime-code-agent" in suffixes:
+    if "runtime-code-agent" in suffixes and agents_here:
         checks.append(
             ("a2a code-agent", ["invoke.py", "--a2a", "code-agent", HEALTH_PROMPT])
         )
-    if "runtime-research-agent" in suffixes:
+    if "runtime-research-agent" in suffixes and agents_here:
         checks.append(
             (
                 "a2a research-agent",
@@ -146,6 +155,7 @@ def main() -> int:
     account = boto3.client("sts").get_caller_identity()["Account"]
     prefix = f"{config.project}-{config.environment}-"
     suffixes = {s.removeprefix(prefix) for s in config.expected_stacks(account)}
+    role = config.federated_role(account)
     pattern = os.environ.get("AGENT_PATTERN", config.agents.pattern)
     require_guardrails = (
         os.environ.get(
@@ -175,6 +185,7 @@ def main() -> int:
         alarms,
         use_cases,
         migration=config.migration is not None,
+        role=role,
     )
     print(f"Verifying {config.project}/{config.environment} in account {account}")
     print(f"Footprint: {' '.join(sorted(suffixes))}\n")

@@ -21,23 +21,6 @@ PINNED_LINE = re.compile(r"uses:\s*([^@\s]+)@([0-9a-f]{40})\b(.*)$")
 # ref, or a pinned ref swapped back to a tag, fails the gate, and a ref that
 # gets pinned must be removed from here.
 KNOWN_UNPINNED = {
-    "ash-full-repository-scan.yml": {
-        "actions/checkout@v7",
-        "actions/setup-python@v7",
-        "actions/upload-artifact@v7",
-        "actions/github-script@v9",
-    },
-    "ash-security-comment.yml": {"actions/github-script@v9"},
-    "ash-security-scan.yml": {
-        "actions/checkout@v7",
-        "actions/setup-python@v7",
-        "actions/upload-artifact@v7",
-    },
-    "contract-parity.yml": {
-        "actions/checkout@v7",
-        "actions/setup-python@v7",
-        "actions/setup-node@v6",
-    },
     "control-library.yml": {
         "actions/checkout@v7",
         "actions/setup-python@v7",

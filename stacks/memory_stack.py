@@ -2,6 +2,7 @@
 
 Implements Requirement 8: AgentCore Memory Configuration
 - AgentCore Memory resource with semantic and user_preference strategies
+- Per-actor long-term namespaces (one user can never read another's records)
 - Optional KMS CMK encryption for data at rest
 - SSM Parameters for cross-stack consumption
 """
@@ -12,6 +13,17 @@ from aws_cdk import aws_ssm as ssm
 from constructs import Construct
 
 from infra_utils.policy_loader import load_control_json
+
+# Long-term memory namespaces, one per actor. AgentCore Memory substitutes the
+# documented {actorId} placeholder with the actor id of each event at
+# extraction time, so records land under /users/<actor>/... and never in a
+# namespace shared by every user. See "Organize memory records with
+# namespaces":
+# https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/session-actor-namespace.html
+# The agents resolve the same templates with the verified JWT sub when they
+# retrieve (agent-code/shared/jwt_claims.py; tests keep the two in sync).
+USER_PREFERENCE_NAMESPACE = "/users/{actorId}/preferences"
+SEMANTIC_NAMESPACE = "/users/{actorId}/facts"
 
 
 class MemoryStack(cdk.Stack):
@@ -25,8 +37,6 @@ class MemoryStack(cdk.Stack):
         kms_key_arn: str = "",
         event_expiry_days: int = 30,
         use_long_term_memory: bool = False,
-        ltm_top_k: int = 10,
-        ltm_relevance_score: float = 0.3,
         enable_resource_policies: bool = False,
         org_id: str = "",
         retain_data: bool = False,
@@ -42,7 +52,7 @@ class MemoryStack(cdk.Stack):
                 user_preference_memory_strategy=agentcore.CfnMemory.UserPreferenceMemoryStrategyProperty(
                     name=f"{name}_user_pref",
                     description="User preference tracking strategy",
-                    namespaces=["USER_ID"],
+                    namespaces=[USER_PREFERENCE_NAMESPACE],
                 ),
             ),
         ]
@@ -55,7 +65,7 @@ class MemoryStack(cdk.Stack):
                     semantic_memory_strategy=agentcore.CfnMemory.SemanticMemoryStrategyProperty(
                         name=f"{name}_semantic",
                         description="Semantic fact extraction and override strategy",
-                        namespaces=["AGENT_ID"],
+                        namespaces=[SEMANTIC_NAMESPACE],
                     ),
                 ),
             )

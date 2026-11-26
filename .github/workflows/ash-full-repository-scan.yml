@@ -17,21 +17,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: '3.10'
 
       - name: Install ASH
-        run: pip install git+https://github.com/awslabs/automated-security-helper.git@v3.2.2
+        run: pip install git+https://github.com/awslabs/automated-security-helper.git@v3.8.0
 
       - name: Run ASH full repository scan
+        # Blocking: a failed scan (or findings at/above HIGH) fails the job.
         run: |
+          set -o pipefail
           cat > .ash_config.yaml << 'EOF'
+          global_settings:
+            severity_threshold: HIGH
           reporters:
             markdown:
               enabled: true
@@ -39,10 +43,32 @@ jobs:
                 include_detailed_findings: true
                 max_detailed_findings: 1000
           EOF
+          # Accepted findings live in .ash-suppressions.yaml (see docs/TESTING.md).
+          # ASH v3 reads suppressions from global_settings.suppressions, so merge
+          # the allowlist there instead of appending a top-level key.
+          if [ -f .ash-suppressions.yaml ]; then
+            python - .ash-suppressions.yaml .ash_config.yaml <<'PY'
+          import sys
+
+          import yaml
+
+          src, dst = sys.argv[1], sys.argv[2]
+          with open(dst) as f:
+              cfg = yaml.safe_load(f)
+          with open(src) as f:
+              entries = (yaml.safe_load(f) or {}).get("suppressions") or []
+          for entry in entries:
+              if not all(entry.get(k) for k in ("rule_id", "path", "reason")):
+                  sys.exit(f"invalid suppression (needs rule_id, path, reason): {entry}")
+          cfg["global_settings"]["suppressions"] = entries
+          with open(dst, "w") as f:
+              yaml.safe_dump(cfg, f, sort_keys=False)
+          PY
+          fi
           ash --mode container --config .ash_config.yaml 2>&1 | tee ash-output.log
-        continue-on-error: true
 
       - name: Generate scan summary
+        if: always()
         id: scan-summary
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -65,6 +91,10 @@ jobs:
               sed -n "${TABLE_START},${TABLE_END}p" ash-output.log | \
               sed 's/\x1b\[[0-9;]*m//g' | grep "^│" | sed 's/│/|/g' >> "$SUMMARY_FILE"
             fi
+            # ASH v3.8+ no longer prints the summary table; it writes a Markdown report.
+            if [ -f .ash/ash_output/reports/ash.summary.md ]; then
+              cat .ash/ash_output/reports/ash.summary.md >> "$SUMMARY_FILE"
+            fi
             if grep -q "Actionable findings detected!" ash-output.log; then
               echo "has_findings=true" >> "$GITHUB_OUTPUT"
             else
@@ -74,9 +104,10 @@ jobs:
 
       - name: Upload ASH results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ash-full-scan-${{ github.run_id }}
+          include-hidden-files: true
           path: |
             .ash/
             ash-output.log
@@ -84,8 +115,8 @@ jobs:
           retention-days: 90
 
       - name: Create issue for critical findings (monthly scan)
-        if: github.event_name == 'schedule' && steps.scan-summary.outputs.has_findings == 'true'
-        uses: actions/github-script@v9
+        if: always() && github.event_name == 'schedule' && steps.scan-summary.outputs.has_findings == 'true'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -105,3 +136,13 @@ jobs:
         run: |
           echo "## ASH Security Scan Results" >> $GITHUB_STEP_SUMMARY
           if [ -f "ash-summary.md" ]; then cat ash-summary.md >> $GITHUB_STEP_SUMMARY; fi
+
+      - name: Fail on findings at or above HIGH
+        if: always()
+        env:
+          HAS_FINDINGS: ${{ steps.scan-summary.outputs.has_findings }}
+        run: |
+          if [ "${HAS_FINDINGS}" = "true" ]; then
+            echo "::error::ASH reported findings at or above HIGH. Fix them or add a reviewed entry to .ash-suppressions.yaml."
+            exit 1
+          fi

@@ -23,10 +23,10 @@ RUN apt-get update && \
 # Install claude-code globally
 RUN npm install -g @anthropic-ai/claude-code@2.1.73
 
-# Copy and install agent-specific requirements
+# Copy and install agent-specific requirements.
+# aws-opentelemetry-distro is versioned only in requirements.txt.
 COPY claude-sdk-multi-agent/requirements.txt requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir aws-opentelemetry-distro==0.16.0
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy shared utilities
 COPY shared/ shared/

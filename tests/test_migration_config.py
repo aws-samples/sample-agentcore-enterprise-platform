@@ -10,7 +10,7 @@ config is where it is cheap to catch.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import yaml
@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from infra_utils.platform_config import (
     PlatformConfig,
+    compose_layers,
     load_platform_config,
     migration_cutover_plan_lines,
     migration_cutover_ready,
@@ -26,6 +27,7 @@ from infra_utils.platform_config import (
     migration_data_ready,
     migration_network_plan_document,
     migration_plan,
+    migration_production_error,
     migration_readiness,
     migration_readiness_lines,
     migration_runtime_plan_document,
@@ -188,6 +190,39 @@ def test_secret_manager_name_is_namespaced():
     assert migration_secret_name(c, "JIRA_TOKEN") == "proj/dev/migration/JIRA_TOKEN"
 
 
+# ── migration x production: refused, with the reason ────────────────────────
+
+
+def test_migration_with_production_mode_is_refused_with_a_clear_message():
+    msg = migration_production_error("production", True)
+    assert msg is not None
+    assert "refused" in msg
+    assert "DenyUngovernedInference" in msg
+    assert "guardrail" in msg
+    assert "MIGRATION_RUNBOOK" in msg
+
+
+def test_migration_in_workshop_mode_and_production_without_migration_pass():
+    assert migration_production_error("workshop", True) is None
+    assert migration_production_error("production", False) is None
+
+
+def test_platform_config_refuses_migration_with_production_mode():
+    """The model itself refuses the combination, so `python -m
+    infra_utils.platform_config` fails the same way synth does."""
+    from tests.test_platform_config import _production_config
+
+    production = _production_config()
+    PlatformConfig.model_validate(production)  # valid without migration
+    with pytest.raises(ValidationError, match="DenyUngovernedInference"):
+        PlatformConfig.model_validate({**production, "migration": deep()})
+
+
+def test_layered_design_refuses_migration_with_production_posture():
+    with pytest.raises(ValueError, match="DenyUngovernedInference"):
+        compose_layers("migration", "centralized", "production")
+
+
 # ── the arm64 warning (non-fatal, deliberately) ──────────────────────────────
 
 
@@ -294,7 +329,7 @@ def test_private_ca_field_accepts_only_a_secret_name():
 # ── staged cutover scope and evidence gates ──────────────────────────────────
 
 
-TEST_NOW = datetime.now(timezone.utc)
+TEST_NOW = datetime.now(UTC)
 DEFAULT_APPROVED_AT = (TEST_NOW - timedelta(hours=2)).isoformat()
 DEFAULT_EXPIRES_AT = (TEST_NOW + timedelta(hours=2)).isoformat()
 COMPLETE_GATE = {

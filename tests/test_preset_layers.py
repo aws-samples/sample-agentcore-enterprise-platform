@@ -28,9 +28,13 @@ PRESETS = Path(__file__).resolve().parents[1] / "presets"
 
 GUARDRAIL = "cannot attach the Bedrock Guardrail"
 WORKSHOP = "refuses the guided workshop runner"
+MIGRATION_PRODUCTION = "DenyUngovernedInference"
 
 # Maintainer-reviewed table: every combination not listed is expected to pass.
-EXPECTED_FAIL = {("multi-agent", t, "production"): GUARDRAIL for t in TOPOLOGIES}
+EXPECTED_FAIL = {
+    **{("multi-agent", t, "production"): GUARDRAIL for t in TOPOLOGIES},
+    **{("migration", t, "production"): MIGRATION_PRODUCTION for t in TOPOLOGIES},
+}
 
 
 @pytest.fixture
@@ -74,7 +78,11 @@ def test_combination_sweep(journey, topology, posture):
 
 
 def test_posture_wins_for_security_and_journey_owns_agents():
-    doc = compose_layers("migration", "centralized", "production")
+    # Merge rules only: migration x production is refused by compose_layers
+    # (see test_migration_config.py), so merge the raw layers directly.
+    doc = _merge_layers(
+        [JOURNEYS["migration"], TOPOLOGIES["centralized"], POSTURES["production"]]
+    )
     assert doc["security"] == POSTURES["production"]["security"]
     assert doc["agents"]["pattern"] == "langgraph-agent"
     assert doc["agents"]["model_id"] == POSTURES["production"]["agents"]["model_id"]
