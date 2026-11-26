@@ -11,10 +11,13 @@ logger = logging.getLogger(__name__)
 class CodeInterpreterTools:
     """Tools for code execution via AgentCore Code Interpreter.
 
-    Every session this class opens is stopped again: execute_python_securely
-    stops it in a ``finally`` block, and the class is also a context manager
-    whose exit calls cleanup(). An unstopped session keeps costing money and
-    counts against the account quota until AgentCore times it out.
+    One session is opened lazily on the first execute_python_securely call and
+    reused for the rest of the request, so variables and files carry across the
+    model's tool calls (clearContext is False). The caller owns its lifetime:
+    stop it with cleanup() in the entrypoint's ``finally`` block, or use the
+    instance as a context manager around the agent run. An unstopped session
+    keeps costing money and counts against the account quota until AgentCore
+    times it out.
     """
 
     def __init__(self, region: str):
@@ -65,7 +68,7 @@ class CodeInterpreterTools:
         Args:
             code: Python code to execute
 
-        Each call runs in its own session, which is always stopped afterwards.
+        Calls within one request share a session; the caller stops it.
 
         Returns:
             JSON string with execution result. On failure the details are
@@ -98,5 +101,3 @@ class CodeInterpreterTools:
                 {"error": "Code execution failed", "correlation_id": correlation_id},
                 indent=2,
             )
-        finally:
-            self.cleanup()

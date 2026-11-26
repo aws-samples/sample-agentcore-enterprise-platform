@@ -61,8 +61,11 @@ def _create_checkpointer() -> AgentCoreMemorySaver:
     )
 
 
-async def create_langgraph_agent():
-    """Create a LangGraph agent with Gateway tools, Memory, and Code Interpreter."""
+async def create_langgraph_agent(code_tools: LangGraphCodeInterpreterTools):
+    """Create a LangGraph agent with Gateway tools, Memory, and Code Interpreter.
+
+    The caller owns code_tools' session and stops it after the request.
+    """
     tools = []
     try:
         mcp_client = await create_gateway_mcp_client()
@@ -73,8 +76,6 @@ async def create_langgraph_agent():
             "[AGENT] Gateway not available, continuing without gateway tools: %s", e
         )
 
-    region = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
-    code_tools = LangGraphCodeInterpreterTools(region)
     tools.append(code_tools.execute_python_securely)
 
     return create_agent(
@@ -98,10 +99,14 @@ async def invocations(payload, context: RequestContext):
         }
         return
 
+    # One Code Interpreter session per request, stopped in the finally below.
+    code_tools = LangGraphCodeInterpreterTools(
+        os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+    )
     try:
         user_id = extract_user_id_from_context(context)
 
-        graph = await create_langgraph_agent()
+        graph = await create_langgraph_agent(code_tools)
 
         config = {"configurable": {"thread_id": session_id, "actor_id": user_id}}
 
@@ -122,6 +127,8 @@ async def invocations(payload, context: RequestContext):
             "error": f"Internal error (correlation id: {correlation_id})",
             "correlation_id": correlation_id,
         }
+    finally:
+        code_tools.cleanup()
 
 
 if __name__ == "__main__":

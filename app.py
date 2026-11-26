@@ -360,6 +360,10 @@ if production_mode:
 use_long_term_memory = (
     cfg("use_long_term_memory", "USE_LONG_TERM_MEMORY", "false") == "true"
 )
+# Retrieval tuning read by shared/jwt_claims.py (memory_retrieval_plan) in the
+# strands patterns; an invalid value falls back to the default there.
+ltm_top_k = cfg("ltm_top_k", "LTM_TOP_K", "10")
+ltm_relevance_score = cfg("ltm_relevance_score", "LTM_RELEVANCE_SCORE", "0.3")
 memory_event_expiry_days = int(
     cfg("memory_event_expiry_days", "MEMORY_EVENT_EXPIRY_DAYS", "30")
 )
@@ -749,6 +753,10 @@ if not is_fed_platform:
             # agent refuses the request rather than decoding it unverified.
             "COGNITO_ISSUER_URL": issuer_url,
             "COGNITO_ALLOWED_CLIENTS": ",".join(allowed_clients or allowed_audience),
+            # shared/jwt_claims.py memory_retrieval_plan: facts namespace + tuning.
+            "USE_LONG_TERM_MEMORY": "true" if use_long_term_memory else "false",
+            "LTM_TOP_K": ltm_top_k,
+            "LTM_RELEVANCE_SCORE": ltm_relevance_score,
             # Only vars an agent reads belong here; tests/test_agent_env_contract.py
             # fails on dead or missing ones.
             **model_env,

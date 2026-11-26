@@ -49,12 +49,19 @@ class _FailingAgent:
         yield  # makes this an async generator
 
 
+_CODE_TOOLS = []
+
+
 class _FakeCodeTools:
     def __init__(self, _region):
-        pass
+        self.cleanup_calls = 0
+        _CODE_TOOLS.append(self)
 
     def execute_python_securely(self, code):
         return code
+
+    def cleanup(self):
+        self.cleanup_calls += 1
 
 
 def _module(name, **attrs):
@@ -125,12 +132,15 @@ def test_orchestrator_returns_generic_error(monkeypatch, caplog):
 
 
 def test_strands_agent_returns_generic_error(monkeypatch, caplog):
+    _CODE_TOOLS.clear()
     agent = _load_agent(monkeypatch, "strands-agent")
     events = asyncio.run(
         _collect(agent.invocations({"prompt": "hi", "runtimeSessionId": "s"}, None))
     )
     assert len(events) == 1
     _assert_generic(events[0], caplog)
+    # The request's Code Interpreter session is stopped even though it failed.
+    assert [tools.cleanup_calls for tools in _CODE_TOOLS] == [1]
 
 
 def test_strands_agent_keeps_unauthorized_response(monkeypatch):

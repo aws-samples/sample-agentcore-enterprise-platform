@@ -41,18 +41,14 @@ PLATFORM_INJECTED = {
     "GUARDRAIL_VERSION": "RuntimeStack injects it when require_guardrails is on",
 }
 
-# Set by app.py and consumed through a lookup the static scan cannot see
-# (name: who reads it). Keep this list short; every entry needs a reason.
-READ_INDIRECTLY = {
-    "GATEWAY_TOKEN_SCOPES": "gateway M2M token helper requests this scope in "
-    "direct IdP mode (see app.py); the name is resolved indirectly",
-}
-
 # Removed from app.py because no agent read them.
-DEAD_VARS = ("STACK_NAME", "USE_LONG_TERM_MEMORY", "LTM_TOP_K", "LTM_RELEVANCE_SCORE")
+DEAD_VARS = ("STACK_NAME",)
 
+# A quoted UPPER_CASE literal read via environ[...], getenv(...), any .get(...)
+# (os.environ.get, source.get, env.get) or _env_setting(source, "NAME", ...).
 _ANY_READ = re.compile(
-    r"""(?:environ\.get\(|environ\[|getenv\()\s*["']([A-Z][A-Z0-9_]*)["']"""
+    r"""(?:environ\[|getenv\(|\.get\(|_env_setting\(\s*\w+\s*,)"""
+    r"""\s*["']([A-Z][A-Z0-9_]*)["']"""
 )
 _REQUIRED_READ = re.compile(
     r"""environ\[\s*["']([A-Z][A-Z0-9_]*)["']\s*\](?!\s*=(?!=))"""
@@ -163,7 +159,7 @@ def test_app_py_runtimes_are_parsed():
 @pytest.mark.parametrize("component", RUNTIMES)
 def test_every_env_var_app_sets_is_read(component):
     patterns, env = _runtimes()[component]
-    unread = set(env) - _reads(patterns, _ANY_READ) - set(READ_INDIRECTLY)
+    unread = set(env) - _reads(patterns, _ANY_READ)
     assert not unread, (
         f"app.py sets {sorted(unread)} on the {component} runtime but no agent "
         f"pattern it runs ({', '.join(patterns)}) reads them"
@@ -178,6 +174,14 @@ def test_every_required_env_var_is_set(component):
         f"agents on the {component} runtime require {sorted(unset)} "
         "but app.py never sets them"
     )
+
+
+def test_memory_retrieval_vars_are_set_and_read():
+    ltm = {"USE_LONG_TERM_MEMORY", "LTM_TOP_K", "LTM_RELEVANCE_SCORE"}
+    _, orchestrator_env = _runtimes()["orchestrator"]
+    assert ltm <= orchestrator_env
+    for pattern in ("strands-agent", "agui-strands-agent"):
+        assert ltm <= _reads((pattern,), _ANY_READ), pattern
 
 
 def test_dead_env_vars_stay_removed():

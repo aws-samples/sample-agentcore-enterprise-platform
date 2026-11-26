@@ -67,8 +67,11 @@ def _create_checkpointer() -> AgentCoreMemorySaver:
     )
 
 
-async def create_langgraph_agent():
-    """Create a LangGraph agent with Gateway tools, Memory, and Code Interpreter."""
+async def create_langgraph_agent(code_tools: LangGraphCodeInterpreterTools):
+    """Create a LangGraph agent with Gateway tools, Memory, and Code Interpreter.
+
+    The caller owns code_tools' session and stops it after the request.
+    """
     tools = []
     try:
         mcp_client = await create_gateway_mcp_client()
@@ -79,8 +82,6 @@ async def create_langgraph_agent():
             "[AGENT] Gateway not available, continuing without gateway tools: %s", e
         )
 
-    region = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
-    code_tools = LangGraphCodeInterpreterTools(region)
     tools.append(code_tools.execute_python_securely)
 
     return create_agent(
@@ -94,6 +95,10 @@ async def create_langgraph_agent():
 
 @app.entrypoint
 async def invocations(payload: dict, context: RequestContext):
+    # One Code Interpreter session per request, stopped in the finally below.
+    code_tools = LangGraphCodeInterpreterTools(
+        os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+    )
     try:
         input_data = RunAgentInput.model_validate(payload)
 
@@ -106,7 +111,7 @@ async def invocations(payload: dict, context: RequestContext):
         agent = LangGraphAGUIAgent(
             name="agui_langgraph_agent",
             description="AG-UI LangGraph agent with Gateway MCP tools and Memory",
-            graph=await create_langgraph_agent(),
+            graph=await create_langgraph_agent(code_tools),
             config={"configurable": {"actor_id": user_id}},
         )
 
@@ -121,6 +126,8 @@ async def invocations(payload: dict, context: RequestContext):
             message=f"Internal error (correlation id: {correlation_id})",
             code="INTERNAL_ERROR",
         ).model_dump(mode="json", by_alias=True, exclude_none=True)
+    finally:
+        code_tools.cleanup()
 
 
 if __name__ == "__main__":

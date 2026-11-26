@@ -82,7 +82,9 @@ def _create_session_manager(
     )
 
 
-def _create_agent(user_id: str, session_id: str) -> Agent:
+def _create_agent(
+    user_id: str, session_id: str, code_tools: StrandsCodeInterpreterTools
+) -> Agent:
     """Create a Strands Agent with Gateway MCP tools, Memory, and Code Interpreter."""
     tools = []
     try:
@@ -94,8 +96,7 @@ def _create_agent(user_id: str, session_id: str) -> Agent:
             "[AGENT] Gateway not available, continuing without gateway tools: %s", e
         )
 
-    region = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
-    code_tools = StrandsCodeInterpreterTools(region)
+    # The entrypoint owns the Code Interpreter session and stops it.
     tools.append(code_tools.execute_python_securely)
 
     return Agent(
@@ -110,9 +111,18 @@ def _create_agent(user_id: str, session_id: str) -> Agent:
 class ActorAwareStrandsAgent(StrandsAgent):
     """StrandsAgent that creates the agent per-request with fresh MCP context."""
 
-    def __init__(self, *, user_id: str, session_id: str, name: str, description: str):
+    def __init__(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        code_tools: StrandsCodeInterpreterTools,
+        name: str,
+        description: str,
+    ):
         self._user_id = user_id
         self._session_id = session_id
+        self._code_tools = code_tools
         super().__init__(
             agent=Agent(model=_build_model(), system_prompt=SYSTEM_PROMPT),
             name=name,
@@ -122,7 +132,7 @@ class ActorAwareStrandsAgent(StrandsAgent):
     async def run(self, input_data: RunAgentInput):
         thread_id = input_data.thread_id or "default"
         self._agents_by_thread[thread_id] = _create_agent(
-            self._user_id, self._session_id
+            self._user_id, self._session_id, self._code_tools
         )
         async for event in super().run(input_data):
             yield event
@@ -130,6 +140,10 @@ class ActorAwareStrandsAgent(StrandsAgent):
 
 @app.entrypoint
 async def invocations(payload: dict, context: RequestContext):
+    # One Code Interpreter session per request, stopped in the finally below.
+    code_tools = StrandsCodeInterpreterTools(
+        os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+    )
     try:
         input_data = RunAgentInput.model_validate(payload)
         user_id = extract_user_id_from_context(context)
@@ -137,6 +151,7 @@ async def invocations(payload: dict, context: RequestContext):
         agent = ActorAwareStrandsAgent(
             user_id=user_id,
             session_id=input_data.thread_id,
+            code_tools=code_tools,
             name="agui_strands_agent",
             description="AG-UI Strands agent with Gateway MCP tools and Code Interpreter",
         )
@@ -152,6 +167,8 @@ async def invocations(payload: dict, context: RequestContext):
             message=f"Internal error (correlation id: {correlation_id})",
             code="INTERNAL_ERROR",
         ).model_dump(mode="json", by_alias=True, exclude_none=True)
+    finally:
+        code_tools.cleanup()
 
 
 if __name__ == "__main__":

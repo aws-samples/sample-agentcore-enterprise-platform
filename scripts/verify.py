@@ -118,7 +118,9 @@ def checks_for(
         else:
             agui = ["--agui"] if agent_pattern.startswith("agui-") else []
             if agent_pattern == "orchestrator":
-                invoke_args = ["invoke.py", *agui, HEALTH_PROMPT]
+                # The orchestrator reports a failed run as HTTP 200 with
+                # {"status": "error"}, so transport success is not enough.
+                invoke_args = ["invoke.py", *agui, "--require-success", HEALTH_PROMPT]
             else:
                 invoke_args = [
                     "invoke.py",
