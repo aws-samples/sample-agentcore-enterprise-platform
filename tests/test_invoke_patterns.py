@@ -337,6 +337,49 @@ def test_empty_answer_fails(body):
         check_agent_reply(body)
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        json.dumps(
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "toolUse": {
+                                "toolUseId": "1",
+                                "name": "search",
+                                "input": {"text": "hello"},
+                            }
+                        }
+                    ],
+                }
+            }
+        ),
+        json.dumps(
+            {
+                "toolResult": {
+                    "toolUseId": "1",
+                    "status": "success",
+                    "content": [{"text": "tool output"}],
+                }
+            }
+        ),
+        json.dumps(
+            {
+                "toolUseId": "1",
+                "status": "success",
+                "content": [{"text": "tool output"}],
+            }
+        ),
+        _strands(""),
+    ],
+)
+def test_strands_tool_blocks_are_not_an_answer(body):
+    with pytest.raises(RuntimeVerificationError, match="empty answer"):
+        check_agent_reply(body)
+
+
 def test_completed_a2a_task_with_an_answer_passes():
     check_agent_reply(
         json.dumps(

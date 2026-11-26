@@ -268,6 +268,8 @@ _ANSWER_KEYS = frozenset(
     {"text", "delta", "data", "content", "response", "answer", "result", "output"}
 )
 _NON_ANSWER_ROLES = frozenset({"user", "human", "tool", "system"})
+# Keys holding tool calls, tool inputs or tool output, never the answer.
+_NON_ANSWER_KEYS = frozenset({"toolUse", "toolResult", "tool_calls", "input", "args"})
 _NON_ANSWER_TYPES = frozenset(
     {
         "human",
@@ -276,6 +278,7 @@ _NON_ANSWER_TYPES = frozenset(
         "system",
         "tool_use",
         "tool_result",
+        "tool_call",
         "TOOL_CALL_ARGS",
         "TOOL_CALL_RESULT",
     }
@@ -295,7 +298,12 @@ def _collect_text(value, out: list[str], answer_field: bool = True) -> None:
             isinstance(kind, str) and kind in _NON_ANSWER_TYPES
         ):
             return
+        # A bare Strands toolUse/toolResult body (identified by its id).
+        if value.get("toolUseId"):
+            return
         for key, child in value.items():
+            if key in _NON_ANSWER_KEYS:
+                continue
             _collect_text(child, out, key in _ANSWER_KEYS)
 
 
