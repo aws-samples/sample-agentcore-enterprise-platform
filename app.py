@@ -650,8 +650,6 @@ if not is_fed_platform:
         else "",
         event_expiry_days=memory_event_expiry_days,
         use_long_term_memory=use_long_term_memory,
-        ltm_top_k=ltm_top_k,
-        ltm_relevance_score=ltm_relevance_score,
         enable_resource_policies=enable_resource_policies,
         org_id=org_id,
         retain_data=production_mode,
