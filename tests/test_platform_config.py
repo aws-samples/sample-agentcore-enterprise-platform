@@ -259,6 +259,19 @@ def test_environment_override_to_production_is_revalidated():
         )
 
 
+def test_resolved_mode_replaces_raw_environment_mode():
+    """app.py passes the resolved deployment mode to the overrides, so a raw
+    DEPLOYMENT_MODE=workshop cannot validate a production synth as workshop."""
+    config = PlatformConfig.model_validate(_production_config())
+    raw = {"DEPLOYMENT_MODE": "workshop"}
+    effective = apply_environment_overrides(
+        config, {**raw, "DEPLOYMENT_MODE": "production"}
+    )
+    assert effective.deployment.mode == "production"
+    src = (REPO / "app.py").read_text()
+    assert '"DEPLOYMENT_MODE": deployment_mode' in src
+
+
 def test_runtime_generation_is_durable_and_bounded():
     config = PlatformConfig.model_validate(
         {"agents": {"orchestrator_runtime_generation": 2}}

@@ -72,7 +72,11 @@ if os.path.exists(_config_path):
     deployment_mode = resolve_deployment_mode(
         _manifest_mode, _mode_context, _mode_env, _allow_mode_override
     )
-    platform_config = apply_environment_overrides(_loaded_config, dict(os.environ))
+    # Validate the overrides under the RESOLVED mode, not the raw
+    # DEPLOYMENT_MODE variable, so the config and the stacks share one mode.
+    platform_config = apply_environment_overrides(
+        _loaded_config, {**dict(os.environ), "DEPLOYMENT_MODE": deployment_mode}
+    )
     _yaml_env = to_env(platform_config)
 else:
     deployment_mode = resolve_deployment_mode(None, _mode_context, _mode_env)
