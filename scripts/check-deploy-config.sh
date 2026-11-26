@@ -122,6 +122,14 @@ echo "$*" >> "$CDK_ARGS"
 synth=0; out=""; prev=""
 for a in "$@"; do
     [ "$a" = boom ] && exit 1
+    if [ "$a" = slow ]; then
+        # Models npx running CDK as a child, both ignoring SIGTERM.
+        trap '' TERM
+        sleep 300 &
+        echo "$!" > "$CDK_CHILD"
+        wait
+        exit 0
+    fi
     [ "$a" = synth ] && synth=1
     [ "$prev" = --output ] && out="$a"
     prev="$a"
@@ -134,10 +142,12 @@ STUB_CDK
 chmod +x "$STUB2/npx"
 export CDK_ARGS="$TMP/cdk.args"
 export CDK_MANIFEST="$TMP/manifest.json"
+export CDK_CHILD="$TMP/cdk.child"
 export DESTROY_POLL_SECONDS=1
 log_step() { :; }
 CONTEXT_ARGS=()
-eval "$(sed -n '/^destroy_by_level()/,/^}/p; /^destroy_stacks()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
+eval "$(sed -n '/^process_tree()/,/^}/p; /^stop_destroy_jobs()/,/^}/p;
+                /^destroy_by_level()/,/^}/p; /^destroy_stacks()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
 
 PATH="$STUB2:$PATH" destroy_stacks net-stack >/dev/null 2>&1 || fail "targeted destroy errored"
 grep -q -- '--exclusively' "$TMP/cdk.args" \
@@ -179,6 +189,26 @@ PATH="$STUB2:$PATH" destroy_stacks >/dev/null 2>&1 && fail "a failed level repor
 ! grep -q -- 'destroy check-base ' "$TMP/cdk.args" \
     || fail "a failed level did not stop the next one: $(cat "$TMP/cdk.args")"
 echo "PASS: a failed stack stops the next levels and exits non-zero"
+
+# A level that outlives DESTROY_LEVEL_TIMEOUT is stopped as a whole process
+# tree (the CDK child too, even when SIGTERM is ignored) within a bounded time.
+printf '%s\n' '{"artifacts": {"slow": {"type": "aws:cloudformation:stack"}}}' > "$CDK_MANIFEST"
+rm -f "$CDK_CHILD"
+DESTROY_LEVEL_TIMEOUT=2 DESTROY_KILL_GRACE_SECONDS=1 PATH="$STUB2:$PATH" \
+    destroy_stacks >/dev/null 2>&1 & slow_destroy=$!
+( sleep 30; kill -9 "$slow_destroy" 2>/dev/null ) & watchdog=$!
+wait "$slow_destroy" && slow_rc=0 || slow_rc=$?
+kill "$watchdog" 2>/dev/null || true
+[ "$slow_rc" -ne 137 ] || fail "a timed-out destroy level did not stop within its bound"
+[ "$slow_rc" -ne 0 ] || fail "a timed-out destroy level reported success"
+slow_child="$(cat "$CDK_CHILD" 2>/dev/null || true)"
+[ -n "$slow_child" ] || fail "the slow CDK stub never started its child"
+sleep 1
+if kill -0 "$slow_child" 2>/dev/null; then
+    kill -9 "$slow_child" 2>/dev/null || true
+    fail "a timed-out destroy left its CDK child process running"
+fi
+echo "PASS: a timed-out level stops the whole CDK process tree, bounded"
 
 PATH="$STUB2:$PATH" destroy_stacks boom >/dev/null 2>&1 && fail "refused destroy reported success"
 echo "PASS: a refused destroy is not swallowed"
@@ -470,11 +500,13 @@ aws() {
         "logs describe-log-groups")
             [[ "$*" == *codebuild* ]] && echo "/aws/codebuild/check-prefix-build-orchestrator"
             [[ "$*" == *lambda* ]] && echo "/aws/lambda/check-prefix-build-trigger-orchestrator"
-            # The decoy belongs to another deployment (check_prefix2) and must
-            # never be swept even if an API returns it.
+            # The decoys belong to other deployments (check-prefix-dev shares
+            # the 'check_prefix_' prefix; check_prefix2 does not) and must
+            # never be swept even if an API returns them.
             [[ "$*" == *bedrock-agentcore* ]] && printf '%s\n' \
-                "/aws/bedrock-agentcore/runtimes/check_prefix_orchestrator-AbC123" \
-                "/aws/bedrock-agentcore/runtimes/check_prefix2_orchestrator-XyZ789"
+                "/aws/bedrock-agentcore/runtimes/check_prefix_orchestrator-AbC123-DEFAULT" \
+                "/aws/bedrock-agentcore/runtimes/check_prefix_dev_orchestrator-XyZ789-DEFAULT" \
+                "/aws/bedrock-agentcore/runtimes/check_prefix2_orchestrator-XyZ789-DEFAULT"
             ;;
         "secretsmanager describe-secret")
             [[ "$*" == *check-prefix-idp-client-secret* ]] ;;
@@ -483,6 +515,10 @@ aws() {
 }
 # shellcheck disable=SC2034
 AWS_REGION="us-east-1"
+# Recorded before the destroy by record_runtime_ids; the second id is outside
+# this deployment's prefix and must be ignored.
+# shellcheck disable=SC2034  # read by the eval'd sweep_leftovers
+RUNTIME_LOG_IDS=(check_prefix_orchestrator-AbC123 other_dev_agent-Q1)
 
 : > "$TMP/aws.args"
 YES=1 NON_INTERACTIVE=0 sweep_leftovers >/dev/null 2>&1 || fail "sweep failed with --yes"
@@ -494,12 +530,24 @@ grep -q "delete-log-group --log-group-name /aws/codebuild/check-prefix-build-orc
     || fail "CodeBuild log group not deleted with --yes: $(cat "$TMP/aws.args")"
 grep -q "delete-log-group --log-group-name /aws/lambda/check-prefix-build-trigger-orchestrator" "$TMP/aws.args" \
     || fail "Lambda log group not deleted with --yes: $(cat "$TMP/aws.args")"
-grep -q "log-group-name-prefix /aws/bedrock-agentcore/runtimes/check_prefix_ " "$TMP/aws.args" \
-    || fail "runtime log groups not queried with the exact prefix: $(cat "$TMP/aws.args")"
-grep -q "delete-log-group --log-group-name /aws/bedrock-agentcore/runtimes/check_prefix_orchestrator-AbC123" "$TMP/aws.args" \
+grep -q "log-group-name-prefix /aws/bedrock-agentcore/runtimes/check_prefix_orchestrator-AbC123- " "$TMP/aws.args" \
+    || fail "runtime log groups not queried by the recorded runtime id: $(cat "$TMP/aws.args")"
+grep -q "runtimes/other_dev_agent" "$TMP/aws.args" \
+    && fail "a runtime id outside this deployment's prefix was queried: $(cat "$TMP/aws.args")"
+grep -q "delete-log-group --log-group-name /aws/bedrock-agentcore/runtimes/check_prefix_orchestrator-AbC123-DEFAULT" "$TMP/aws.args" \
     || fail "runtime log group not deleted with --yes: $(cat "$TMP/aws.args")"
+grep -q "delete-log-group --log-group-name /aws/bedrock-agentcore/runtimes/check_prefix_dev_" "$TMP/aws.args" \
+    && fail "a same-prefix deployment's runtime log group was deleted: $(cat "$TMP/aws.args")"
 grep -q "delete-log-group --log-group-name /aws/bedrock-agentcore/runtimes/check_prefix2_" "$TMP/aws.args" \
     && fail "another deployment's runtime log group was deleted: $(cat "$TMP/aws.args")"
+
+# No recorded runtime id: no runtime log group is offered at all.
+: > "$TMP/aws.args"
+# shellcheck disable=SC2034  # read by the eval'd sweep_leftovers
+RUNTIME_LOG_IDS=()
+YES=1 NON_INTERACTIVE=0 sweep_leftovers >/dev/null 2>&1 || fail "sweep failed without runtime ids"
+grep -q "delete-log-group --log-group-name /aws/bedrock-agentcore/" "$TMP/aws.args" \
+    && fail "runtime log groups deleted without a recorded runtime id: $(cat "$TMP/aws.args")"
 
 : > "$TMP/aws.args"
 YES=0 NON_INTERACTIVE=1 sweep_leftovers >/dev/null 2>&1 || fail "sweep failed non-interactive"

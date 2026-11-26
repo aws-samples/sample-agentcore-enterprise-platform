@@ -106,6 +106,27 @@ def test_runtime_log_match_is_exact():
     )
     other = destroy_plan.runtime_log_prefix("demo", "dev2")
     assert not destroy_plan.matches_runtime_log_group(root + "demo_dev_x-1", other)
+
+
+def test_runtime_log_group_needs_a_recorded_runtime_id():
+    prefix = destroy_plan.runtime_log_prefix("demo", "dev")
+    root = "/aws/bedrock-agentcore/runtimes/"
+    ids = ["arn:aws:bedrock-agentcore:us-east-1:1:runtime/demo_dev_orchestrator-AbC"]
+    is_ours = destroy_plan.is_deployment_runtime_log_group
+    assert is_ours(root + "demo_dev_orchestrator-AbC-DEFAULT", prefix, ids)
+    # Project demo-dev / env dev shares the 'demo_dev_' prefix but is not ours.
+    assert not is_ours(root + "demo_dev_dev_orchestrator-XyZ-DEFAULT", prefix, ids)
+    assert not is_ours(root + "demo_dev_orchestrator-AbCD-DEFAULT", prefix, ids)
+    assert not is_ours(root + "demo_dev_orchestrator-AbC-DEFAULT", prefix, [])
+    # A recorded id outside this deployment's prefix is never trusted.
+    assert not is_ours(root + "demo2_dev_a-1-DEFAULT", prefix, ["demo2_dev_a-1"])
+
+
+def test_runtime_log_match_other_environment():
+    prefix = destroy_plan.runtime_log_prefix("demo", "dev")
+    other = destroy_plan.runtime_log_prefix("demo", "dev2")
+    root = "/aws/bedrock-agentcore/runtimes/"
+    assert not destroy_plan.matches_runtime_log_group(root + "demo_dev_x-1", other)
     assert not destroy_plan.matches_runtime_log_group(
         "/aws/lambda/demo_dev_agent", prefix
     )

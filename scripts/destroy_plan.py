@@ -61,7 +61,9 @@ def runtime_log_prefix(project: str, environment: str) -> str:
     """Log-group prefix of this deployment's AgentCore runtimes.
 
     Runtime names use '_' where the stack prefix uses '-'; the trailing '_'
-    makes the match exact, so 'demo' never matches 'demo2'.
+    keeps 'demo' from matching 'demo2'. The prefix alone is still ambiguous
+    ('demo_dev_' also prefixes project 'demo-dev', env 'dev'), so deletion
+    uses is_deployment_runtime_log_group with the recorded runtime ids.
     """
     return RUNTIME_LOG_ROOT + f"{project}-{environment}".replace("-", "_") + "_"
 
@@ -69,6 +71,22 @@ def runtime_log_prefix(project: str, environment: str) -> str:
 def matches_runtime_log_group(name: str, prefix: str) -> bool:
     """True when the log group belongs to the deployment with this prefix."""
     return name.startswith(prefix)
+
+
+def is_deployment_runtime_log_group(
+    name: str, prefix: str, runtime_ids: list[str] | set[str]
+) -> bool:
+    """True only for log groups of runtimes recorded from this deployment.
+
+    Each runtime id (or ARN) must itself sit under ``prefix``, and the log
+    group must be ``<root><runtime-id>-...``. A runtime of another deployment
+    whose name merely shares the prefix never matches.
+    """
+    for runtime_id in runtime_ids:
+        base = RUNTIME_LOG_ROOT + runtime_id.rsplit("/", 1)[-1]
+        if base.startswith(prefix) and name.startswith(base + "-"):
+            return True
+    return False
 
 
 def main(argv: list[str] | None = None) -> int:
