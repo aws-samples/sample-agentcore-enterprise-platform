@@ -10,7 +10,15 @@ invoke, no model call:
   2. The same call WITH a guardrail identifier must come back allowed: the
      deny steps aside and the BedrockModels allow applies.
 
-Exit code 0 = the role enforces what security.require_guardrails promises.
+Then a benign-prompt check against the deployed baseline guardrail:
+
+  3. The orchestrator guardrail must have a published (non-DRAFT) version.
+     ApplyGuardrail on that version with plain greetings, such as "Health
+     check: reply with one word.", must not intervene. An over-strict
+     PROMPT_ATTACK filter would otherwise make every agent unusable.
+
+Exit code 0 = the role enforces what security.require_guardrails promises,
+and the guardrail lets ordinary prompts through.
 Run it after the runtime stacks are deployed with the flag on.
 
 Usage:
@@ -36,6 +44,13 @@ from infra_utils.platform_config import (
 
 REGION = resolve_region()
 REPO = Path(__file__).resolve().parents[1]
+
+# Plain prompts that must never be blocked. The second one was blocked live
+# while PROMPT_ATTACK ran at HIGH input strength.
+BENIGN_PROMPTS = (
+    "Hello! How are you today?",
+    "Health check: reply with one word.",
+)
 
 
 def fail(message: str) -> None:
@@ -86,6 +101,54 @@ def simulate(role_arn: str, context_entries: list[dict]) -> str:
     return result["EvaluationResults"][0]["EvalDecision"]
 
 
+def _list_guardrails(client, **kwargs):
+    token = None
+    while True:
+        extra = {"nextToken": token} if token else {}
+        page = client.list_guardrails(**kwargs, **extra)
+        yield from page.get("guardrails", [])
+        token = page.get("nextToken")
+        if not token:
+            return
+
+
+def published_guardrail(name: str) -> tuple[str, str]:
+    """(id, highest published version) of the guardrail called ``name``."""
+    client = boto3.client("bedrock", region_name=REGION)
+    match = next((g for g in _list_guardrails(client) if g["name"] == name), None)
+    if match is None:
+        fail(f"guardrail {name} not found — deploy with require_guardrails=true")
+    versions = [
+        g["version"]
+        for g in _list_guardrails(client, guardrailIdentifier=match["id"])
+        if g.get("version", "DRAFT") != "DRAFT"
+    ]
+    if not versions:
+        fail(
+            f"guardrail {name} has no published version — the runtime would "
+            "run DRAFT. Redeploy the runtime stack to create the version."
+        )
+    return match["id"], max(versions, key=int)
+
+
+def check_benign_prompts(guardrail_id: str, version: str) -> None:
+    """Fail if the guardrail intervenes on any plain, benign prompt."""
+    runtime = boto3.client("bedrock-runtime", region_name=REGION)
+    for prompt in BENIGN_PROMPTS:
+        result = runtime.apply_guardrail(
+            guardrailIdentifier=guardrail_id,
+            guardrailVersion=version,
+            source="INPUT",
+            content=[{"text": {"text": prompt}}],
+        )
+        if result.get("action") == "GUARDRAIL_INTERVENED":
+            fail(
+                f"the guardrail blocked the benign prompt {prompt!r} — the "
+                "PROMPT_ATTACK input strength is too high for real traffic"
+            )
+        print(f"PASS: benign prompt not blocked: {prompt!r}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Verify the runtime role denies inference without a guardrail"
@@ -131,6 +194,11 @@ def main() -> None:
             "every agent instead of governing them."
         )
     print("PASS: inference with a guardrail is allowed")
+
+    guardrail_name = f"{project}-{environment}-orchestrator-guardrail"
+    guardrail_id, version = published_guardrail(guardrail_name)
+    print(f"Checking guardrail {guardrail_name} version {version}")
+    check_benign_prompts(guardrail_id, version)
     print("OK: the runtime role enforces guardrailed-only inference")
 
 

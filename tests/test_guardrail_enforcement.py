@@ -9,6 +9,8 @@ job has no aws-cdk-lib.
 """
 
 import ast
+import json
+import os
 import sys
 from pathlib import Path
 
@@ -23,6 +25,8 @@ import yaml
 from infra_utils.platform_config import PlatformConfig, to_env
 
 RUNTIME_STACK = REPO / "stacks" / "runtime_stack.py"
+GATEWAY_STACK = REPO / "stacks" / "gateway_stack.py"
+GUARDRAIL_ARTIFACT = REPO / "control-library" / "guardrails" / "egress-default.json"
 AGENT_CODE = REPO / "agent-code"
 
 # Every pattern that can attach a Bedrock Guardrail carries the env-gated
@@ -125,6 +129,74 @@ def test_guardrail_capable_agents_read_the_injected_id(agent):
     )
 
 
+@pytest.mark.parametrize("agent", GUARDRAIL_CAPABLE_AGENTS)
+def test_agents_never_default_to_draft(agent):
+    source = (AGENT_CODE / agent / "agent.py").read_text()
+    assert '"GUARDRAIL_VERSION", "DRAFT"' not in source
+    assert "_guardrail_version()" in source
+
+
+def _guardrail_version_fn(agent):
+    path = AGENT_CODE / agent / "agent.py"
+    tree = ast.parse(path.read_text())
+    fn = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_guardrail_version"
+    )
+    namespace = {"os": os}
+    module = ast.Module(body=[fn], type_ignores=[])
+    exec(compile(module, str(path), "exec"), namespace)  # noqa: S102
+    return namespace["_guardrail_version"]
+
+
+@pytest.mark.parametrize("agent", GUARDRAIL_CAPABLE_AGENTS)
+def test_missing_version_fails_fast(agent, monkeypatch):
+    monkeypatch.delenv("GUARDRAIL_VERSION", raising=False)
+    monkeypatch.setenv("GUARDRAIL_ALLOW_DRAFT", "true")
+    with pytest.raises(RuntimeError):
+        _guardrail_version_fn(agent)()
+
+
+@pytest.mark.parametrize("agent", GUARDRAIL_CAPABLE_AGENTS)
+def test_draft_needs_explicit_workshop_opt_in(agent, monkeypatch):
+    fn = _guardrail_version_fn(agent)
+    monkeypatch.setenv("GUARDRAIL_VERSION", "DRAFT")
+    monkeypatch.delenv("GUARDRAIL_ALLOW_DRAFT", raising=False)
+    with pytest.raises(RuntimeError):
+        fn()
+    monkeypatch.setenv("GUARDRAIL_ALLOW_DRAFT", "true")
+    assert fn() == "DRAFT"
+
+
+@pytest.mark.parametrize("agent", GUARDRAIL_CAPABLE_AGENTS)
+def test_published_version_is_used(agent, monkeypatch):
+    monkeypatch.setenv("GUARDRAIL_VERSION", "3")
+    monkeypatch.delenv("GUARDRAIL_ALLOW_DRAFT", raising=False)
+    assert _guardrail_version_fn(agent)() == "3"
+
+
+# ── published version + filter strength drift ──
+
+
+@pytest.mark.parametrize("stack", [RUNTIME_STACK, GATEWAY_STACK])
+def test_stacks_pass_the_published_version(stack):
+    source = stack.read_text()
+    assert "CfnGuardrailVersion" in source
+    assert "guardrail_version.attr_version" in source
+    assert "guardrail.attr_version" not in source, (
+        "attr_version on the guardrail is DRAFT"
+    )
+    assert "sha256" in source, "the version must track a hash of the definition"
+
+
+def test_prompt_attack_is_not_high():
+    cfg = json.loads(GUARDRAIL_ARTIFACT.read_text())
+    filters = cfg["ContentPolicyConfig"]["FiltersConfig"]
+    prompt_attack = next(f for f in filters if f["Type"] == "PROMPT_ATTACK")
+    assert prompt_attack["InputStrength"] == "MEDIUM"
+
+
 @pytest.mark.parametrize("agent", GUARDRAIL_INCAPABLE_AGENTS)
 def test_claude_sdk_agents_stay_untouched(agent):
     source = (AGENT_CODE / agent / "agent.py").read_text()
@@ -177,3 +249,49 @@ def test_sim_arn_falls_back_to_generic_without_a_list(monkeypatch, tmp_path):
     monkeypatch.setenv("PLATFORM_CONFIG", str(tmp_path / "absent.yaml"))
     mod = _load_check_module()
     assert mod.sim_model_arn().endswith("::foundation-model/anthropic.claude")
+
+
+# ── benign-prompt check ──
+
+
+class _FakeBedrock:
+    def __init__(self, action="NONE"):
+        self.action = action
+        self.calls = []
+
+    def apply_guardrail(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"action": self.action}
+
+    def list_guardrails(self, **kwargs):
+        if "guardrailIdentifier" in kwargs:
+            return {
+                "guardrails": [
+                    {"id": "gr-1", "version": v} for v in ("DRAFT", "2", "10")
+                ]
+            }
+        return {"guardrails": [{"id": "gr-1", "name": "p-dev-orchestrator-guardrail"}]}
+
+
+def test_benign_check_fails_when_a_greeting_is_blocked(monkeypatch):
+    mod = _load_check_module()
+    fake = _FakeBedrock("GUARDRAIL_INTERVENED")
+    monkeypatch.setattr(mod.boto3, "client", lambda *a, **k: fake)
+    with pytest.raises(SystemExit):
+        mod.check_benign_prompts("gr-1", "1")
+
+
+def test_benign_check_passes_and_uses_the_pinned_version(monkeypatch):
+    mod = _load_check_module()
+    fake = _FakeBedrock("NONE")
+    monkeypatch.setattr(mod.boto3, "client", lambda *a, **k: fake)
+    mod.check_benign_prompts("gr-1", "4")
+    assert len(fake.calls) == len(mod.BENIGN_PROMPTS)
+    assert all(c["guardrailVersion"] == "4" for c in fake.calls)
+    assert all(c["source"] == "INPUT" for c in fake.calls)
+
+
+def test_published_guardrail_picks_highest_non_draft(monkeypatch):
+    mod = _load_check_module()
+    monkeypatch.setattr(mod.boto3, "client", lambda *a, **k: _FakeBedrock())
+    assert mod.published_guardrail("p-dev-orchestrator-guardrail") == ("gr-1", "10")

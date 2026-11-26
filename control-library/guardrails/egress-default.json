@@ -5,7 +5,7 @@
     "FiltersConfig": [
       {
         "Type": "PROMPT_ATTACK",
-        "InputStrength": "HIGH",
+        "InputStrength": "MEDIUM",
         "OutputStrength": "NONE"
       }
     ]

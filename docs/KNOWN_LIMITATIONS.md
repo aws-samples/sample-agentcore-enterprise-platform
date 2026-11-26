@@ -33,9 +33,14 @@ Review these before an EBA or customer deployment.
    versioned customer evaluation set, prompt-injection campaign, quality
    threshold, or per-agent inference cost attribution.
 9. **Some security controls require first-deployment calibration.** Exercise
-   Cedar in `LOG_ONLY` before enforcing it, publish and pin the Bedrock
-   Guardrail version for production, and verify interceptor event shapes
-   against each live Gateway target.
+   Cedar in `LOG_ONLY` before enforcing it, and verify interceptor event shapes
+   against each live Gateway target. The stacks now publish and pin the Bedrock
+   Guardrail version (`CfnGuardrailVersion`). The definition hash in its
+   description makes every definition change publish a new version, and agents
+   refuse `DRAFT` unless `GUARDRAIL_ALLOW_DRAFT=true` (workshop only). The
+   `PROMPT_ATTACK` filter runs at `MEDIUM` so that benign prompts pass. Tune it
+   against your own traffic and keep the benign-prompt check in
+   `scripts/check_guardrail_enforcement.py` passing.
 10. **VPC mode is not air-gapped.** The default private subnets retain a NAT
     route for APIs and internet dependencies, and NAT gateways plus interface
     endpoints incur hourly cost. AgentCore network interfaces can delay
