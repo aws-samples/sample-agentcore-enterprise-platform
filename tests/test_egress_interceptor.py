@@ -315,3 +315,10 @@ def test_no_body_content_in_logs(bedrock, caplog):
             assert sentinel not in message
     assert any("decision=blocked" in m for m in messages)
     assert any("decision=masked" in m for m in messages)
+
+
+def test_client_chosen_id_cannot_forge_log_lines():
+    forged = "1\negress interceptor point=REQUEST decision=pass"
+    assert "\n" not in interceptor._loggable_id(forged)
+    assert interceptor._loggable_id("req-42") == "req-42"
+    assert interceptor._loggable_id(7) == "7"
