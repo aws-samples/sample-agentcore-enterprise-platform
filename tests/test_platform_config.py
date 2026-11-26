@@ -321,16 +321,18 @@ def test_preset_yaml_matches_schema_dump_roundtrip():
         assert PlatformConfig.model_validate(raw)
 
 
-def test_to_env_maps_onto_the_names_deploy_already_uses():
+def test_to_env_maps_onto_the_names_deploy_already_uses(monkeypatch):
     from infra_utils.platform_config import to_env
 
+    monkeypatch.setenv("PLATFORM_ALLOW_PLACEHOLDERS", "1")
     env = to_env(load_platform_config(REPO / "presets" / "security-focused.yaml"))
     assert env["ENABLE_NETWORKING"] == "true"
     assert env["ENABLE_CEDAR"] == "true"
     assert env["CEDAR_MODE"] == "LOG_ONLY"
     assert env["ENABLE_SECURITY"] == "true"  # schema name: cloudtrail_alerting
     assert env["AGENT_PATTERN"] == "orchestrator"
-    assert "ORG_ID" not in env  # empty in the preset — deploy.sh prompts for it
+    # The preset ships an obvious placeholder a real deploy refuses.
+    assert env["ORG_ID"] == "o-xxxxxxxxxx"
     # web_search auto in us-east-1 resolves to on
     assert env["ENABLE_WEB_SEARCH"] == "true"
 

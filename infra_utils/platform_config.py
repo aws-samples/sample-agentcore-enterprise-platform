@@ -132,8 +132,11 @@ _REGION_RE = r"^[a-z]{2}(-[a-z]+)+-\d$"
 # placeholders in place, so it exports PLATFORM_ALLOW_PLACEHOLDERS=1: the same
 # messages then surface as PlatformConfig.warnings instead of errors. Nothing
 # in deploy.sh sets it — a real deploy always fails closed.
+# <...> tokens anywhere (https://<org>.okta.com/...), the o-xxxxxxxxxx org
+# shape and YOUR_* tokens are placeholders too.
 _SENTINEL_RE = re.compile(
-    r"replace|change.?me|\btodo\b|^<.*>$|example\.com", re.IGNORECASE
+    r"replace|change.?me|\btodo\b|<[^<>]+>|example\.com|\bo-x{10,}\b|\byour_",
+    re.IGNORECASE,
 )
 _UUID_RE = re.compile(r"^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$", re.IGNORECASE)
 # Secrets Manager NAMES: alphanumerics and /_+=.@- only. A pasted secret VALUE
@@ -349,7 +352,7 @@ SHORTCUTS: dict[str, dict] = {
                 "egress_filter": True,
                 "require_guardrails": True,
                 "cedar": {"enabled": True, "mode": "LOG_ONLY"},
-                "org_id": "",
+                "org_id": "o-xxxxxxxxxx",
             },
             "observability": {"alarms": False},
         },
@@ -654,6 +657,19 @@ def deployment_placeholders(deployment: DeploymentConfig) -> list[str]:
                 f"{field} is a placeholder ({value!r}): copy the value from the "
                 "platform account's `deploy.sh export` output"
             )
+    s = fed.m2m_client_secret_name
+    if s and (
+        _SENTINEL_RE.search(s)
+        or not _SECRET_NAME_RE.match(s)
+        or _JWT_RE.match(s)
+        or _BLOB_RE.match(s)
+    ):
+        # The value is deliberately not echoed: it may BE the secret.
+        out.append(
+            "deployment.federation.m2m_client_secret_name is a placeholder or "
+            "looks like a secret VALUE (not shown): it must be the Secrets "
+            "Manager NAME in the workload account, e.g. agentcore/platform-m2m"
+        )
     return out
 
 
@@ -1017,10 +1033,40 @@ class SecurityConfig(BaseModel):
                 "security.traceability needs security.cloudtrail_alerting: the "
                 "alert rule only fires on CloudTrail management events"
             )
+        # The Memory resource policy cannot render without an org id. Routed
+        # through the placeholder gate so destroy (which allows placeholders)
+        # never needs it; a real deploy fails closed here.
+        if self.resource_policies and not self.org_id:
+            _refuse_placeholders(
+                [
+                    (
+                        "security.resource_policies requires security.org_id: set "
+                        "it to your AWS Organizations id (o-...). Find it with: aws "
+                        "organizations describe-organization --query Organization.Id"
+                    )
+                ]
+            )
         return self
 
 
 def security_org_placeholders(org_id: str) -> list[str]:
+    """Sentinel org ids, including the o-xxxxxxxxxx the security-focused
+    preset ships so the user has to set it."""
+    out = list(_security_org_base_placeholders(org_id))
+    if (
+        org_id
+        and _SENTINEL_RE.search(org_id)
+        and not any("security.org_id" in m for m in out)
+    ):
+        out.append(
+            f"security.org_id is a placeholder ({org_id!r}): set it to your AWS "
+            "Organizations id. Find it with: aws organizations "
+            "describe-organization --query Organization.Id"
+        )
+    return out
+
+
+def _security_org_base_placeholders(org_id: str) -> list[str]:
     if org_id and re.search(r"replace|example|changeme", org_id, re.IGNORECASE):
         return [
             (

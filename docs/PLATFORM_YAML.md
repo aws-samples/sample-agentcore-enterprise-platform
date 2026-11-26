@@ -556,9 +556,10 @@ security:
     enabled: true
     mode: LOG_ONLY
   traceability: true
-  # deploy.sh prompts for the org id, or export ORG_ID — find it with:
+  # Placeholder: set this to your AWS Organizations id before deploying (a real
+  # deploy refuses o-xxxxxxxxxx; destroy does not need it). Find it with:
   #   aws organizations describe-organization --query Organization.Id
-  org_id: ""
+  org_id: o-xxxxxxxxxx
 
 observability:
   transaction_search: true

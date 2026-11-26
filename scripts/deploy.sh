@@ -246,7 +246,12 @@ fi
 
 # Placeholders are useful discovery warnings in a read-only migration plan,
 # but no build/deploy/design path may inherit the parity gate's escape hatch.
+DEPLOY_ACTION="${1:-}"
 if [ "${1:-}" = "migrate" ] && [ "${2:-}" = "plan" ]; then
+    export PLATFORM_ALLOW_PLACEHOLDERS=1
+elif [ "${1:-}" = "destroy" ]; then
+    # Tearing down must not depend on placeholders being replaced or the org
+    # id being known; nothing is created.
     export PLATFORM_ALLOW_PLACEHOLDERS=1
 else
     unset PLATFORM_ALLOW_PLACEHOLDERS
@@ -314,6 +319,12 @@ fi
 
 apply_platform_config
 load_config
+
+# destroy still synthesizes the app; the memory stack cannot render resource
+# policies without an org id, and the value is irrelevant to a teardown.
+if [ "$DEPLOY_ACTION" = "destroy" ] && [ "${ENABLE_RESOURCE_POLICIES:-}" = "true" ] && [ -z "${ORG_ID:-}" ]; then
+    export ORG_ID="o-xxxxxxxxxx"
+fi
 
 # ── Configuration ──
 PROJECT_NAME="${PROJECT_NAME:-agentcore-workshop}"
@@ -542,6 +553,10 @@ check_credentials() {
 # ORG_ID Validation (fail fast before any CDK command)
 # ═══════════════════════════════════════════════════════════════
 check_org_id() {
+    # destroy never needs the org id.
+    if [ "${DEPLOY_ACTION:-}" = "destroy" ]; then
+        return 0
+    fi
     # enable_resource_policies=true makes the memory stack raise a ValueError
     # mid-deploy when org_id is empty — catch that here instead.
     if [ "${ENABLE_RESOURCE_POLICIES:-}" = "true" ] && [ -z "${ORG_ID:-}" ]; then
@@ -555,6 +570,10 @@ check_org_id() {
             log_error "The memory stack resource policy uses aws:PrincipalOrgID and cannot render without it."
             log_error "Fix: export ORG_ID=o-xxxx and re-run."
             log_error "(Find it with: aws organizations describe-organization --query Organization.Id --output text)"
+            exit 1
+        fi
+        if ! [[ "$ORG_ID" =~ ^o-[a-z0-9]{10,32}$ ]]; then
+            log_error "security.org_id '$ORG_ID' is not an AWS Organizations id (o- followed by 10-32 lowercase letters/digits)."
             exit 1
         fi
         export ORG_ID
