@@ -1250,7 +1250,7 @@ migrate_legacy_m2m_secret_export() {
         auth_stack_count=$(aws cloudformation list-stacks \
             --region "$AWS_REGION" \
             --query "length(StackSummaries[?StackName=='${PREFIX}-auth' && StackStatus!='DELETE_COMPLETE'])" \
-            --output text) || {
+            --output json) || {
             log_error "Could not determine whether the auth stack exists."
             exit 1
         }
@@ -1338,7 +1338,7 @@ rotate_legacy_m2m_client() {
         auth_stack_count=$(aws cloudformation list-stacks \
             --region "$AWS_REGION" \
             --query "length(StackSummaries[?StackName=='${PREFIX}-auth' && StackStatus!='DELETE_COMPLETE'])" \
-            --output text) || {
+            --output json) || {
             log_error "Could not determine whether the auth stack exists."
             exit 1
         }
@@ -1558,7 +1558,7 @@ prepare_orchestrator_observability_handoff() {
         stack_count=$(aws cloudformation list-stacks \
             --region "$AWS_REGION" \
             --query "length(StackSummaries[?StackName=='${runtime_stack}' && StackStatus!='DELETE_COMPLETE'])" \
-            --output text) || {
+            --output json) || {
             log_error "Could not determine whether $runtime_stack exists."
             exit 1
         }

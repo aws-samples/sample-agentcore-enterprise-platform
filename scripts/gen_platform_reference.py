@@ -60,8 +60,8 @@ DESCRIPTIONS: dict[str, str] = {
     "identity.client_secret_name": "Secrets Manager NAME holding the IdP client secret. Required for any non-Cognito IdP; the value never goes in this file.",
     # agents
     "agents.pattern": "Which agent container the runtime stack builds (docs/ARCHITECTURE.md). Ignored for the image once `migration:` is set, but still exported so verify and invoke behave.",
-    "agents.model_id": "Bedrock model or cross-region inference profile injected as `MODEL_ID` into every agent. Empty = each pattern's baked-in default.",
-    "agents.allowed_models": "Model allow-list. When set, the runtime roles' Bedrock IAM is scoped to exactly these and `model_id` must be one of them (otherwise the containers' defaults would bypass the list). Empty = unrestricted, today's behaviour.",
+    "agents.model_id": "Bedrock model or cross-region inference profile (`us.`/`eu.`/`apac.` geo or `global.`) injected as `MODEL_ID` into every agent. Empty = each pattern's baked-in default.",
+    "agents.allowed_models": "Model allow-list. When set, the runtime roles' Bedrock IAM is scoped to exactly these and `model_id` must be one of them (otherwise the containers' defaults would bypass the list). A geo profile (`us.`/`eu.`/`apac.`) grants the profile plus its foundation model in every Region; a `global.` profile also grants the Region-less global foundation-model ARN (`arn:aws:bedrock:::foundation-model/…`) Bedrock authorizes global routing against. Empty = unrestricted, today's behaviour.",
     "agents.a2a": "Deploy the `code-agent` and `research-agent` sub-agent runtimes next to the orchestrator (A2A protocol).",
     "agents.orchestrator_runtime_generation": "Controlled replacement generation for the orchestrator AgentCore Runtime. Increase only when an existing runtime is unreadable or another immutable runtime property requires replacement; healthy A2A runtimes are unaffected.",
     "agents.memory.long_term": "Add the semantic long-term strategy to the AgentCore Memory store (fact extraction across sessions).",
@@ -70,7 +70,7 @@ DESCRIPTIONS: dict[str, str] = {
     "agents.memory.relevance_score": "Long-term retrieval: minimum relevance for a record to be returned.",
     # gateway
     "gateway.web_search": "Built-in web-search connector on the gateway. `auto` turns it on only in regions where the connector exists.",
-    "gateway.tools": "Lambda tool names the gateway exposes. Schema-validated today; the deployed list still comes from `tool_configs` in `app.py` (docs/modules/gateway.md).",
+    "gateway.tools": "Gateway targets the gateway stack deploys; omitted = the `sample-tool` Lambda default. A bare name is a Lambda tool: `sample-tool`, or a handler directory under `tools/` (dashes become underscores) with its `tool_spec.json`. A block has a `name` and a `type`: `lambda` (optional `source_dir`, `tool_spec`, `env_vars`) or `openapi` (`schema_path` to a local JSON/YAML spec inlined at synth, plus `credential_provider` with `type` `api_key` or `oauth`, the AgentCore Identity provider `arn` and, for OAuth only, `scopes`). See docs/GATEWAY_TARGETS.md.",
     # security
     "security.networking": "VPC mode: runtimes in private subnets behind a NAT gateway and VPC endpoints. Adds the `networking` stack; required by migration private dependencies.",
     "security.cloudtrail_alerting": "The `security` stack: a CloudTrail trail plus alerting. Needed for `traceability` to fire at all.",
@@ -302,7 +302,9 @@ def _unwrap_optional(t: object) -> tuple[object, bool]:
 def _type_str(t: object, field) -> str:
     t, optional = _unwrap_optional(t)
     origin = typing.get_origin(t)
-    if origin is typing.Literal:
+    if origin in (typing.Union, types.UnionType):
+        out = " or ".join(_type_str(a, None) for a in typing.get_args(t))
+    elif origin is typing.Literal:
         out = "one of: " + ", ".join(f"`{a}`" for a in typing.get_args(t))
     elif origin is list:
         out = f"list of {_type_str(typing.get_args(t)[0], None)}"

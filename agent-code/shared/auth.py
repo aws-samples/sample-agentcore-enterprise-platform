@@ -14,6 +14,9 @@ from bedrock_agentcore.identity.auth import requires_access_token
 from bedrock_agentcore.runtime import RequestContext
 
 from shared.jwt_claims import (
+    ALLOWED_ALGORITHMS,
+    REQUIRED_CLAIMS,
+    SuccessCache,
     TokenRejected,
     gateway_token_scopes,
     jwks_uri,
@@ -28,34 +31,49 @@ ALLOWED_CLIENTS = tuple(
     c for c in os.environ.get("COGNITO_ALLOWED_CLIENTS", "").split(",") if c
 )
 
-# JWKS is fetched once per container and cached by PyJWKClient, which also
-# refreshes when it sees an unknown key id (Cognito rotates signing keys).
-_jwks_client: jwt.PyJWKClient | None = None
+# The JWKS client built from a *successful* OIDC discovery is cached for a TTL;
+# PyJWKClient itself refreshes when it sees an unknown key id (Cognito rotates
+# signing keys). A failed discovery is never cached, so a transient outage is
+# retried on the next request rather than pinning the wrong JWKS URL forever.
+JWKS_CACHE_TTL_SECONDS = 3600
+_jwks_cache = SuccessCache(ttl=JWKS_CACHE_TTL_SECONDS)
+
+
+def _discover() -> dict:
+    """The issuer's OIDC discovery document."""
+    import json
+    import urllib.request
+
+    with urllib.request.urlopen(  # nosec B310 — https issuer from the deployment
+        f"{COGNITO_ISSUER_URL}/.well-known/openid-configuration", timeout=5
+    ) as resp:
+        return json.load(resp)
+
+
+def _discovered_client() -> jwt.PyJWKClient:
+    # The JWKS location comes from the issuer's discovery document: Cognito
+    # and Entra publish their keys at different paths (see jwks_uri).
+    discovery = _discover()
+    if not isinstance(discovery, dict) or not discovery.get("jwks_uri"):
+        raise ValueError("OIDC discovery document has no jwks_uri")
+    return jwt.PyJWKClient(jwks_uri(COGNITO_ISSUER_URL, discovery), cache_keys=True)
+
+
+def _jwks_client() -> jwt.PyJWKClient:
+    try:
+        return _jwks_cache.get(_discovered_client)
+    except Exception as exc:  # noqa: BLE001 — fall back to the Cognito layout
+        logger.warning(
+            "OIDC discovery failed (%s); assuming Cognito JWKS path for this "
+            "request only",
+            exc,
+        )
+        return jwt.PyJWKClient(jwks_uri(COGNITO_ISSUER_URL), cache_keys=True)
 
 
 def _signing_key(token: str) -> str:
     """Public key for this token, from the issuer's published JWKS."""
-    global _jwks_client
-    if _jwks_client is None:
-        # The JWKS location comes from the issuer's discovery document: Cognito
-        # and Entra publish their keys at different paths (see jwks_uri).
-        discovery = None
-        try:
-            import json
-            import urllib.request
-
-            with urllib.request.urlopen(  # nosec B310 — https issuer from the deployment
-                f"{COGNITO_ISSUER_URL}/.well-known/openid-configuration", timeout=5
-            ) as resp:
-                discovery = json.load(resp)
-        except Exception as exc:  # noqa: BLE001 — fall back to the Cognito layout
-            logger.warning(
-                "OIDC discovery failed (%s); assuming Cognito JWKS path", exc
-            )
-        _jwks_client = jwt.PyJWKClient(
-            jwks_uri(COGNITO_ISSUER_URL, discovery), cache_keys=True
-        )
-    return _jwks_client.get_signing_key_from_jwt(token).key
+    return _jwks_client().get_signing_key_from_jwt(token).key
 
 
 def extract_user_id_from_context(context: RequestContext) -> str:
@@ -122,8 +140,9 @@ def extract_user_id_from_context(context: RequestContext) -> str:
         claims = jwt.decode(
             jwt=token,
             key=_signing_key(token),
-            algorithms=["RS256"],
+            algorithms=ALLOWED_ALGORITHMS,
             options={
+                "require": REQUIRED_CLAIMS,
                 "verify_signature": True,
                 "verify_exp": True,
                 "verify_aud": False,
