@@ -359,9 +359,9 @@ Prefer a file you can review and commit? `platform.yaml` is the declarative mani
 python -m infra_utils.platform_config platform.yaml
 ```
 
-Interactive `./scripts/deploy.sh deploy` answers go into the gitignored `workshop.env` file and are used on later runs. Environment variables win over `platform.yaml`, which wins over `workshop.env`, which wins over defaults.
+Interactive `./scripts/deploy.sh deploy` answers go into the gitignored `workshop.env` file and are used on later runs. Environment variables win over `platform.yaml`, which wins over `workshop.env`, which wins over defaults. Check the current values with `./scripts/deploy.sh config`. Start over with `./scripts/deploy.sh config --reset`.
 
-The one exception is the deployment mode. `deployment.mode` in `platform.yaml` is the source of truth. A `DEPLOYMENT_MODE` environment variable or `-c deployment_mode` value that differs from it stops the synth with an error, so a stray variable in a CI shell cannot downgrade a production manifest to workshop mode. A workshop manifest likewise cannot be promoted to production from the command line. To force a different mode deliberately, pass `-c allow_mode_override=true` (context only, never an environment variable). The synth then prints a loud warning. Production still requires the manifest itself to declare `mode: production`. Check the current values with `./scripts/deploy.sh config`. Start over with `./scripts/deploy.sh config --reset`.
+The one exception is the deployment mode. `deployment.mode` in `platform.yaml` is the source of truth. A `DEPLOYMENT_MODE` environment variable or `-c deployment_mode` value that differs from it stops the synth with an error, so a stray variable in a CI shell cannot downgrade a production manifest to workshop mode. A workshop manifest likewise cannot be promoted to production from the command line. To force a different mode deliberately, pass `-c allow_mode_override=true` (context only, never an environment variable). The synth then prints a loud warning. Production still requires the manifest itself to declare `mode: production`.
 
 Secrets such as an IdP client secret or API keys are never written to `workshop.env`. They go to AWS Secrets Manager.
 
