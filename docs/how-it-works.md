@@ -188,7 +188,7 @@ See [Security controls](SECURITY_CONTROLS.md).
 
 The `agents.pattern` setting selects which agent ships onto identical
 infrastructure — Strands, LangGraph, Claude Agent SDK (single and multi-agent),
-AG-UI variants, or the delegating orchestrator. Each pattern uses the same
+AG-UI variants, or the default orchestrator (a single agent with no tools). Each pattern uses the same
 platform interfaces and controls, while its framework code remains in its
 runtime container.
 

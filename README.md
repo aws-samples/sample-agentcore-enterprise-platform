@@ -185,8 +185,9 @@ export AWS_PROFILE=<your-profile>   # Skip if you use default credentials
 ./scripts/deploy.sh verify
 
 # Invoke the deployed agent. Add --session <id> to continue a conversation.
-# (Ask the default orchestrator about its role, not its tools — it delegates
-# to sub-agents and deliberately has none of its own.)
+# (The default orchestrator is a single Strands agent with no tools: it
+# answers directly from the model and does not call the A2A sub-agents.
+# Ask it about its role, not its tools.)
 python scripts/invoke.py "Hello! What kinds of tasks can you help with?"
 
 # Use the AG-UI protocol for agui-* patterns.
