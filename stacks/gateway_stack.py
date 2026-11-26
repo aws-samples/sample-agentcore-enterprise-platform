@@ -1,4 +1,4 @@
-"""Gateway Stack — AgentCore Gateway with Lambda tool targets."""
+"""Gateway Stack — AgentCore Gateway with Lambda and OpenAPI tool targets."""
 
 import hashlib
 import json
@@ -23,6 +23,71 @@ from constructs import Construct
 
 from infra_utils.jwt_authorizer import custom_jwt_authorizer
 from infra_utils.policy_loader import load_control, load_control_text
+
+# The default target set when platform.yaml declares no gateway.tools.
+DEFAULT_TOOL_CONFIGS: dict[str, dict] = {
+    "sample-tool": {
+        "source_dir": "tools/sample_tool",
+        "env_vars": {},
+        "tool_schema": [
+            {
+                "Name": "text_analysis_tool",
+                "Description": "Analyzes text to count words and find most frequent characters.",
+                "InputSchema": {
+                    "Type": "object",
+                    "Properties": {
+                        "text": {
+                            "Type": "string",
+                            "Description": "Input text to analyze",
+                        },
+                        "N": {
+                            "Type": "integer",
+                            "Description": "Number of most frequent characters to return (default: 5)",
+                        },
+                    },
+                    "Required": ["text"],
+                },
+            },
+        ],
+    },
+}
+
+
+def _openapi_credential(provider: dict) -> dict:
+    """CloudFormation credential provider configuration for an OpenAPI target."""
+    if provider["type"] == "oauth":
+        return {
+            "CredentialProviderType": "OAUTH",
+            "CredentialProvider": {
+                "OauthCredentialProvider": {
+                    "ProviderArn": provider["arn"],
+                    "Scopes": list(provider.get("scopes") or []),
+                }
+            },
+        }
+    return {
+        "CredentialProviderType": "API_KEY",
+        "CredentialProvider": {
+            "ApiKeyCredentialProvider": {"ProviderArn": provider["arn"]}
+        },
+    }
+
+
+def _provider_secret_arn(provider_arn: str) -> str:
+    """Secrets Manager ARN pattern of the secret backing a credential provider.
+
+    AgentCore Identity stores a provider's API key or OAuth client secret in a
+    service-managed secret named bedrock-agentcore-identity!<vault>/<kind>/<name>
+    (plus Secrets Manager's random six-character suffix) in the provider's own
+    account and region.
+    """
+    _, partition, _, region, account, resource = provider_arn.split(":", 5)
+    _, vault, kind, name = resource.split("/")
+    folder = "apikey" if kind == "apikeycredentialprovider" else "oauth2"
+    return (
+        f"arn:{partition}:secretsmanager:{region}:{account}:secret:"
+        f"bedrock-agentcore-identity!{vault}/{folder}/{name}-??????"
+    )
 
 
 class GatewayStack(cdk.Stack):
@@ -268,7 +333,32 @@ class GatewayStack(cdk.Stack):
         )
 
         # Deploy Lambda tools and register as gateway targets
+        provider_arns: list[str] = []
         for tool_name, config in (tool_configs or {}).items():
+            if config.get("type", "lambda") == "openapi":
+                provider = config["credential_provider"]
+                provider_arns.append(provider["arn"])
+                openapi_target = agentcore.CfnGatewayTarget(
+                    self,
+                    f"Target-{tool_name}",
+                    name=tool_name,
+                    gateway_identifier=self._gateway.attr_gateway_identifier,
+                    credential_provider_configurations=[
+                        {"credentialProviderType": "GATEWAY_IAM_ROLE"},
+                    ],
+                    target_configuration={"mcp": {}},
+                )
+                # Same override approach as the Lambda targets: set the CFN
+                # shape directly so the L1 mapping cannot drop keys.
+                openapi_target.add_property_override(
+                    "TargetConfiguration.Mcp.OpenApiSchema",
+                    {"InlinePayload": config["openapi_schema"]},
+                )
+                openapi_target.add_property_override(
+                    "CredentialProviderConfigurations",
+                    [_openapi_credential(provider)],
+                )
+                continue
             fn = _lambda.Function(
                 self,
                 f"Tool-{tool_name}",
@@ -309,6 +399,44 @@ class GatewayStack(cdk.Stack):
                         "InlinePayload": config.get("tool_schema", []),
                     },
                 },
+            )
+
+        # OpenAPI targets fetch their outbound credential through AgentCore
+        # Identity: a workload token for the gateway, then the API key or
+        # OAuth token from exactly the declared providers (and their vaults).
+        if provider_arns:
+            arns = sorted(set(provider_arns))
+            vaults = sorted({arn.rsplit("/", 2)[0] for arn in arns})
+            directory = (
+                f"arn:aws:bedrock-agentcore:{self.region}:{self.account}:"
+                "workload-identity-directory/default"
+            )
+            gw_role.add_to_policy(
+                iam.PolicyStatement(
+                    sid="GetWorkloadAccessToken",
+                    actions=["bedrock-agentcore:GetWorkloadAccessToken"],
+                    resources=[directory, f"{directory}/workload-identity/*"],
+                )
+            )
+            gw_role.add_to_policy(
+                iam.PolicyStatement(
+                    sid="GetTargetCredentials",
+                    actions=[
+                        "bedrock-agentcore:GetResourceApiKey",
+                        "bedrock-agentcore:GetResourceOauth2Token",
+                    ],
+                    resources=arns + vaults,
+                )
+            )
+            # Registering the provider ARN does not grant access to the secret
+            # holding its credential; the gateway reads it during outbound
+            # auth, so allow exactly the secrets behind the declared providers.
+            gw_role.add_to_policy(
+                iam.PolicyStatement(
+                    sid="GetTargetCredentialSecrets",
+                    actions=["secretsmanager:GetSecretValue"],
+                    resources=[_provider_secret_arn(arn) for arn in arns],
+                )
             )
 
         # Web Search built-in connector target: Amazon-operated search index
