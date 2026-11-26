@@ -34,7 +34,8 @@ this repo is the worked example:
 ```python
 # stacks/gateway_stack.py
 web_search = agentcore.CfnGatewayTarget(
-    self, "Target-web-search",
+    self,
+    "Target-web-search",
     name="web-search",
     gateway_identifier=self._gateway.attr_gateway_identifier,
     credential_provider_configurations=[
@@ -92,7 +93,7 @@ def handler(event, context):
     # dispatch. One Lambda can serve several tools.
     delimiter = "___"
     tool_name = context.client_context.custom["bedrockAgentCoreToolName"]
-    tool_name = tool_name[tool_name.index(delimiter) + len(delimiter):]
+    tool_name = tool_name[tool_name.index(delimiter) + len(delimiter) :]
 
     if tool_name == "my_tool":
         result = do_the_thing(event.get("some_arg", ""))

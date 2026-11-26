@@ -1,0 +1,6 @@
+# Lint settings shared by local runs and .github/workflows/python-lint.yml (whole repo).
+[lint.per-file-ignores]
+# The agent pattern directories are named after their Dockerfile pattern
+# (agent-code/<pattern>/); renaming them to valid module names would break the build paths.
+"agent-code/claude-sdk-multi-agent/**/__init__.py" = ["N999"]
+"agent-code/claude-sdk-multi-agent/__init__.py" = ["N999"]

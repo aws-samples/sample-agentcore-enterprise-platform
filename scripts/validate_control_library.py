@@ -25,7 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from infra_utils.policy_loader import (  # noqa: E402
+from infra_utils.policy_loader import (
     load_catalog,
     load_control,
     load_control_text,

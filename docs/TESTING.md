@@ -78,7 +78,7 @@ scan; without it you get a single warning (non-fatal).
 
 ```bash
 make test-controls
-# or: python -m pytest tests/ -q      → 12 passed
+# or: python -m pytest tests/ -q
 ```
 
 CI runs the full `tests/` suite on every pull request and every push to `main`, with no path filter, via `.github/workflows/unit-tests.yml`.
@@ -315,18 +315,13 @@ cdk synth agentcore-workshop-dev-observability 2>/dev/null | grep -c 'AWS::Event
 ```bash
 source .venv/bin/activate
 
-# Lint the new/changed security-controls files (all clean):
-ruff check infra_utils/policy_loader.py scripts/validate_control_library.py \
-  stacks/gateway_stack.py stacks/memory_stack.py stacks/networking_stack.py \
-  stacks/observability_stack.py infra_utils/agentcore_role.py tests/
-
-# New security-controls files are also ruff-format clean:
-ruff format --check infra_utils/policy_loader.py scripts/validate_control_library.py \
-  tests/ tools/egress_interceptor/handler.py
+# Same commands and ruff version (0.17.6, ruff.toml) as .github/workflows/python-lint.yml:
+pip install ruff==0.17.6
+ruff check .
+ruff format --check .
 ```
 
-> Note: repo-wide `ruff check .` reports pre-existing findings in older files; the lint
-> backlog is tracked separately. CI lints the files changed in each merge request.
+The whole repository is clean, and CI lints all of it on every pull request.
 
 ---
 

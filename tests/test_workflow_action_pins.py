@@ -27,7 +27,6 @@ KNOWN_UNPINNED = {
         "hashicorp/setup-terraform@v4",
     },
     "label.yml": {"actions/labeler@v7"},
-    "python-lint.yml": {"actions/checkout@v7", "actions/setup-python@v7"},
     "shell-checks.yml": {"actions/checkout@v7", "actions/setup-python@v7"},
 }
 
