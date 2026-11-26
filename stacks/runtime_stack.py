@@ -35,10 +35,16 @@ from aws_cdk import (
     aws_lambda as _lambda,
 )
 from aws_cdk import (
+    aws_logs as logs,
+)
+from aws_cdk import (
     aws_s3_assets as s3_assets,
 )
 from aws_cdk import (
     aws_ssm as ssm,
+)
+from aws_cdk import (
+    custom_resources as cr,
 )
 from constructs import Construct
 
@@ -48,6 +54,39 @@ from infra_utils.policy_loader import load_control
 from infra_utils.runtime_network import build_network_config
 from infra_utils.runtime_protocol import needs_jwt_authorizer, resolve_protocol
 from infra_utils.source_hash import component_image_tag, compute_source_hash
+
+# CodeBuild image build limit, and the Provider waiter's total timeout, which
+# must cover it (tests/test_destroy_matching.py asserts the relation).
+BUILD_TIMEOUT_MINUTES = 30
+BUILD_WAIT_TIMEOUT_MINUTES = 35
+
+_RETENTION_DAYS = {
+    1: logs.RetentionDays.ONE_DAY,
+    3: logs.RetentionDays.THREE_DAYS,
+    5: logs.RetentionDays.FIVE_DAYS,
+    7: logs.RetentionDays.ONE_WEEK,
+    14: logs.RetentionDays.TWO_WEEKS,
+    30: logs.RetentionDays.ONE_MONTH,
+    60: logs.RetentionDays.TWO_MONTHS,
+    90: logs.RetentionDays.THREE_MONTHS,
+    120: logs.RetentionDays.FOUR_MONTHS,
+    150: logs.RetentionDays.FIVE_MONTHS,
+    180: logs.RetentionDays.SIX_MONTHS,
+    365: logs.RetentionDays.ONE_YEAR,
+    400: logs.RetentionDays.THIRTEEN_MONTHS,
+    545: logs.RetentionDays.EIGHTEEN_MONTHS,
+    731: logs.RetentionDays.TWO_YEARS,
+    1827: logs.RetentionDays.FIVE_YEARS,
+    3653: logs.RetentionDays.TEN_YEARS,
+}
+
+
+def retention_for_days(days: int) -> logs.RetentionDays:
+    """Smallest CloudWatch retention that keeps logs at least `days` days."""
+    for allowed in sorted(_RETENTION_DAYS):
+        if days <= allowed:
+            return _RETENTION_DAYS[allowed]
+    return logs.RetentionDays.TEN_YEARS
 
 
 class RuntimeStack(cdk.Stack):
@@ -80,6 +119,7 @@ class RuntimeStack(cdk.Stack):
         allowed_models: list[str] | None = None,
         require_guardrails: bool = False,
         retain_data: bool = False,
+        log_retention_days: int = 30,
         # ── Migration (image-source) mode ──
         # Set source_image (registry ref) or build_context (local dir) and the
         # stack builds the migration adapter (migration/adapter/) ON TOP of the
@@ -238,7 +278,7 @@ class RuntimeStack(cdk.Stack):
                 privileged=True,
                 compute_type=codebuild.ComputeType.SMALL,
             ),
-            timeout=cdk.Duration.minutes(30),
+            timeout=cdk.Duration.minutes(BUILD_TIMEOUT_MINUTES),
             build_spec=codebuild.BuildSpec.from_object(
                 {
                     "version": "0.2",
@@ -270,22 +310,42 @@ class RuntimeStack(cdk.Stack):
                 )
             )
 
-        # ── Build Trigger Lambda (Custom Resource) ──
+        # ── Build Trigger (Provider framework: start + async completion poll) ──
+        trigger_code = _lambda.Code.from_asset(os.path.join(repo_root, "infra_utils"))
         trigger_fn = _lambda.Function(
             self,
             "BuildTrigger",
             function_name=f"{prefix}-build-trigger-{component_name}",
             runtime=_lambda.Runtime.PYTHON_3_13,
-            handler="build_trigger_lambda.handler",
-            code=_lambda.Code.from_asset(os.path.join(repo_root, "infra_utils")),
-            timeout=cdk.Duration.minutes(15),
+            handler="build_trigger_lambda.on_event",
+            code=trigger_code,
+            timeout=cdk.Duration.minutes(1),
             memory_size=256,
         )
-        trigger_fn.add_to_role_policy(
-            iam.PolicyStatement(
-                actions=["codebuild:StartBuild", "codebuild:BatchGetBuilds"],
-                resources=[build_project.project_arn],
+        wait_fn = _lambda.Function(
+            self,
+            "BuildWait",
+            function_name=f"{prefix}-build-wait-{component_name}",
+            runtime=_lambda.Runtime.PYTHON_3_13,
+            handler="build_trigger_lambda.is_complete",
+            code=trigger_code,
+            timeout=cdk.Duration.minutes(1),
+            memory_size=256,
+        )
+        for fn in (trigger_fn, wait_fn):
+            fn.add_to_role_policy(
+                iam.PolicyStatement(
+                    actions=["codebuild:StartBuild", "codebuild:BatchGetBuilds"],
+                    resources=[build_project.project_arn],
+                )
             )
+        build_provider = cr.Provider(
+            self,
+            "BuildTriggerProvider",
+            on_event_handler=trigger_fn,
+            is_complete_handler=wait_fn,
+            query_interval=cdk.Duration.seconds(30),
+            total_timeout=cdk.Duration.minutes(BUILD_WAIT_TIMEOUT_MINUTES),
         )
 
         env_overrides = [
@@ -323,11 +383,17 @@ class RuntimeStack(cdk.Stack):
                 }
             )
 
-        # Custom resource triggers build only when source hash changes
+        # Custom resource triggers build only when source hash changes.
+        # New logical id on purpose: CloudFormation rejects changing the
+        # service token of an existing custom resource ("Modifying service
+        # token is not allowed"), so the Provider-backed trigger replaces the
+        # old direct-Lambda BuildTriggerCR instead of updating it. The old
+        # resource's Delete reaches BuildTrigger directly and is answered by
+        # build_trigger_lambda.on_event's legacy branch.
         build_trigger = CustomResource(
             self,
-            "BuildTriggerCR",
-            service_token=trigger_fn.function_arn,
+            "BuildTriggerProviderCR",
+            service_token=build_provider.service_token,
             properties={
                 "ProjectName": build_project.project_name,
                 "EnvironmentOverrides": env_overrides,
@@ -478,6 +544,24 @@ class RuntimeStack(cdk.Stack):
 
         self._runtime = agentcore.CfnRuntime(self, "Runtime", **runtime_props)
         self._runtime.node.add_dependency(build_trigger)
+
+        # ── Runtime log group retention ──
+        # AgentCore names the group <runtime id>-<endpoint>; the id is only
+        # known at deploy time, so LogRetention (which tolerates the group
+        # already existing) sets retention right after the runtime is created
+        # and deletes the group with the stack unless data is retained.
+        logs.LogRetention(
+            self,
+            "RuntimeLogRetention",
+            log_group_name=(
+                "/aws/bedrock-agentcore/runtimes/"
+                f"{self._runtime.attr_agent_runtime_id}-DEFAULT"
+            ),
+            retention=retention_for_days(log_retention_days),
+            removal_policy=(
+                cdk.RemovalPolicy.RETAIN if retain_data else cdk.RemovalPolicy.DESTROY
+            ),
+        )
 
         # ── SSM Parameters ──
         ssm.StringParameter(
