@@ -918,6 +918,9 @@ M2M_ROTATION_CONTEXT_ARGS=()
 M2M_DEPLOYMENT_LOCK_VALUE=""
 M2M_DEPLOYMENT_LOCK_PARAMETER=""
 ORCHESTRATOR_OBSERVABILITY_HANDOFF=0
+# Runtime ids of THIS deployment, recorded before a full destroy
+# (record_runtime_ids) so the sweep deletes only their log groups.
+RUNTIME_LOG_IDS=()
 build_context_args() {
     CONTEXT_ARGS=()
     CONTEXT_ARGS+=(-c "project=${PROJECT_NAME}")
@@ -1036,7 +1039,8 @@ confirm_footprint() {
 # NON_INTERACTIVE without --yes → report and leave (CI must not remove things
 # the config does not declare without being told explicitly).
 sweep_leftovers() {
-    local confirm="ask" ans s log_prefix log_group service_logs
+    local confirm="ask" ans s log_prefix log_group service_logs runtime_root runtime_id
+    local -a log_prefixes=()
     [ "${YES:-0}" = "1" ] && confirm="yes"
     [ "$confirm" = "ask" ] && [ "${NON_INTERACTIVE:-0}" = "1" ] && confirm="no"
 
@@ -1091,21 +1095,37 @@ sweep_leftovers() {
         fi
     fi
 
-    # CodeBuild and Lambda create their own log groups on first use. Those
-    # groups are not CloudFormation resources, so deleting every stack still
-    # leaves them behind. Production logs are retained evidence by design;
-    # disposable workshop/migration environments use the same explicit
-    # confirmation policy as the other sweep categories.
+    # CodeBuild, Lambda and AgentCore Runtime create their own log groups on
+    # first use. Those groups are not CloudFormation resources, so deleting
+    # every stack still leaves them behind. Production logs are retained
+    # evidence by design; disposable workshop/migration environments use the
+    # same explicit confirmation policy as the other sweep categories.
+    # Runtime groups are /aws/bedrock-agentcore/runtimes/<runtime-id>-*. A
+    # name prefix alone cannot tell deployments apart: '-' becomes '_', so
+    # project demo/env dev ('demo_dev_') also prefixes project demo-dev/env
+    # dev ('demo_dev_dev_'). Only runtime ids recorded from this deployment's
+    # own stacks before the destroy (record_runtime_ids) are swept, and each
+    # must still sit under this deployment's prefix (the same rule as
+    # scripts/destroy_plan.py is_deployment_runtime_log_group). Every name is
+    # re-checked against its query prefix before it is offered.
     if [ "${DEPLOYMENT_MODE:-workshop}" != "production" ]; then
+        runtime_root="/aws/bedrock-agentcore/runtimes/"
+        log_prefixes=("/aws/codebuild/${PREFIX}-" "/aws/lambda/${PREFIX}-")
+        for runtime_id in ${RUNTIME_LOG_IDS[@]+"${RUNTIME_LOG_IDS[@]}"}; do
+            if [[ "$runtime_id" == "${PREFIX//-/_}_"* ]]; then
+                log_prefixes+=("${runtime_root}${runtime_id}-")
+            fi
+        done
         service_logs=$(
-            for log_prefix in \
-                "/aws/codebuild/${PREFIX}-" \
-                "/aws/lambda/${PREFIX}-"; do
+            for log_prefix in "${log_prefixes[@]}"; do
                 aws logs describe-log-groups \
                     --log-group-name-prefix "$log_prefix" \
                     --query "logGroups[].logGroupName" \
                     --output text --region "$AWS_REGION" 2>/dev/null \
-                    | tr '\t' '\n' | grep -v '^None$' | grep . || true
+                    | tr '\t' '\n' | grep -v '^None$' | grep . \
+                    | while IFS= read -r log_group; do
+                        [[ "$log_group" == "$log_prefix"* ]] && printf '%s\n' "$log_group"
+                    done || true
             done | sort -u
         )
         if [ -n "$service_logs" ]; then
@@ -1748,12 +1768,178 @@ deploy_stacks() {
 # blast radius grew when the runtimes gained a dependency on networking), so a
 # targeted destroy is always --exclusively. CloudFormation then refuses with
 # "Export ... cannot be deleted as it is in use by <stack>", naming the consumer.
-# The cascade stays for `destroy --all`, where it is what was asked for.
+# A full destroy runs by dependency level instead (destroy_by_level).
+
+# Records the AgentCore runtime ids of this deployment's stacks, found by
+# their exact Project/Environment tags (not a name prefix, which can belong
+# to another deployment), so sweep_leftovers can remove exactly their log
+# groups once the stacks are gone. Best effort: nothing recorded means no
+# runtime log group is offered for deletion.
+record_runtime_ids() {
+    local runtime_prefix="${PREFIX//-/_}_" stacks stack ids id
+    RUNTIME_LOG_IDS=()
+    [ "${DEPLOYMENT_MODE:-workshop}" != "production" ] || return 0
+    stacks=$(aws cloudformation describe-stacks --region "$AWS_REGION" \
+        --query "Stacks[?Tags[?Key=='Project' && Value=='${PROJECT_NAME}'] && Tags[?Key=='Environment' && Value=='${ENVIRONMENT}']].StackName" \
+        --output text 2>/dev/null) || stacks=""
+    for stack in $stacks; do
+        [ "$stack" != "None" ] || continue
+        ids=$(aws cloudformation list-stack-resources --stack-name "$stack" \
+            --region "$AWS_REGION" \
+            --query "StackResourceSummaries[?ResourceType=='AWS::BedrockAgentCore::Runtime'].PhysicalResourceId" \
+            --output text 2>/dev/null) || continue
+        for id in $ids; do
+            id="${id##*/}"
+            if [ "$id" != "None" ] && [[ "$id" == "$runtime_prefix"* ]]; then
+                RUNTIME_LOG_IDS+=("$id")
+            fi
+        done
+    done
+    if [ "${#RUNTIME_LOG_IDS[@]}" -gt 0 ]; then
+        log_info "Recorded ${#RUNTIME_LOG_IDS[@]} runtime id(s) for the post-destroy log sweep"
+    fi
+    return 0
+}
+
+# Prints a PID and all of its descendants. `npx` runs CDK in child
+# processes, so signalling the npx PID alone leaves CDK running.
+process_tree() {
+    local child
+    if command -v pgrep >/dev/null 2>&1; then
+        for child in $(pgrep -P "$1" 2>/dev/null); do
+            process_tree "$child"
+        done
+    fi
+    printf '%s\n' "$1"
+}
+
+# stop_destroy_jobs GRACE PID... — SIGTERM every process in each tree (the
+# tree is collected first, so reparented children are still covered), wait at
+# most GRACE seconds, then SIGKILL whatever is left. Bounded by construction.
+stop_destroy_jobs() {
+    local grace="$1" pid waited=0 alive state
+    shift
+    local -a tree=()
+    for pid in "$@"; do
+        mapfile -t -O "${#tree[@]}" tree < <(process_tree "$pid")
+    done
+    [ "${#tree[@]}" -gt 0 ] || return 0
+    kill -TERM "${tree[@]}" 2>/dev/null || true
+    while [ "$waited" -lt "$grace" ]; do
+        alive=0
+        for pid in "${tree[@]}"; do
+            # A zombie (exited, not yet reaped by wait) counts as stopped.
+            if state=$(ps -o stat= -p "$pid" 2>/dev/null) && [[ "${state// /}" != Z* ]]; then
+                alive=1
+            fi
+        done
+        [ "$alive" = "0" ] && return 0
+        sleep 1
+        waited=$((waited + 1))
+    done
+    kill -KILL "${tree[@]}" 2>/dev/null || true
+    return 0
+}
+
+# Full destroy, in parallel by dependency level. `cdk destroy --all` deleted
+# one stack at a time (a hardened multi-agent teardown took 33 minutes).
+# scripts/destroy_plan.py reads the synthesized manifest and prints one line
+# per level: first the stacks nothing remaining depends on, then the next.
+# Each level's stacks are destroyed together as background jobs against the
+# pre-synthesized assembly (--app DIR: no concurrent re-synth), with a bounded
+# wait and progress output. A failed or timed-out stack stops before the next
+# level, because those stacks are still depended on.
+# On timeout the whole CDK process tree of each running job is stopped
+# (SIGTERM, then SIGKILL after DESTROY_KILL_GRACE_SECONDS), so the wait
+# stays bounded and no orphaned CDK keeps deleting stacks.
+# Tunables: DESTROY_LEVEL_TIMEOUT (s, default 3600), DESTROY_POLL_SECONDS (5),
+# DESTROY_PROGRESS_SECONDS (30), DESTROY_KILL_GRACE_SECONDS (30).
+destroy_by_level() {
+    local timeout="${DESTROY_LEVEL_TIMEOUT:-3600}" poll="${DESTROY_POLL_SECONDS:-5}"
+    local progress="${DESTROY_PROGRESS_SECONDS:-30}" grace="${DESTROY_KILL_GRACE_SECONDS:-30}"
+    local py="$PROJECT_DIR/.venv/bin/python" work out plan level n=0 i elapsed last failed
+    local -a levels=() stacks=() pids=() waiting=()
+    [ -x "$py" ] || py="python3"
+    [ "$poll" -ge 1 ] 2>/dev/null || poll=1
+    work=$(mktemp -d)
+    out="$work/cdk.out"
+    log_step "Synthesizing the app to plan the destroy order"
+    if ! JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+        npx cdk synth --quiet --output "$out" "${CONTEXT_ARGS[@]}" >"$work/synth.log" 2>&1; then
+        log_error "Could not synthesize the app to plan the destroy:"
+        sed 's/^/    /' "$work/synth.log" >&2
+        rm -rf "$work"
+        return 1
+    fi
+    if ! plan=$("$py" "$SCRIPT_DIR/destroy_plan.py" "$out/manifest.json"); then
+        log_error "Could not compute the destroy order (see above)."
+        rm -rf "$work"
+        return 1
+    fi
+    if [ -z "$plan" ]; then
+        log_info "No stacks to destroy."
+        rm -rf "$work"
+        return 0
+    fi
+    mapfile -t levels <<< "$plan"
+    for level in "${levels[@]}"; do
+        n=$((n + 1))
+        read -ra stacks <<< "$level"
+        log_step "Destroy level $n/${#levels[@]} (in parallel): ${stacks[*]}"
+        pids=()
+        for i in "${!stacks[@]}"; do
+            JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+                npx cdk destroy "${stacks[$i]}" --exclusively --force --app "$out" \
+                </dev/null >"$work/${stacks[$i]}.log" 2>&1 &
+            pids+=("$!")
+        done
+        elapsed=0
+        last=0
+        while :; do
+            waiting=()
+            for i in "${!pids[@]}"; do
+                kill -0 "${pids[$i]}" 2>/dev/null && waiting+=("${stacks[$i]}")
+            done
+            [ "${#waiting[@]}" -eq 0 ] && break
+            if [ "$elapsed" -ge "$timeout" ]; then
+                log_error "Level $n still running after ${timeout}s: ${waiting[*]}"
+                log_error "Stopping those destroys and their CDK child processes."
+                log_error "CloudFormation may still finish deletions it already started."
+                stop_destroy_jobs "$grace" "${pids[@]}"
+                break
+            fi
+            sleep "$poll"
+            elapsed=$((elapsed + poll))
+            if [ $((elapsed - last)) -ge "$progress" ]; then
+                log_info "Level $n: ${elapsed}s elapsed, waiting on: ${waiting[*]}"
+                last=$elapsed
+            fi
+        done
+        failed=0
+        for i in "${!pids[@]}"; do
+            if wait "${pids[$i]}"; then
+                log_info "Destroyed: ${stacks[$i]}"
+            else
+                failed=1
+                log_error "Failed to destroy ${stacks[$i]}:"
+                sed 's/^/    /' "$work/${stacks[$i]}.log" >&2
+            fi
+        done
+        if [ "$failed" = "1" ]; then
+            log_error "Stopping before level $((n + 1)): its stacks depend on the ones above."
+            log_error "Fix the error and re-run destroy; finished stacks are skipped."
+            rm -rf "$work"
+            return 1
+        fi
+    done
+    rm -rf "$work"
+    return 0
+}
+
 destroy_stacks() {
     local stack rc=0
     if [ "$#" -eq 0 ]; then
-        JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
-            npx cdk destroy --all --force "${CONTEXT_ARGS[@]}" 2>&1 || rc=1
+        destroy_by_level || rc=1
         return "$rc"
     fi
     for stack in "$@"; do
@@ -2430,6 +2616,9 @@ case "$ACTION" in
         log_header "Destroying"
         [ -z "${CDK_STACKS:-}" ] && confirm_footprint destroy
         acquire_m2m_deployment_lock
+        # Full destroy: note this deployment's runtime ids while the stacks
+        # still exist, so the sweep can find exactly their log groups.
+        [ -z "${CDK_STACKS:-}" ] && record_runtime_ids
         # No stacks selected means --all. Failures are no longer swallowed: a
         # refused destroy is the guard against cascading, so it has to be seen.
         # shellcheck disable=SC2086  # stack list is space-separated by design

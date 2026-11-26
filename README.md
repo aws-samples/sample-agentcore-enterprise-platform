@@ -246,6 +246,22 @@ Destroy resources when you no longer need them
 ./scripts/deploy.sh destroy --stack <stack-name>
 ```
 
+A full destroy runs in parallel by dependency level. `scripts/destroy_plan.py`
+reads the synthesized `cdk.out/manifest.json` and groups the stacks: first the
+stacks nothing remaining depends on, all deleted together, then the next level.
+Each level waits a bounded time (`DESTROY_LEVEL_TIMEOUT`, default 3600 seconds)
+and prints progress. On timeout the CDK processes of that level, including their
+child processes, are stopped: first SIGTERM, then SIGKILL after
+`DESTROY_KILL_GRACE_SECONDS` (default 30). CloudFormation may still finish a
+deletion it already started. A failed or timed-out stack stops the later levels
+and the command exits non-zero. The post-destroy sweep also offers to delete this
+deployment's AgentCore runtime log groups. These are the runtime IDs recorded from
+the stacks tagged with this project and environment before the destroy, and each
+ID must start with `<project>_<env>_`. The prefix alone is not enough: project
+`demo` in `dev` shares it with project `demo-dev`. Production mode never deletes
+these log groups. The sweep follows the same `--yes` / `NON_INTERACTIVE` policy as
+the other leftovers.
+
 For networking deployments, AgentCore network interfaces can outlive a runtime for up to eight hours. A cleanup may need a retry. See [Network isolation](#run-runtimes-in-your-vpc-enable_networking) for the detail.
 
 
