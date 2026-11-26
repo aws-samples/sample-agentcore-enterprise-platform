@@ -3578,25 +3578,43 @@ def _main() -> int:
     try:
         config = load_platform_config(args[0])
     except ValidationError as exc:
-        # Messages only — pydantic's str() echoes the offending input, and for
-        # identity.client_secret_name the input may BE the secret.
-        print(f"INVALID: {args[0]}", file=sys.stderr)
-        for err in exc.errors():
-            where = ".".join(str(x) for x in err["loc"]) or "platform.yaml"
-            print(
-                f"  {where}: {err['msg'].removeprefix('Value error, ')}",
-                file=sys.stderr,
-            )
-        return 1
+        return _print_invalid(args[0], exc)
     except Exception as exc:  # noqa: BLE001 — YAML syntax, missing file: print it all
         print(f"INVALID: {args[0]}\n{exc}", file=sys.stderr)
         return 1
     if "--effective-env" in flags:
         try:
             config = apply_environment_overrides(config)
-        except (ValidationError, ValueError) as exc:
-            print(f"INVALID effective environment\n{exc}", file=sys.stderr)
+        except ValidationError as exc:
+            return _print_invalid(f"{args[0]} with environment overrides", exc)
+        except ValueError as exc:
+            print(f"INVALID: {args[0]} with environment overrides", file=sys.stderr)
+            print(f"  {exc}", file=sys.stderr)
             return 1
+    try:
+        return _run_action(flags, config, args[0])
+    except ValueError as exc:
+        # Contract errors (an unlisted federated account, a use case whose
+        # stacks are missing): one clear line, never a traceback.
+        print(f"INVALID: {args[0]}", file=sys.stderr)
+        print(f"  {exc}", file=sys.stderr)
+        return 1
+
+
+def _print_invalid(source: str, exc: ValidationError) -> int:
+    """One line per field. Messages only: pydantic's str() echoes the offending
+    input, and for identity.client_secret_name the input may BE the secret."""
+    print(f"INVALID: {source}", file=sys.stderr)
+    for err in exc.errors():
+        where = ".".join(str(x) for x in err["loc"]) or "platform.yaml"
+        msg = err["msg"].removeprefix("Value error, ")
+        if err.get("type") == "string_pattern_mismatch" and where == "region":
+            msg = "not an AWS Region name such as us-east-1 or eu-west-2"
+        print(f"  {where}: {msg}", file=sys.stderr)
+    return 1
+
+
+def _run_action(flags: set[str], config: PlatformConfig, source: str) -> int:
     if "--export" not in flags:
         # --export is machine-read by deploy.sh with 2>&1; keep it key=value only.
         for warning in config.warnings:
@@ -3641,7 +3659,7 @@ def _main() -> int:
         print()
         print("\n".join(migration_readiness_lines(config)))
         return 0 if migration_cutover_ready(config) else 1
-    print(f"OK: {args[0]}")
+    print(f"OK: {source}")
     print(config.model_dump_json(indent=2))
     return 0
 

@@ -80,7 +80,7 @@ DESCRIPTIONS: dict[str, str] = {
     "security.cedar.enabled": "Cedar policy engine on the gateway (tool-level authorization).",
     "security.cedar.mode": "`LOG_ONLY` records decisions without enforcing; flip to `ENFORCE` only after reading the logs on live traffic.",
     "security.traceability": "SNS + EventBridge alerts on sensitive API calls. Requires `cloudtrail_alerting`, the rule only matches CloudTrail management events.",
-    "security.org_id": "AWS Organizations id (`o-…`) the VPC endpoint and Memory policies are scoped to. Empty is fine (deploy.sh prompts); a placeholder is rejected.",
+    "security.org_id": "AWS Organizations id (`o-…`) the VPC endpoint and Memory policies are scoped to. Required when `resource_policies` is on: an empty value fails validation unless `ORG_ID` is exported or saved in workshop.env (deploy.sh prompts for it). A placeholder such as `o-xxxxxxxxxx` is rejected.",
     # observability
     "observability.transaction_search": "Configure CloudWatch Transaction Search so runtime traces are searchable. Account-scoped, not per stack.",
     "observability.alarms": "CloudWatch alarms per deployed resource, an SNS ops topic and the platform dashboard.",

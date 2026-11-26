@@ -529,3 +529,62 @@ def test_resolve_region_invalid_manifest_falls_through(region_sandbox):
 
 def test_resolve_region_default_when_nothing_configured(region_sandbox):
     assert resolve_region(root=region_sandbox) == "us-east-1"
+
+
+def _cli(manifest_text, *flags, env=None):
+    import os
+    import subprocess
+    import sys
+    import tempfile
+
+    run_env = {
+        k: v for k, v in os.environ.items() if k != "PLATFORM_ALLOW_PLACEHOLDERS"
+    }
+    run_env.update(env or {})
+    with tempfile.TemporaryDirectory() as tmp:
+        manifest = Path(tmp) / "platform.yaml"
+        manifest.write_text(manifest_text)
+        return subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "infra_utils.platform_config",
+                *flags,
+                str(manifest),
+            ],
+            check=False,
+            cwd=REPO,
+            env=run_env,
+            capture_output=True,
+            text=True,
+        )
+
+
+def test_effective_env_error_is_one_line_per_field():
+    result = _cli(
+        "project: demo\n", "--export", "--effective-env", env={"AWS_REGION": "nowhere"}
+    )
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "pattern" not in result.stderr  # no raw regex
+    assert "region: not an AWS Region name" in result.stderr
+
+
+def test_stacks_for_an_unlisted_federated_account_is_not_a_traceback():
+    manifest = (
+        "deployment:\n"
+        "  strategy: federated\n"
+        "  platform_account: '111111111111'\n"
+        "  workload_accounts: ['222222222222']\n"
+    )
+    result = _cli(manifest, "--stacks", env={"CDK_DEFAULT_ACCOUNT": "333333333333"})
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert result.stderr.startswith("INVALID:")
+
+
+def test_design_option_error_lists_every_option():
+    script = (REPO / "scripts" / "deploy.sh").read_text()
+    line = next(ln for ln in script.splitlines() if "Unknown option for design" in ln)
+    for option in ("--profile", "--journey", "--topology", "--posture", "--region"):
+        assert option in line

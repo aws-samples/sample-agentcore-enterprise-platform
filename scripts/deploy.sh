@@ -2090,7 +2090,7 @@ if [ "$ACTION" = "design" ]; then
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --profile) require_flag_value "--profile" "$#"; shift 2 ;;
-            *) log_error "Unknown option for design: '$1' (valid: --profile PROFILE)"; exit 1 ;;
+            *) log_error "Unknown option for design: '$1' (valid: --profile PROFILE, or --journey J --topology T --posture P [--region R]; plus --dry-run, --yes)"; exit 1 ;;
         esac
     done
     if [ ! -f "$PLATFORM_CONFIG" ]; then
