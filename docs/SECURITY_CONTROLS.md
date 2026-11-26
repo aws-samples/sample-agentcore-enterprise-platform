@@ -114,13 +114,45 @@ accelerator never uses.
   Guardrails (`ApplyGuardrail`), config sourced from `control-library/guardrails/`. It performs
   **no authorization** — Cedar (item 3) is a separate control behind a separate flag, and
   `enable_egress_filter` alone gives you none of it.
-- **Masking, not blocking:** the handler raises only when an assessment comes back
-  `action == "BLOCKED"`; otherwise it substitutes anonymized text and the request proceeds.
-- **Caveats:** the `gatewayRequest`/`gatewayResponse` shape is unvalidated, so the handler
-  scans every string leaf generically and passes payload shapes it does not recognise through
-  **unchanged**. There is no try/except around `ApplyGuardrail`, so a Bedrock throttle surfaces
-  as a Lambda failure rather than a defined fail-open/fail-closed decision. Validate against
-  live Gateway traces before relying on it in production.
+- **Masking, not blocking:** the handler blocks only when an assessment comes back
+  `action == "BLOCKED"`; otherwise it substitutes anonymized text and the call proceeds.
+- **Event detection:** AgentCore response events carry both `gatewayRequest` and
+  `gatewayResponse`, so the handler checks `gatewayResponse` first. Any event that has it is
+  a RESPONSE interception, and the guardrail runs over the response `body` with
+  `source=OUTPUT`. Otherwise the request `body` is scanned with `source=INPUT`. The JSON-RPC
+  envelope (`jsonrpc`, `id`, `method`) is never rewritten.
+- **Output contract:**
+  - Request pass or mask: `mcp.transformedGatewayRequest = {body}`.
+  - Response pass or mask: `mcp.transformedGatewayResponse = {statusCode, headers, body}`.
+  - Request block: short-circuits with a `transformedGatewayResponse`, so the target is
+    never called.
+  - Response block: replaces the response with a `transformedGatewayResponse`.
+  - Both block cases return status 200 and a JSON-RPC `result` with `isError: true` and the
+    text "Blocked by egress guardrail."
+- **Logging:** no log line contains a request or response body. The handler logs only:
+  - the interception point;
+  - the Lambda request id;
+  - the JSON-RPC id;
+  - the body size;
+  - the decision (`pass`, `masked` or `blocked`);
+  - for blocks, the guardrail filter or PII type.
+- **Invoke permission:** the gateway role holds `lambda:InvokeFunction` on the
+  `<prefix>-tool-*` functions and on exactly the interceptor function (sid
+  `InvokeEgressInterceptor`). Without it every gateway call fails with AccessDenied.
+- **`tools/list` with the filter on:**
+  - *Before this fix:* the response event was treated as a request and answered with
+    `transformedGatewayRequest`, so the gateway never got a usable response body. Clients
+    saw an error or an empty tool list.
+  - *Now:* the `tools/list` result passes through, masked only where the guardrail
+    anonymizes text in tool descriptions.
+  - *Remaining empty-list risk:* if the guardrail **blocks** something in a tool
+    description (for example a description that trips the prompt-attack filter), the whole
+    list is replaced by the blocked result. The client then sees no tools.
+- **Caveats:**
+  - There is no try/except around `ApplyGuardrail`, so a Bedrock throttle surfaces as a
+    Lambda failure, not a defined fail-open or fail-closed decision.
+  - Every string leaf is one `ApplyGuardrail` call.
+  - Validate against live Gateway traces before relying on it in production.
 - **Toggle:** `enable_egress_filter`, deployed by `gateway_stack.py` like every other flag.
 
 ## Cedar authorization (item 3)
