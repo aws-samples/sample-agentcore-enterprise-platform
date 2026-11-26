@@ -25,7 +25,7 @@ Each posture tier maps to one preset: **workshop** is `presets/greenfield.yaml`,
 | **`security.cloudtrail_alerting`** | **— (default)** | **`true`** | **`true`** |
 | **`security.egress_filter`** | **— (default)** | **`true`** | **`true`** |
 | **`security.networking`** | **— (default)** | **`true`** | **`true`** |
-| **`security.org_id`** | **— (default)** | **`""`** | **`o-example1234`** |
+| **`security.org_id`** | **— (default)** | **`o-xxxxxxxxxx`** | **`o-example1234`** |
 | **`security.require_guardrails`** | **— (default)** | **`true`** | **`true`** |
 | **`security.resource_policies`** | **— (default)** | **`true`** | **`true`** |
 | **`security.traceability`** | **— (default)** | **`true`** | **`true`** |
