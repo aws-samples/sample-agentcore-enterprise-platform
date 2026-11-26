@@ -7,7 +7,8 @@ AgentCore already does, and which parts of the deployment depend on it.
 ## How the agent checks tokens
 
 `agent-code/shared/auth.py` (`extract_user_id_from_context`) verifies the token signature
-against the issuer's published JWKS, pinned to `RS256`, then hands the claims to
+against the issuer's published JWKS, restricted to the asymmetric algorithms in
+`ALLOWED_ALGORITHMS` (RS256, RS384, RS512, ES256, ES384) and requiring `exp`, then hands the claims to
 `validate_claims` in `agent-code/shared/jwt_claims.py`, which checks `iss`, the client, and
 the presence of `sub`. Identity is the `sub` claim.
 

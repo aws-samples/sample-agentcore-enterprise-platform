@@ -2648,9 +2648,24 @@ def allowed_model_resources(models: list[str]) -> list[str]:
     Foundation-model ARNs get a trailing '*' because Bedrock model ids carry
     version/context-window suffixes ('-v1:0', ':0:200k') that configs
     commonly omit.
+
+    A `global.` profile is authorized against three resources (AWS docs,
+    "Global cross-Region inference" IAM policy example:
+    https://docs.aws.amazon.com/bedrock/latest/userguide/global-cross-region-inference.html):
+    the profile ARN, the Regional foundation model, and the foundation model
+    with an empty Region (global routing). The geo-prefix match below only
+    covers 2-4 letter prefixes, so `global.` is handled first.
     """
     resources: list[str] = []
     for m in models:
+        if m.startswith("global."):
+            base = m[len("global.") :]
+            resources += [
+                f"arn:aws:bedrock:*:*:inference-profile/{m}",
+                f"arn:aws:bedrock:*::foundation-model/{base}*",
+                f"arn:aws:bedrock:::foundation-model/{base}*",
+            ]
+            continue
         prefix_match = re.match(r"^[a-z]{2,4}\.", m)
         base = m[prefix_match.end() :] if prefix_match else m
         if prefix_match and "." in base:

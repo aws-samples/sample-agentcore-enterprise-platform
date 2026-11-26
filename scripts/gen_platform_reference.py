@@ -60,8 +60,8 @@ DESCRIPTIONS: dict[str, str] = {
     "identity.client_secret_name": "Secrets Manager NAME holding the IdP client secret. Required for any non-Cognito IdP; the value never goes in this file.",
     # agents
     "agents.pattern": "Which agent container the runtime stack builds (docs/ARCHITECTURE.md). Ignored for the image once `migration:` is set, but still exported so verify and invoke behave.",
-    "agents.model_id": "Bedrock model or cross-region inference profile injected as `MODEL_ID` into every agent. Empty = each pattern's baked-in default.",
-    "agents.allowed_models": "Model allow-list. When set, the runtime roles' Bedrock IAM is scoped to exactly these and `model_id` must be one of them (otherwise the containers' defaults would bypass the list). Empty = unrestricted, today's behaviour.",
+    "agents.model_id": "Bedrock model or cross-region inference profile (`us.`/`eu.`/`apac.` geo or `global.`) injected as `MODEL_ID` into every agent. Empty = each pattern's baked-in default.",
+    "agents.allowed_models": "Model allow-list. When set, the runtime roles' Bedrock IAM is scoped to exactly these and `model_id` must be one of them (otherwise the containers' defaults would bypass the list). A geo profile (`us.`/`eu.`/`apac.`) grants the profile plus its foundation model in every Region; a `global.` profile also grants the Region-less global foundation-model ARN (`arn:aws:bedrock:::foundation-model/…`) Bedrock authorizes global routing against. Empty = unrestricted, today's behaviour.",
     "agents.a2a": "Deploy the `code-agent` and `research-agent` sub-agent runtimes next to the orchestrator (A2A protocol).",
     "agents.orchestrator_runtime_generation": "Controlled replacement generation for the orchestrator AgentCore Runtime. Increase only when an existing runtime is unreadable or another immutable runtime property requires replacement; healthy A2A runtimes are unaffected.",
     "agents.memory.long_term": "Add the semantic long-term strategy to the AgentCore Memory store (fact extraction across sessions).",
