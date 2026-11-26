@@ -103,8 +103,10 @@ orchestrator and research-agent runtimes, whose
   (`default/workload-identity/<runtime-name>-*`) and the default token vault —
   never `"*"`.
 - The unverified-userId token path (`GetWorkloadAccessTokenForUserId`) is
-  **no longer granted** to the runtime role at all: agents receive the
-  caller's workload token from the service. It is additionally denied
+  not granted to HTTP, MCP or AG-UI runtime roles: those agents receive the
+  caller's workload token from the service. A2A runtimes get no such token
+  (SigV4 inbound), so their role may use it only on SDK-created
+  `workload-*` identities, for the gateway M2M token. It is additionally denied
   org-wide by an SCP in `control-library/terraform/org-guardrails`, not by
   this stack — see [Security controls](../SECURITY_CONTROLS.md).
 
