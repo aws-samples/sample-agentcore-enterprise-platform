@@ -14,7 +14,7 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
@@ -33,13 +33,13 @@ jobs:
 
       - name: Set up Python
         if: steps.changed-files.outputs.any_changed == 'true'
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: '3.10'
 
       - name: Install ASH
         if: steps.changed-files.outputs.any_changed == 'true'
-        run: pip install git+https://github.com/awslabs/automated-security-helper.git@v3.2.2
+        run: pip install git+https://github.com/awslabs/automated-security-helper.git@v3.8.0
 
       - name: Create temp directory for changed files
         if: steps.changed-files.outputs.any_changed == 'true'
@@ -64,9 +64,13 @@ jobs:
 
       - name: Run ASH scan on changed files
         if: steps.changed-files.outputs.any_changed == 'true'
+        # Blocking: a failed scan (or findings at/above HIGH) fails the job.
         run: |
+          set -o pipefail
           cd /tmp/ash-scan
           cat > .ash_config.yaml << 'EOF'
+          global_settings:
+            severity_threshold: HIGH
           reporters:
             markdown:
               enabled: true
@@ -74,11 +78,32 @@ jobs:
                 include_detailed_findings: true
                 max_detailed_findings: 1000
           EOF
+          # Accepted findings live in .ash-suppressions.yaml (see docs/TESTING.md).
+          # ASH v3 reads suppressions from global_settings.suppressions, so merge
+          # the allowlist there instead of appending a top-level key.
+          if [ -f "${GITHUB_WORKSPACE}/.ash-suppressions.yaml" ]; then
+            python - "${GITHUB_WORKSPACE}/.ash-suppressions.yaml" .ash_config.yaml <<'PY'
+          import sys
+
+          import yaml
+
+          src, dst = sys.argv[1], sys.argv[2]
+          with open(dst) as f:
+              cfg = yaml.safe_load(f)
+          with open(src) as f:
+              entries = (yaml.safe_load(f) or {}).get("suppressions") or []
+          for entry in entries:
+              if not all(entry.get(k) for k in ("rule_id", "path", "reason")):
+                  sys.exit(f"invalid suppression (needs rule_id, path, reason): {entry}")
+          cfg["global_settings"]["suppressions"] = entries
+          with open(dst, "w") as f:
+              yaml.safe_dump(cfg, f, sort_keys=False)
+          PY
+          fi
           ash --mode container --config .ash_config.yaml 2>&1 | tee /tmp/ash-output.log
-        continue-on-error: true
 
       - name: Process scan results
-        if: steps.changed-files.outputs.any_changed == 'true'
+        if: always() && steps.changed-files.outputs.any_changed == 'true'
         id: process-results
         run: |
           SUMMARY_FILE="/tmp/pr_comment.md"
@@ -93,6 +118,11 @@ jobs:
               sed -n "${TABLE_START},${TABLE_END}p" /tmp/ash-output.log | \
               sed 's/\x1b\[[0-9;]*m//g' | grep "^│" | sed 's/│/|/g' >> "$SUMMARY_FILE"
             fi
+            # ASH v3.8+ no longer prints the summary table; it writes a Markdown report.
+            REPORT="/tmp/ash-scan/.ash/ash_output/reports/ash.summary.md"
+            if [ -f "$REPORT" ]; then
+              cat "$REPORT" >> "$SUMMARY_FILE"
+            fi
             if grep -q "Actionable findings detected!" /tmp/ash-output.log; then
               echo "has_findings=true" >> "$GITHUB_OUTPUT"
             else
@@ -100,25 +130,33 @@ jobs:
             fi
           fi
 
+      # The comment workflow derives the PR from the workflow_run event, never
+      # from this artifact, so only the scan report is published here.
       - name: Prepare artifacts
-        if: steps.changed-files.outputs.any_changed == 'true'
-        env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_SHA: ${{ github.event.pull_request.head.sha }}
+        if: always() && steps.changed-files.outputs.any_changed == 'true'
         run: |
           mkdir -p /tmp/ash-artifacts
-          echo "${PR_NUMBER}" > /tmp/ash-artifacts/pr_number.txt
-          echo "${PR_SHA}" > /tmp/ash-artifacts/pr_sha.txt
           cp /tmp/pr_comment.md /tmp/ash-artifacts/pr_comment.md 2>/dev/null || true
-          cp -r /tmp/ash-scan/.ash/ /tmp/ash-artifacts/.ash/ 2>/dev/null || true
+          # upload-artifact skips hidden paths, so copy the reports to a visible directory.
+          cp -r /tmp/ash-scan/.ash/ash_output/reports /tmp/ash-artifacts/reports 2>/dev/null || true
 
       - name: Upload ASH results
         if: steps.changed-files.outputs.any_changed == 'true' && always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ash-security-results
           path: /tmp/ash-artifacts/
           retention-days: 30
+
+      - name: Fail on findings at or above HIGH
+        if: always() && steps.changed-files.outputs.any_changed == 'true'
+        env:
+          HAS_FINDINGS: ${{ steps.process-results.outputs.has_findings }}
+        run: |
+          if [ "${HAS_FINDINGS}" = "true" ]; then
+            echo "::error::ASH reported findings at or above HIGH. Fix them or add a reviewed entry to .ash-suppressions.yaml."
+            exit 1
+          fi
 
       - name: Skip message
         if: steps.changed-files.outputs.any_changed == 'false'

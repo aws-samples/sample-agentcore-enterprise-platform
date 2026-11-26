@@ -12,11 +12,18 @@ role's inline policy. Two statements were unscoped:
 
 Parsed from source rather than synthesized: the CI test job has no aws-cdk-lib,
 and this is the cheapest thing that fails if someone re-widens them.
+
+The workload-identity checks (Bug H8) are synth tests instead: the scoped ARNs
+are built with format_arn, which source parsing cannot evaluate. They skip when
+aws-cdk-lib is not installed.
 """
 
 import ast
+import json
 import sys
 from pathlib import Path
+
+import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
@@ -39,10 +46,32 @@ WILDCARD_ALLOWED = {
     "xray:PutTraceSegments",
     "xray:PutTelemetryRecords",
     "cloudwatch:PutMetricData",
-    # AgentCore data/control plane — scoping tracked separately, see the comment
-    # on the AgentCoreAccess statement.
-    "bedrock-agentcore:",
+    # AgentCore data plane — scoping tracked separately, see the comment on the
+    # AgentCoreAccess statement. Listed one by one (not a "bedrock-agentcore:"
+    # prefix) so workload-identity actions can never ride along on "*".
+    "bedrock-agentcore:InvokeAgentRuntime",
+    "bedrock-agentcore:InvokeGateway",
+    "bedrock-agentcore:GetGateway",
+    "bedrock-agentcore:ListGateways",
+    "bedrock-agentcore:CreateEvent",
+    "bedrock-agentcore:GetEvent",
+    "bedrock-agentcore:ListEvents",
+    "bedrock-agentcore:DeleteEvent",
+    "bedrock-agentcore:ListSessions",
+    "bedrock-agentcore:RetrieveMemoryRecords",
+    "bedrock-agentcore:StartBrowserSession",
+    "bedrock-agentcore:StopBrowserSession",
+    "bedrock-agentcore:ConnectBrowserAutomationStream",
 }
+
+# Workload-identity / token-vault actions: must never be granted on "*".
+WORKLOAD_IDENTITY_ACTIONS = (
+    "bedrock-agentcore:GetResourceOauth2Token",
+    "bedrock-agentcore:CreateWorkloadIdentity",
+    "bedrock-agentcore:GetWorkloadAccessToken",
+    "bedrock-agentcore:GetWorkloadAccessTokenForJWT",
+    "bedrock-agentcore:GetWorkloadAccessTokenForUserId",
+)
 
 
 def _policy_statements() -> list[dict]:
@@ -104,7 +133,7 @@ def test_every_remaining_wildcard_is_a_known_aws_limitation():
         if "*" not in statement["resources"]:
             continue
         for action in statement["actions"]:
-            if not any(action.startswith(a) for a in WILDCARD_ALLOWED):
+            if action not in WILDCARD_ALLOWED:
                 unexplained.append(f"{statement['sid']}: {action}")
     assert not unexplained, (
         "wildcard resource on actions that are not documented as requiring it: "
@@ -149,6 +178,97 @@ def test_code_interpreter_session_actions_are_complete_and_scoped():
     assert 'account="aws"' in source
     assert 'resource="code-interpreter"' in source
     assert 'resource_name="aws.codeinterpreter.v1"' in source
+
+
+RT_NAME = "proj_dev_orchestrator"
+
+
+def _as_list(value) -> list:
+    return value if isinstance(value, list) else [value]
+
+
+def _render(value) -> str:
+    """Flatten a synthesized ARN (Fn::Join / Ref) into a comparable string."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict) and "Fn::Join" in value:
+        sep, parts = value["Fn::Join"]
+        return sep.join(_render(part) for part in parts)
+    if isinstance(value, dict) and "Ref" in value:
+        ref = value["Ref"]
+        return f"${{{ref}}}"
+    return json.dumps(value, sort_keys=True)
+
+
+@pytest.fixture(scope="module")
+def synth_statements() -> list[dict]:
+    """Every statement of the synthesized runtime stack's IAM policies."""
+    cdk = pytest.importorskip("aws_cdk")
+    assertions = pytest.importorskip("aws_cdk.assertions")
+    from stacks.runtime_stack import RuntimeStack
+
+    app = cdk.App()
+    stack = RuntimeStack(
+        app,
+        "RuntimeScopingTest",
+        project_name="proj",
+        environment="dev",
+        component_name="orchestrator",
+        source_dir="infra_utils",
+        env=cdk.Environment(account="111122223333", region="us-east-1"),
+    )
+    template = assertions.Template.from_stack(stack)
+    statements = []
+    for resource in template.find_resources("AWS::IAM::Policy").values():
+        statements += resource["Properties"]["PolicyDocument"]["Statement"]
+    return statements
+
+
+def test_synth_runtime_role_cannot_mint_tokens_for_arbitrary_users(
+    synth_statements,
+):
+    """ForUserId takes an unverified user id: an impersonation path (Bug H8)."""
+    for statement in synth_statements:
+        assert "bedrock-agentcore:GetWorkloadAccessTokenForUserId" not in _as_list(
+            statement["Action"]
+        ), f"{statement.get('Sid')} grants GetWorkloadAccessTokenForUserId"
+
+
+def test_synth_workload_identity_actions_are_never_on_star(synth_statements):
+    offenders = []
+    for statement in synth_statements:
+        if statement["Effect"] == "Deny":
+            continue
+        if "*" not in _as_list(statement["Resource"]):
+            continue
+        for action in _as_list(statement["Action"]):
+            if action in WORKLOAD_IDENTITY_ACTIONS:
+                offenders.append(f"{statement.get('Sid')}: {action}")
+    assert not offenders, f"workload-identity actions on '*': {offenders}"
+
+
+def test_synth_workload_identity_statement_is_scoped_to_own_identity(
+    synth_statements,
+):
+    by_sid = {s.get("Sid"): s for s in synth_statements}
+    wid = by_sid["AgentCoreWorkloadIdentity"]
+    actions = _as_list(wid["Action"])
+    resources = _as_list(wid["Resource"])
+    assert "*" not in resources
+    assert all(a in WORKLOAD_IDENTITY_ACTIONS for a in actions)
+    assert "bedrock-agentcore:GetWorkloadAccessTokenForUserId" not in actions
+
+    rendered = [_render(r) for r in resources]
+    assert not any(r.endswith(":*") or r == "*" for r in rendered), rendered
+    identity_arns = [r for r in rendered if "/workload-identity/" in r]
+    assert identity_arns, rendered
+    assert all(
+        r.endswith(f"workload-identity-directory/default/workload-identity/{RT_NAME}-*")
+        for r in identity_arns
+    ), identity_arns
+
+    broad = _as_list(by_sid["AgentCoreAccess"]["Action"])
+    assert not any(a in WORKLOAD_IDENTITY_ACTIONS for a in broad)
 
 
 def test_ssm_reads_are_scoped_to_the_project_path():

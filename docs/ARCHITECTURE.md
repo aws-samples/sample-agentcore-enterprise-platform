@@ -121,3 +121,23 @@ deployment:
 - **Network (opt-in):** the `networking` stack adds a VPC and endpoints; the
   gateway VPC endpoint policy allows OAuth pass-through while org-locking SigV4
   calls.
+
+## Memory isolation model
+
+- **Per-actor namespaces.** Every long-term strategy in `stacks/memory_stack.py`
+  writes to a namespace templated on AgentCore Memory's `{actorId}`
+  placeholder: `/users/{actorId}/preferences` (user preference) and
+  `/users/{actorId}/facts` (semantic, only with `use_long_term_memory`). No
+  namespace is shared between users.
+- **The actor is the verified JWT `sub`.** The agents take the actor id from
+  `extract_user_id_from_context` (signature, issuer, and client verified),
+  never from the request body. Actor ids that are not namespace-safe (for
+  example containing `/` or braces) are rejected.
+- **Retrieval is scoped to the caller.** The Strands session manager is built
+  with a retrieval config keyed only by `/users/{sub}/...`, with `top_k` and
+  `relevance_score` from the `LTM_TOP_K` / `LTM_RELEVANCE_SCORE` runtime env
+  (defaults 10 and 0.3), so user B cannot recall user A's records.
+- **Scope.** Retrieval wiring currently covers the `strands-agent` and
+  `agui-strands-agent` patterns. The other patterns are tracked under the
+  separate memory feature. Short-term events are already partitioned by
+  `actor_id` + `session_id`.

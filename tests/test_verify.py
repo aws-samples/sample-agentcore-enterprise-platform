@@ -108,6 +108,68 @@ def test_migration_preserves_non_runtime_checks():
     ]
 
 
+ALL_SUFFIXES = {
+    "auth",
+    "identity",
+    "gateway",
+    "memory",
+    "observability",
+    "networking",
+    "runtime-orchestrator",
+    "runtime-code-agent",
+    "runtime-research-agent",
+}
+
+
+def test_federated_platform_side_checks_platform_resources_only():
+    got = names(
+        checks_for(
+            ALL_SUFFIXES,
+            "orchestrator",
+            require_guardrails=True,
+            role="platform",
+        )
+    )
+    assert got == ["identity", "gateway", "observability"]
+
+
+def test_federated_platform_side_keeps_alarms():
+    got = names(checks_for(ALL_SUFFIXES, "orchestrator", alarms=True, role="platform"))
+    assert got == ["identity", "gateway", "observability", "alarms"]
+
+
+def test_federated_platform_side_of_a_real_config():
+    config = PlatformConfig.model_validate(
+        {
+            "deployment": {
+                "strategy": "federated",
+                "platform_account": "111111111111",
+                "workload_accounts": ["222222222222"],
+                "federation": {
+                    "gateway_url": "https://gw.example/mcp",
+                    "issuer_url": "https://issuer.example",
+                    "m2m_client_id": "client",
+                    "m2m_client_secret_name": "secret-name",
+                },
+            },
+            "agents": {"a2a": True},
+            "security": {"networking": True},
+        }
+    )
+    prefix = f"{config.project}-{config.environment}-"
+    footprint = {s.removeprefix(prefix) for s in config.expected_stacks("111111111111")}
+    role = config.federated_role("111111111111")
+    got = names(checks_for(footprint, "orchestrator", role=role))
+    assert got == ["identity", "gateway", "observability"]
+
+
+def test_workload_side_keeps_runtime_checks():
+    got = names(checks_for(ALL_SUFFIXES, "orchestrator", role="workload"))
+    assert "orchestrator invoke" in got
+    assert "networking" in got
+    assert "memory" in got
+
+
 def test_require_guardrails_selects_the_enforcement_check():
     on = names(checks_for(suffixes(), "orchestrator", require_guardrails=True))
     assert "guardrail enforcement" in on

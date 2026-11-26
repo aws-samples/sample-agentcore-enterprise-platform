@@ -185,8 +185,9 @@ export AWS_PROFILE=<your-profile>   # Skip if you use default credentials
 ./scripts/deploy.sh verify
 
 # Invoke the deployed agent. Add --session <id> to continue a conversation.
-# (Ask the default orchestrator about its role, not its tools — it delegates
-# to sub-agents and deliberately has none of its own.)
+# (The default orchestrator is a single Strands agent with no tools: it
+# answers directly from the model and does not call the A2A sub-agents.
+# Ask it about its role, not its tools.)
 python scripts/invoke.py "Hello! What kinds of tasks can you help with?"
 
 # Use the AG-UI protocol for agui-* patterns.
@@ -335,7 +336,7 @@ Use these settings to change the platform's name, environment, identity provider
 | Context key | Environment variable | Default | Meaning |
 |-------------|----------------------|---------|---------|
 | `project` | `PROJECT_NAME` | `agentcore-workshop` | Project identifier |
-| `deployment_mode` | `DEPLOYMENT_MODE` | `workshop` | `production` enables retained lifecycle and requires the complete secure control set in `platform.yaml` |
+| `deployment_mode` | `DEPLOYMENT_MODE` | `workshop` | `production` enables retained lifecycle and requires the complete secure control set in `platform.yaml`. With a `platform.yaml`, `deployment.mode` is authoritative: a differing value here is refused (see below) |
 | `environment` | `ENVIRONMENT` | `dev` | Environment name |
 | `region` | `AWS_REGION` | `us-east-1` | AWS Region |
 | `idp_type` | `IDP_TYPE` | `cognito` | IdP: cognito/entra_id/okta/ping |
@@ -360,6 +361,8 @@ python -m infra_utils.platform_config platform.yaml
 ```
 
 Interactive `./scripts/deploy.sh deploy` answers go into the gitignored `workshop.env` file and are used on later runs. Environment variables win over `platform.yaml`, which wins over `workshop.env`, which wins over defaults. Check the current values with `./scripts/deploy.sh config`. Start over with `./scripts/deploy.sh config --reset`.
+
+The one exception is the deployment mode. `deployment.mode` in `platform.yaml` is the source of truth. A `DEPLOYMENT_MODE` environment variable or `-c deployment_mode` value that differs from it stops the synth with an error, so a stray variable in a CI shell cannot downgrade a production manifest to workshop mode. A workshop manifest likewise cannot be promoted to production from the command line. To force a different mode deliberately, pass `-c allow_mode_override=true` (context only, never an environment variable). The synth then prints a loud warning. Production still requires the manifest itself to declare `mode: production`.
 
 Secrets such as an IdP client secret or API keys are never written to `workshop.env`. They go to AWS Secrets Manager.
 

@@ -10,12 +10,16 @@ import os
 
 from ag_ui.core import RunAgentInput, RunErrorEvent
 from ag_ui_strands import StrandsAgent
-from bedrock_agentcore.memory.integrations.strands.config import AgentCoreMemoryConfig
+from bedrock_agentcore.memory.integrations.strands.config import (
+    AgentCoreMemoryConfig,
+    RetrievalConfig,
+)
 from bedrock_agentcore.memory.integrations.strands.session_manager import (
     AgentCoreMemorySessionManager,
 )
 from bedrock_agentcore.runtime import BedrockAgentCoreApp, RequestContext
 from shared.auth import extract_user_id_from_context
+from shared.jwt_claims import memory_retrieval_plan
 from strands import Agent
 from strands.models import BedrockModel
 from tools.code_interpreter import StrandsCodeInterpreterTools
@@ -75,6 +79,14 @@ def _build_model() -> BedrockModel:
     return BedrockModel(model_id=MODEL_ID, temperature=0.1, **_GUARDRAIL_KWARGS)
 
 
+def _retrieval_config(user_id: str, retrieval_config_cls=RetrievalConfig) -> dict:
+    """Per-actor long-term retrieval, scoped by the verified JWT sub only."""
+    return {
+        namespace: retrieval_config_cls(**settings)
+        for namespace, settings in memory_retrieval_plan(user_id).items()
+    }
+
+
 def _create_session_manager(
     user_id: str, session_id: str
 ) -> AgentCoreMemorySessionManager:
@@ -82,7 +94,10 @@ def _create_session_manager(
     if not memory_id:
         raise ValueError("MEMORY_ID environment variable is required")
     config = AgentCoreMemoryConfig(
-        memory_id=memory_id, session_id=session_id, actor_id=user_id
+        memory_id=memory_id,
+        session_id=session_id,
+        actor_id=user_id,
+        retrieval_config=_retrieval_config(user_id),
     )
     return AgentCoreMemorySessionManager(
         agentcore_memory_config=config,

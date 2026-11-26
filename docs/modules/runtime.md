@@ -42,8 +42,9 @@ keep serving the previous pattern's image.
 ## Agent patterns and protocols
 
 `agent_pattern` selects which Dockerfile inside `agent-code/` the
-orchestrator stack builds. Seven patterns: `orchestrator` (default,
-delegating, no tools), `strands-agent`, `langgraph-agent`,
+orchestrator stack builds. Seven patterns: `orchestrator` (default, a
+single Strands agent with no tools that answers from the model and does
+not call the A2A sub-agents), `strands-agent`, `langgraph-agent`,
 `claude-sdk-agent`, `claude-sdk-multi-agent`, `agui-strands-agent`,
 `agui-langgraph-agent`. The A2A sub-agents always build their own
 `code-agent` / `research-agent` Dockerfiles.

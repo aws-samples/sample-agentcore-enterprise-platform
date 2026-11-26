@@ -30,6 +30,8 @@ from infra_utils.platform_config import (
     apply_environment_overrides,
     gateway_tool_configs,
     load_platform_config,
+    migration_production_error,
+    resolve_deployment_mode,
     to_env,
 )
 from stacks.auth_stack import AuthStack
@@ -56,11 +58,30 @@ _config_path = app.node.try_get_context("platform_config") or os.environ.get(
 )
 platform_config: PlatformConfig | None = None
 _yaml_env: dict[str, str] = {}
+# deployment.mode in platform.yaml is the source of truth: a differing
+# context/env value is refused unless -c allow_mode_override=true. The override
+# is context-only so a stray environment variable can never set it.
+_mode_context = str(app.node.try_get_context("deployment_mode") or "")
+_mode_env = os.environ.get("DEPLOYMENT_MODE", "")
+_allow_mode_override = (
+    str(app.node.try_get_context("allow_mode_override")).lower() == "true"
+)
+_manifest_mode: str | None = None
 if os.path.exists(_config_path):
+    _loaded_config = load_platform_config(_config_path)
+    # Read before apply_environment_overrides, which may rewrite the mode.
+    _manifest_mode = _loaded_config.deployment.mode
+    deployment_mode = resolve_deployment_mode(
+        _manifest_mode, _mode_context, _mode_env, _allow_mode_override
+    )
+    # Validate the overrides under the RESOLVED mode, not the raw
+    # DEPLOYMENT_MODE variable, so the config and the stacks share one mode.
     platform_config = apply_environment_overrides(
-        load_platform_config(_config_path), dict(os.environ)
+        _loaded_config, {**dict(os.environ), "DEPLOYMENT_MODE": deployment_mode}
     )
     _yaml_env = to_env(platform_config)
+else:
+    deployment_mode = resolve_deployment_mode(None, _mode_context, _mode_env)
 
 
 def cfg(context_key: str, env_key: str, default: str) -> str:
@@ -86,15 +107,8 @@ account = os.environ.get("CDK_DEFAULT_ACCOUNT", "")
 
 cdk_env = cdk.Environment(account=account, region=region)
 prefix = f"{project}-{env_name}"
-deployment_mode = cfg("deployment_mode", "DEPLOYMENT_MODE", "workshop")
-if deployment_mode not in {"workshop", "production"}:
-    raise ValueError(
-        f"deployment_mode must be 'workshop' or 'production', got {deployment_mode!r}"
-    )
 production_mode = deployment_mode == "production"
-if production_mode and (
-    platform_config is None or platform_config.deployment.mode != "production"
-):
+if production_mode and _manifest_mode != "production":
     raise ValueError(
         "Production mode must be declared in a validated platform.yaml; direct "
         "context/env flags cannot bypass the production control gate."
@@ -283,6 +297,14 @@ if migration_enabled:
             "the customer's container comes from (migration.source in platform.yaml)."
         )
 
+# Migration x production is refused: the migrated container's Bedrock calls
+# carry no guardrail, so DenyUngovernedInference would block all of them.
+_migration_production_error = migration_production_error(
+    deployment_mode, migration_enabled
+)
+if _migration_production_error:
+    raise ValueError(_migration_production_error)
+
 # Optional Bedrock model ID override (cross-region inference profile, e.g.
 # us.anthropic.claude-sonnet-5). When unset, MODEL_ID is NOT injected into the
 # runtimes and each agent pattern falls back to its in-code DEFAULT_MODEL_ID —
@@ -395,12 +417,36 @@ cdk.Tags.of(app).add("ManagedBy", "CDK")
 cdk.Tags.of(app).add("DeploymentMode", deployment_mode)
 
 # ═══════════════════════════════════════════════════════════════
+# MULTI-ACCOUNT ROLE (federated strategy)
+# ═══════════════════════════════════════════════════════════════
+# The same platform.yaml deploys both sides: the account decides the role.
+#   platform account → shared services (auth, identity, gateway, security,
+#                      observability), no agent runtimes and so no VPC.
+#   workload account → agent runtimes + own memory + own credential provider
+#                      that exchanges the platform Cognito M2M credentials.
+# Trust is pure OAuth — verified live cross-account, docs/MULTI_ACCOUNT.md.
+federated_role = platform_config.federated_role(account) if platform_config else None
+is_fed_platform = federated_role == "platform"
+is_fed_workload = federated_role == "workload"
+fed = platform_config.deployment.federation if platform_config else None
+if is_fed_workload and not (fed and fed.is_complete):
+    raise ValueError(
+        "This account is a federated WORKLOAD account, but deployment.federation "
+        "is incomplete. The platform team provides gateway_url, issuer_url, "
+        "m2m_client_id, and m2m_client_secret_name (run `deploy.sh export` in the "
+        "platform account); the secret itself goes into THIS account's Secrets "
+        "Manager under that name."
+    )
+
+# ═══════════════════════════════════════════════════════════════
 # FOUNDATION LAYER
 # ═══════════════════════════════════════════════════════════════
 
 # ── Optional: Networking (VPC, subnets, endpoints) ──
 networking_stack = None
-if enable_networking:
+# The VPC only hosts agent runtimes, so a federated platform account (shared
+# services, no runtimes) gets none: no idle VPC or NAT gateways there.
+if enable_networking and not is_fed_platform:
     import boto3
     from botocore.exceptions import BotoCoreError, ClientError
 
@@ -462,28 +508,6 @@ if enable_security:
         enable_cloudtrail=True,
         retain_data=production_mode,
         env=cdk_env,
-    )
-
-# ═══════════════════════════════════════════════════════════════
-# MULTI-ACCOUNT ROLE (federated strategy)
-# ═══════════════════════════════════════════════════════════════
-# The same platform.yaml deploys both sides: the account decides the role.
-#   platform account → shared services (auth, identity, gateway, security,
-#                      networking, observability), no agent runtimes.
-#   workload account → agent runtimes + own memory + own credential provider
-#                      that exchanges the platform Cognito M2M credentials.
-# Trust is pure OAuth — verified live cross-account, docs/MULTI_ACCOUNT.md.
-federated_role = platform_config.federated_role(account) if platform_config else None
-is_fed_platform = federated_role == "platform"
-is_fed_workload = federated_role == "workload"
-fed = platform_config.deployment.federation if platform_config else None
-if is_fed_workload and not (fed and fed.is_complete):
-    raise ValueError(
-        "This account is a federated WORKLOAD account, but deployment.federation "
-        "is incomplete. The platform team provides gateway_url, issuer_url, "
-        "m2m_client_id, and m2m_client_secret_name (run `deploy.sh export` in the "
-        "platform account); the secret itself goes into THIS account's Secrets "
-        "Manager under that name."
     )
 
 # ═══════════════════════════════════════════════════════════════
@@ -626,8 +650,6 @@ if not is_fed_platform:
         else "",
         event_expiry_days=memory_event_expiry_days,
         use_long_term_memory=use_long_term_memory,
-        ltm_top_k=ltm_top_k,
-        ltm_relevance_score=ltm_relevance_score,
         enable_resource_policies=enable_resource_policies,
         org_id=org_id,
         retain_data=production_mode,
@@ -708,6 +730,7 @@ if not is_fed_platform:
         project_name=project,
         environment=env_name,
         component_name="orchestrator",
+        log_retention_days=log_retention_days,
         source_dir="agent-code",
         dockerfile_pattern=agent_pattern,
         runtime_type="orchestrator",
@@ -761,6 +784,7 @@ if enable_a2a and not is_fed_platform:
         project_name=project,
         environment=env_name,
         component_name="code-agent",
+        log_retention_days=log_retention_days,
         # Build context is agent-code/ (not the pattern dir): the A2A serving
         # helper lives in shared/, so the Dockerfile has to copy it.
         source_dir="agent-code",
@@ -790,6 +814,7 @@ if enable_a2a and not is_fed_platform:
         project_name=project,
         environment=env_name,
         component_name="research-agent",
+        log_retention_days=log_retention_days,
         source_dir="agent-code",
         dockerfile_pattern="research-agent",
         runtime_type="a2a_agent",

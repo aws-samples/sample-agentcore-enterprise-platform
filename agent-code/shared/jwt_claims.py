@@ -9,7 +9,11 @@ checks that the verified token is one we should accept: right issuer, one of our
 clients, and an identity to act as.
 """
 
+import logging
+import re
 import time
+
+logger = logging.getLogger(__name__)
 
 # Asymmetric algorithms the supported IdPs (Cognito, Entra, Okta, Ping) sign
 # with. Never 'none', never HS*: a symmetric alg would let anyone holding the
@@ -129,3 +133,89 @@ def validate_claims(
             "Token has no 'sub' claim, so there is no identity to act as."
         )
     return subject
+
+
+# Long-term memory namespaces, one set per actor. Must match the templates in
+# stacks/memory_stack.py (tests/test_memory_namespaces.py checks they agree).
+LTM_PREFERENCES_NAMESPACE = "/users/{actorId}/preferences"
+LTM_FACTS_NAMESPACE = "/users/{actorId}/facts"
+DEFAULT_LTM_TOP_K = 10
+DEFAULT_LTM_RELEVANCE_SCORE = 0.3
+
+# Namespace-safe actor ids: no '/', braces, or whitespace, so an actor id can
+# never address another actor's namespace or a parent prefix.
+_SAFE_ACTOR_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:@-]{0,254}")
+
+
+def build_retrieval_namespaces(actor_id: str, include_facts: bool = True) -> list[str]:
+    """Resolve the per-actor namespace templates for one verified actor.
+
+    actor_id must be the verified JWT sub (validate_claims), never a value
+    from the request body.
+    """
+    if not isinstance(actor_id, str) or not _SAFE_ACTOR_ID.fullmatch(actor_id):
+        raise ValueError("Actor id is empty or not namespace-safe")
+    templates = [LTM_PREFERENCES_NAMESPACE]
+    if include_facts:
+        templates.append(LTM_FACTS_NAMESPACE)
+    return [template.replace("{actorId}", actor_id) for template in templates]
+
+
+def _env_setting(source, key, parse, default, valid, rule):
+    """Parse one setting; on a bad value log a warning and use the default."""
+    raw = source.get(key)
+    if not raw:
+        return default
+    try:
+        value = parse(raw)
+    except ValueError:
+        value = None
+    if value is None or not valid(value):
+        logger.warning("Invalid %s=%r (%s); using default %s", key, raw, rule, default)
+        return default
+    return value
+
+
+def ltm_retrieval_settings(env: dict | None = None) -> tuple[int, float]:
+    """(top_k, relevance_score) from LTM_TOP_K / LTM_RELEVANCE_SCORE.
+
+    An invalid value never disables memory or fails the request: it is logged
+    as a warning and the default is used, identically for every agent.
+    """
+    import os
+
+    source = env if env is not None else os.environ
+    top_k = _env_setting(
+        source,
+        "LTM_TOP_K",
+        int,
+        DEFAULT_LTM_TOP_K,
+        lambda v: v >= 1,
+        "must be an integer >= 1",
+    )
+    relevance_score = _env_setting(
+        source,
+        "LTM_RELEVANCE_SCORE",
+        float,
+        DEFAULT_LTM_RELEVANCE_SCORE,
+        lambda v: 0.0 <= v <= 1.0,
+        "must be a number between 0 and 1",
+    )
+    return top_k, relevance_score
+
+
+def memory_retrieval_plan(actor_id: str, env: dict | None = None) -> dict[str, dict]:
+    """Retrieval settings keyed by the actor's own namespaces.
+
+    The facts namespace is only included when USE_LONG_TERM_MEMORY is true,
+    because the semantic strategy only exists then.
+    """
+    import os
+
+    source = env if env is not None else os.environ
+    top_k, relevance_score = ltm_retrieval_settings(source)
+    include_facts = source.get("USE_LONG_TERM_MEMORY", "false").lower() == "true"
+    return {
+        namespace: {"top_k": top_k, "relevance_score": relevance_score}
+        for namespace in build_retrieval_namespaces(actor_id, include_facts)
+    }

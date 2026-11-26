@@ -1,5 +1,11 @@
-"""Workshop orchestrator agent — deployed to AgentCore Runtime."""
+"""Workshop orchestrator agent — deployed to AgentCore Runtime.
 
+A single Strands agent with no tools: it answers directly from the model and
+does not call the A2A sub-agents. The blocking model call runs in a worker
+thread so the runtime's /ping health check is served during long requests.
+"""
+
+import asyncio
 import os
 
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
@@ -52,13 +58,19 @@ SYSTEM_PROMPT = """You are a helpful workshop assistant for the AgentCore Platfo
 You help participants understand and use Amazon Bedrock AgentCore services."""
 
 
-@app.entrypoint
-async def invoke(payload=None):
-    query = payload.get("prompt", "Hello!") if payload else "Hello!"
+def _answer(query: str) -> str:
+    """Build the agent and run it synchronously (call off the event loop)."""
     model = BedrockModel(model_id=MODEL_ID, **_GUARDRAIL_KWARGS)
     agent = Agent(system_prompt=SYSTEM_PROMPT, model=model)
     response = agent(query)
-    return {"status": "success", "response": response.message["content"][0]["text"]}
+    return response.message["content"][0]["text"]
+
+
+@app.entrypoint
+async def invoke(payload=None):
+    query = payload.get("prompt", "Hello!") if payload else "Hello!"
+    text = await asyncio.to_thread(_answer, query)
+    return {"status": "success", "response": text}
 
 
 if __name__ == "__main__":

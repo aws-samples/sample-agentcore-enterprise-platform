@@ -209,7 +209,7 @@ User → Orchestrator (HTTP, JWT auth)
 **Key difference: A2A uses SigV4, not JWT**
 - HTTP runtimes: user-facing, JWT auth (Cognito token)
 - A2A runtimes: service-to-service, SigV4 auth (IAM)
-- The orchestrator calls sub-agents using its IAM role
+- A caller invokes the A2A sub-agents with its IAM role (the default orchestrator does not call them)
 
 **Deploy:**
 ```bash
@@ -219,7 +219,7 @@ cdk deploy agentcore-workshop-dev-runtime-code-agent agentcore-workshop-dev-runt
 
 **What to explain:**
 - Each agent has its own container, scaling, and lifecycle
-- Orchestrator decides what to delegate
+- A caller with an IAM role invokes each sub-agent directly; the default orchestrator does not delegate
 - A2A protocol handles routing and response aggregation
 - Each agent can have different models, tools, and permissions
 
