@@ -9,6 +9,41 @@ checks that the verified token is one we should accept: right issuer, one of our
 clients, and an identity to act as.
 """
 
+import time
+
+# Asymmetric algorithms the supported IdPs (Cognito, Entra, Okta, Ping) sign
+# with. Never 'none', never HS*: a symmetric alg would let anyone holding the
+# public key forge a token.
+ALLOWED_ALGORITHMS = ["RS256", "RS384", "RS512", "ES256", "ES384"]
+
+# Claims PyJWT must find before it will accept a token. Without exp a leaked
+# token would be valid forever. iat is not relied on anywhere, so not required.
+REQUIRED_CLAIMS = ["exp"]
+
+
+class SuccessCache:
+    """Cache the result of a successful build for ttl seconds.
+
+    A build that raises is never cached, so a transient failure (e.g. OIDC
+    discovery timing out) is retried on the next call instead of pinning a
+    wrong value for the life of the process.
+    """
+
+    def __init__(self, ttl: float, clock=time.monotonic):
+        self.ttl = ttl
+        self._clock = clock
+        self._value = None
+        self._expires = 0.0
+
+    def get(self, build):
+        now = self._clock()
+        if self._value is not None and now < self._expires:
+            return self._value
+        value = build()
+        self._value = value
+        self._expires = now + self.ttl
+        return value
+
 
 def gateway_token_scopes(env: dict | None = None) -> list[str]:
     """Scopes an agent requests for its Gateway M2M token.
@@ -40,17 +75,23 @@ class TokenRejected(ValueError):
     """The token was well-formed and signed but must not be trusted."""
 
 
-def _client_id(claims: dict) -> str | None:
-    """The OAuth client the token was issued to.
+def _client_ids(claims: dict) -> list:
+    """The OAuth client(s) the token was issued to.
 
     Cognito puts it in `aud` for user-pool ID/access tokens obtained by a user,
     and in `client_id` for client_credentials (M2M) access tokens. Checking only
-    `aud` silently accepts every M2M token in the account.
+    `aud` silently accepts every M2M token in the account. When `aud` is a list
+    every entry is a candidate, not just the first; `client_id` is consulted
+    only when there is no audience.
     """
     audience = claims.get("aud")
-    if isinstance(audience, list):
-        return audience[0] if audience else None
-    return audience or claims.get("client_id")
+    if isinstance(audience, str):
+        audience = [audience]
+    entries = [a for a in (audience or []) if a]
+    if entries:
+        return entries
+    client_id = claims.get("client_id")
+    return [client_id] if client_id else []
 
 
 def validate_claims(
@@ -74,10 +115,10 @@ def validate_claims(
         raise TokenRejected(f"Token issuer {issuer!r} is not {expected_issuer!r}")
 
     if allowed_clients:
-        client_id = _client_id(claims)
-        if client_id not in allowed_clients:
+        client_ids = _client_ids(claims)
+        if not any(c in allowed_clients for c in client_ids):
             raise TokenRejected(
-                f"Token client {client_id!r} is not one of this deployment's clients"
+                f"Token client {client_ids!r} is not one of this deployment's clients"
             )
 
     # token_use tells a Cognito access token from an ID token; both carry sub,
