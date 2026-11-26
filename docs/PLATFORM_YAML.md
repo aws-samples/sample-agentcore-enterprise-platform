@@ -83,7 +83,7 @@ Who issues the tokens the platform trusts.
 | Key | Type | Default | Env override | Description |
 |---|---|---|---|---|
 | `gateway.web_search` | one of: `auto`, `on`, `off` | `'auto'` | `ENABLE_WEB_SEARCH` | Built-in web-search connector on the gateway. `auto` turns it on only in regions where the connector exists. |
-| `gateway.tools` | list of str | `['sample-tool']` | — | Lambda tool names the gateway exposes. Schema-validated today; the deployed list still comes from `tool_configs` in `app.py` (docs/modules/gateway.md). |
+| `gateway.tools` | list of str or block | `['sample-tool']` | — | Gateway targets the gateway stack deploys; omitted = the `sample-tool` Lambda default. A bare name is a Lambda tool: `sample-tool`, or a handler directory under `tools/` (dashes become underscores) with its `tool_spec.json`. A block has a `name` and a `type`: `lambda` (optional `source_dir`, `tool_spec`, `env_vars`) or `openapi` (`schema_path` to a local JSON/YAML spec inlined at synth, plus `credential_provider` with `type` `api_key` or `oauth`, the AgentCore Identity provider `arn` and, for OAuth only, `scopes`). See docs/GATEWAY_TARGETS.md. |
 
 ## `security:`
 
