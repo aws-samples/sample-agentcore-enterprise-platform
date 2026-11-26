@@ -159,8 +159,9 @@ the path that checks it.
 The deployed runtime roles (`stacks/runtime_stack.py`, statement `AgentCoreWorkloadIdentity`)
 do not hold `GetWorkloadAccessTokenForUserId` at all. `GetWorkloadAccessToken`,
 `GetWorkloadAccessTokenForJWT`, `GetResourceOauth2Token` and `CreateWorkloadIdentity` are
-scoped to the runtime's own workload identity (`workload-identity-directory/default/workload-identity/<runtime-name>*`)
-and the default token vault, never `"*"`. `tests/test_runtime_role_scoping.py` guards both.
+scoped to the runtime's own workload identity (`workload-identity-directory/default/workload-identity/<runtime-name>-*`)
+and the default token vault, never `"*"`. `tests/test_runtime_role_scoping.py` synthesizes a
+runtime stack and asserts on the generated role policy that both hold.
 
 The exemption parameter defaults to a role ARN that cannot exist, so the control denies
 everyone until an operator supplies a real pattern. Narrow it only for a genuine break-glass

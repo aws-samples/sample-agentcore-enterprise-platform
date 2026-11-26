@@ -758,8 +758,10 @@ class RuntimeStack(cdk.Stack):
             # These actions declare several required resource types (directory,
             # workload identity, token vault, provider), hence every parent ARN.
             # The runtime's auto-created workload identity is named after the
-            # runtime (rt_name plus a service suffix); the role is built before
-            # the CfnRuntime exists, so it is matched by that name prefix.
+            # runtime (rt_name, a hyphen, then a service suffix); the role is
+            # built before the CfnRuntime exists, so it is matched as
+            # "{rt_name}-*" — the hyphen keeps a sibling runtime whose name
+            # merely starts with rt_name (e.g. a _g2 generation) out of scope.
             iam.PolicyStatement(
                 sid="AgentCoreWorkloadIdentity",
                 actions=[
@@ -779,7 +781,7 @@ class RuntimeStack(cdk.Stack):
                         service="bedrock-agentcore",
                         resource="workload-identity-directory",
                         resource_name=(
-                            f"default/workload-identity/{workload_identity_name}*"
+                            f"default/workload-identity/{workload_identity_name}-*"
                         ),
                         arn_format=cdk.ArnFormat.SLASH_RESOURCE_NAME,
                     ),
