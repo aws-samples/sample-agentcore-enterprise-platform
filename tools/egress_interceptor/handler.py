@@ -44,9 +44,37 @@ import boto3
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-_GUARDRAIL_ID = os.environ.get("GUARDRAIL_ID", "")
-_GUARDRAIL_VERSION = os.environ.get("GUARDRAIL_VERSION", "DRAFT")
 _OUTPUT_VERSION = "1.0"
+
+
+def _pinned_guardrail() -> tuple[str, str]:
+    """Return (id, version) of the published, pinned guardrail, or fail closed.
+
+    Same rule as the agents: no fallback to DRAFT. DRAFT needs
+    GUARDRAIL_ALLOW_DRAFT=true (workshop only), which is ignored when
+    ENVIRONMENT is prod. A missing id or version fails the cold start, so no
+    traffic passes the interceptor unscanned.
+    """
+    guardrail_id = os.environ.get("GUARDRAIL_ID", "").strip()
+    version = os.environ.get("GUARDRAIL_VERSION", "").strip()
+    environment = os.environ.get("ENVIRONMENT", "").strip().lower()
+    allow_draft = (
+        environment not in ("prod", "production")
+        and os.environ.get("GUARDRAIL_ALLOW_DRAFT", "").lower() == "true"
+    )
+    if not guardrail_id:
+        raise RuntimeError("GUARDRAIL_ID is not set; the interceptor fails closed")
+    if not version or (version.upper() == "DRAFT" and not allow_draft):
+        raise RuntimeError(
+            "GUARDRAIL_VERSION is not a published version "
+            f"(got {version!r}); DRAFT needs GUARDRAIL_ALLOW_DRAFT=true, which is "
+            "workshop only and ignored when ENVIRONMENT is prod"
+        )
+    return guardrail_id, version
+
+
+# Resolved once at cold start; every ApplyGuardrail call uses this same pin.
+_GUARDRAIL_ID, _GUARDRAIL_VERSION = _pinned_guardrail()
 
 _bedrock = boto3.client("bedrock-runtime")
 
@@ -60,7 +88,7 @@ def _apply_guardrail(text: str, source: str) -> str:
 
     source is "INPUT" (REQUEST) or "OUTPUT" (RESPONSE).
     """
-    if not text.strip() or not _GUARDRAIL_ID:
+    if not text.strip():
         return text
 
     resp = _bedrock.apply_guardrail(

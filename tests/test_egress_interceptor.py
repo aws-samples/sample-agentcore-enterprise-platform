@@ -11,6 +11,9 @@ from types import SimpleNamespace
 import pytest
 
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
+# The handler resolves its pinned guardrail at import and fails closed without one.
+os.environ.setdefault("GUARDRAIL_ID", "gr-test")
+os.environ.setdefault("GUARDRAIL_VERSION", "1")
 
 _PATH = (
     Path(__file__).resolve().parents[1] / "tools" / "egress_interceptor" / "handler.py"

@@ -1,5 +1,8 @@
 """Gateway Stack — AgentCore Gateway with Lambda and OpenAPI tool targets."""
 
+import hashlib
+import json
+
 import aws_cdk as cdk
 from aws_cdk import (
     aws_bedrock as bedrock,
@@ -157,11 +160,19 @@ class GatewayStack(cdk.Stack):
         interceptor_configurations = None
         if enable_egress_filter:
             guardrail_cfg = load_control("guardrail.egress-default")
+            # A hash of the definition sits in both descriptions. A changed
+            # definition then publishes a new pinned version.
+            definition_hash = hashlib.sha256(
+                json.dumps(guardrail_cfg, sort_keys=True).encode()
+            ).hexdigest()[:12]
             guardrail = bedrock.CfnGuardrail(
                 self,
                 "EgressGuardrail",
                 name=f"{prefix}-egress-guardrail",
-                description="Egress guardrail for AgentCore Gateway (PII + prompt injection).",
+                description=(
+                    "Egress guardrail for AgentCore Gateway (PII + prompt injection, "
+                    f"definition sha256:{definition_hash})."
+                ),
                 blocked_input_messaging=guardrail_cfg["BlockedInputMessaging"],
                 blocked_outputs_messaging=guardrail_cfg["BlockedOutputsMessaging"],
             )
@@ -175,6 +186,13 @@ class GatewayStack(cdk.Stack):
             ):
                 if cfn_key in guardrail_cfg:
                     guardrail.add_property_override(cfn_key, guardrail_cfg[cfn_key])
+            # The interceptor runs a published, pinned version, never DRAFT.
+            guardrail_version = bedrock.CfnGuardrailVersion(
+                self,
+                "EgressGuardrailVersion",
+                guardrail_identifier=guardrail.attr_guardrail_id,
+                description=f"Pinned egress guardrail (definition sha256:{definition_hash}).",
+            )
 
             interceptor_role = iam.Role(
                 self,
@@ -205,7 +223,9 @@ class GatewayStack(cdk.Stack):
                 role=interceptor_role,
                 environment={
                     "GUARDRAIL_ID": guardrail.attr_guardrail_id,
-                    "GUARDRAIL_VERSION": guardrail.attr_version,
+                    "GUARDRAIL_VERSION": guardrail_version.attr_version,
+                    # Lets the handler refuse a DRAFT opt-in in production.
+                    "ENVIRONMENT": environment,
                 },
             )
 

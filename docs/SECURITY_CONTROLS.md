@@ -44,7 +44,7 @@ against the exact lowercase string `"true"`; `-c enable_cedar=True` silently doe
 | 3 | **AgentCore Cedar policies** | `enable_cedar`, `cedar_mode` | `gateway_stack.py` ← `control-library/cedar/` | LOG_ONLY |
 | 4 | **Resource-based policy: Memory in-account-only** | `enable_resource_policies`, `org_id` | `memory_stack.py` ← `control-library/resource-policies/` | enforce |
 | 5+6 | **Bedrock Guardrails + egress Lambda interceptor** | `enable_egress_filter` | `gateway_stack.py`, `tools/egress_interceptor/` ← `control-library/guardrails/` | **masking**, not blocking (see below) |
-| 6b | **Guardrailed-only Bedrock inference** — IAM `Null`-deny on the runtime roles for inference calls carrying no `bedrock:GuardrailIdentifier`, plus a baseline guardrail per runtime (same `control-library` artifact as item 5+6) injected into the agents via `GUARDRAIL_ID`/`GUARDRAIL_VERSION`, with `bedrock:ApplyGuardrail` allowed only on that guardrail. Incompatible with the claude-sdk patterns (they cannot attach a guardrail; the config validator refuses the combination). Verify live with `scripts/check_guardrail_enforcement.py` | `require_guardrails` | `stacks/runtime_stack.py` ← `control-library/guardrails/` | off |
+| 6b | **Guardrailed-only Bedrock inference** — IAM `Null`-deny on the runtime roles for inference calls carrying no `bedrock:GuardrailIdentifier`, plus a baseline guardrail per runtime (same `control-library` artifact as item 5+6) with a published `CfnGuardrailVersion`, injected into the agents via `GUARDRAIL_ID`/`GUARDRAIL_VERSION` (agents refuse to start without a published version; `DRAFT` needs `GUARDRAIL_ALLOW_DRAFT=true`, workshop only), with `bedrock:ApplyGuardrail` allowed only on that guardrail. Incompatible with the claude-sdk patterns (they cannot attach a guardrail; the config validator refuses the combination). Verify live with `scripts/check_guardrail_enforcement.py`. It also fails if a plain benign prompt is blocked | `require_guardrails` | `stacks/runtime_stack.py` ← `control-library/guardrails/` | off |
 | 7 | **Observability: SNS + EventBridge alerting** | `enable_traceability` | `observability_stack.py` | off |
 | 8 | **AgentCore Identity: deny unverified-userId workload tokens**, plus a scoped credential-provider IAM reference policy | `enable_scp_identity_deny_token_for_userid` (Terraform var) | `control-library/terraform/org-guardrails/identity.tf` ← `control-library/scp/identity/`, `control-library/iam/` | enforce (denies everyone) |
 
@@ -310,8 +310,20 @@ repo uses today.
 - Cedar ships `LOG_ONLY`; validate decision logs before `cedar_mode=ENFORCE`, and narrow the
   shipped permit's principal first (its resource is already scoped to the gateway).
 - SCPs are additive-deny; attach to a sandbox OU first.
-- Guardrail resolves to the `DRAFT` version (via `guardrail.attr_version`, not a hardcoded
-  string); pin a published version for production.
+- Guardrails are published and pinned. Each runtime and gateway guardrail gets a
+  `CfnGuardrailVersion`, and its version number (not `DRAFT`) is what the runtimes and the
+  egress interceptor receive. Each description carries a sha256 of the guardrail definition,
+  so a definition change publishes a new version. Agents fail at start-up when
+  `GUARDRAIL_ID` is set without a published version. A workshop can still use `DRAFT`
+  explicitly with `GUARDRAIL_VERSION=DRAFT` and `GUARDRAIL_ALLOW_DRAFT=true`. That opt-in
+  is ignored when `ENVIRONMENT` is `prod`. The egress interceptor applies the same rule and
+  fails closed at cold start, using one pinned version for every `ApplyGuardrail` call.
+- The runtime stack records the pinned guardrail in SSM
+  (`/<project>/<env>/runtimes/<component>/guardrail/{id,version}`).
+  `scripts/check_guardrail_enforcement.py` verifies that exact version, not the latest one.
+- The `PROMPT_ATTACK` filter runs at `MEDIUM` input strength. `HIGH` blocked the benign
+  prompt "Health check: reply with one word." live. `scripts/check_guardrail_enforcement.py`
+  fails if a plain greeting is blocked.
 - Subscribe an endpoint to the item-7 SNS topic to actually receive alerts. The topic is not
   KMS-encrypted — add a CMK if alert contents are sensitive in your environment.
 - Item 7 needs CloudTrail management events, so enable it together with `enable_security`.
