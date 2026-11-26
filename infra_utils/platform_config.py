@@ -2132,6 +2132,17 @@ class PlatformConfig(BaseModel):
         return v
 
     @model_validator(mode="after")
+    def _migration_refuses_production(self) -> PlatformConfig:
+        # Same rule app.py and preflight apply, enforced at validation so
+        # `python -m infra_utils.platform_config` and synth agree.
+        error = migration_production_error(
+            self.deployment.mode, self.migration is not None
+        )
+        if error:
+            raise ValueError(error)
+        return self
+
+    @model_validator(mode="after")
     def _guardrails_need_an_attachable_model(self) -> PlatformConfig:
         # The Claude Agent SDK's Bedrock path has no way to attach a Bedrock
         # Guardrail, so the require_guardrails IAM deny would block every
@@ -2344,7 +2355,8 @@ class PlatformConfig(BaseModel):
         role = self.federated_role(account)
         prefix = f"{self.project}-{self.environment}"
         stacks: list[str] = []
-        if self.security.networking:
+        # The VPC only hosts agent runtimes: none on a federated platform side.
+        if self.security.networking and role != "platform":
             stacks.append(f"{prefix}-networking")
         if self.security.cloudtrail_alerting:
             stacks.append(f"{prefix}-security")

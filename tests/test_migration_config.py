@@ -207,6 +207,17 @@ def test_migration_in_workshop_mode_and_production_without_migration_pass():
     assert migration_production_error("production", False) is None
 
 
+def test_platform_config_refuses_migration_with_production_mode():
+    """The model itself refuses the combination, so `python -m
+    infra_utils.platform_config` fails the same way synth does."""
+    from tests.test_platform_config import _production_config
+
+    production = _production_config()
+    PlatformConfig.model_validate(production)  # valid without migration
+    with pytest.raises(ValidationError, match="DenyUngovernedInference"):
+        PlatformConfig.model_validate({**production, "migration": deep()})
+
+
 def test_layered_design_refuses_migration_with_production_posture():
     with pytest.raises(ValueError, match="DenyUngovernedInference"):
         compose_layers("migration", "centralized", "production")
