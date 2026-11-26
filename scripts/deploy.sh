@@ -559,6 +559,7 @@ check_org_id() {
     fi
     # enable_resource_policies=true makes the memory stack raise a ValueError
     # mid-deploy when org_id is empty — catch that here instead.
+    local org_prompted=0
     if [ "${ENABLE_RESOURCE_POLICIES:-}" = "true" ] && [ -z "${ORG_ID:-}" ]; then
         if [ "${NON_INTERACTIVE:-0}" != "1" ]; then
             echo ""
@@ -572,10 +573,23 @@ check_org_id() {
             log_error "(Find it with: aws organizations describe-organization --query Organization.Id --output text)"
             exit 1
         fi
+        org_prompted=1
+    fi
+    # Validate every org id, not only a prompted one: a value from
+    # platform.yaml or the environment (e.g. the security-focused preset's
+    # o-xxxxxxxxxx) must be refused like the Python validator refuses it.
+    if [ -n "${ORG_ID:-}" ]; then
         if ! [[ "$ORG_ID" =~ ^o-[a-z0-9]{10,32}$ ]]; then
             log_error "security.org_id '$ORG_ID' is not an AWS Organizations id (o- followed by 10-32 lowercase letters/digits)."
             exit 1
         fi
+        if [[ "$ORG_ID" =~ ^o-x{10,}$ ]] || [[ "$ORG_ID" =~ (replace|changeme|example) ]]; then
+            log_error "security.org_id is a placeholder ('$ORG_ID'): set it to your AWS Organizations id."
+            log_error "(Find it with: aws organizations describe-organization --query Organization.Id --output text)"
+            exit 1
+        fi
+    fi
+    if [ "$org_prompted" = "1" ]; then
         export ORG_ID
         save_config
     fi
