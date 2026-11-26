@@ -12,6 +12,19 @@ from constructs import Construct
 
 from infra_utils.policy_loader import load_control
 
+_RETENTION_BY_DAYS = {
+    30: logs.RetentionDays.ONE_MONTH,
+    90: logs.RetentionDays.THREE_MONTHS,
+    180: logs.RetentionDays.SIX_MONTHS,
+    365: logs.RetentionDays.ONE_YEAR,
+}
+
+
+def _retention(days: int) -> logs.RetentionDays:
+    if days not in _RETENTION_BY_DAYS:
+        raise ValueError("log_retention_days must be one of 30, 90, 180, or 365")
+    return _RETENTION_BY_DAYS[days]
+
 
 class NetworkingStack(cdk.Stack):
     def __init__(
@@ -42,13 +55,18 @@ class NetworkingStack(cdk.Stack):
             if availability_zones
             else {"max_azs": 2}
         )
+        # Production (retain_data) gets one NAT per AZ so a single-AZ failure
+        # does not cut egress; the workshop keeps one NAT to save cost.
+        nat_gateways = (
+            (len(availability_zones) if availability_zones else 2) if retain_data else 1
+        )
 
         self.vpc = ec2.Vpc(
             self,
             "VPC",
             vpc_name=f"{prefix}-vpc",
             ip_addresses=ec2.IpAddresses.cidr(vpc_cidr),
-            nat_gateways=1,
+            nat_gateways=nat_gateways,
             **az_kwargs,
             subnet_configuration=[
                 ec2.SubnetConfiguration(
@@ -61,6 +79,21 @@ class NetworkingStack(cdk.Stack):
                 ),
             ],
         )
+
+        # Production: VPC flow logs to CloudWatch with bounded retention.
+        if retain_data:
+            flow_log_group = logs.LogGroup(
+                self,
+                "VpcFlowLogs",
+                log_group_name=f"/aws/vpc/{prefix}-flow-logs",
+                retention=_retention(log_retention_days),
+                removal_policy=cdk.RemovalPolicy.RETAIN,
+            )
+            self.vpc.add_flow_log(
+                "FlowLog",
+                destination=ec2.FlowLogDestination.to_cloud_watch_logs(flow_log_group),
+                traffic_type=ec2.FlowLogTrafficType.ALL,
+            )
 
         # Security group for the AgentCore runtime ENIs. AgentCore creates the
         # interfaces in the private subnets; this group is what decides where the
@@ -162,21 +195,11 @@ class NetworkingStack(cdk.Stack):
 
         self.migration_dependency_probe = None
         if migration_private_dependencies:
-            retention_by_days = {
-                30: logs.RetentionDays.ONE_MONTH,
-                90: logs.RetentionDays.THREE_MONTHS,
-                180: logs.RetentionDays.SIX_MONTHS,
-                365: logs.RetentionDays.ONE_YEAR,
-            }
-            if log_retention_days not in retention_by_days:
-                raise ValueError(
-                    "log_retention_days must be one of 30, 90, 180, or 365"
-                )
             probe_log_group = logs.LogGroup(
                 self,
                 "MigrationDependencyProbeLogs",
                 log_group_name=f"/aws/lambda/{prefix}-migration-network-probe",
-                retention=retention_by_days[log_retention_days],
+                retention=_retention(log_retention_days),
                 removal_policy=(
                     cdk.RemovalPolicy.RETAIN
                     if retain_data
