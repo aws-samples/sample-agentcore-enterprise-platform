@@ -74,6 +74,6 @@ def handler(event, context):
                 "error": f"This Lambda only supports 'text_analysis_tool', received: {tool_name}"
             }
 
-    except Exception as e:
-        logger.error(f"Error processing request: {str(e)}")
-        return {"error": f"Internal server error: {str(e)}"}
+    except Exception:
+        logger.exception("Error processing request")
+        return {"error": "Internal server error"}

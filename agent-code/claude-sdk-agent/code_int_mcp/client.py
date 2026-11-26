@@ -16,10 +16,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+class CodeInterpreterSessionError(Exception):
+    """A Code Interpreter session could not be started."""
+
+
 class CodeInterpreterClient:
     """Client for AgentCore Code Interpreter."""
 
-    def __init__(self, region_name: str = None):
+    def __init__(self, region_name: str | None = None):
         region = region_name or os.environ.get(
             "AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
         )
@@ -33,14 +37,14 @@ class CodeInterpreterClient:
                 sessionTimeoutSeconds=900,
             )
         except ClientError as e:
-            logging.error("***** Exception in create session %s", str(e))
-            raise Exception(f"Failed to create session: {str(e)}")
+            logger.error("***** Exception in create session %s", str(e))
+            raise CodeInterpreterSessionError(f"Failed to create session: {e!s}") from e
 
         code_int_session_id = session_response["sessionId"]
         return code_int_session_id
 
     def _invoke_code_interpreter(
-        self, operation: str, args: dict = None, code_int_session_id: str = ""
+        self, operation: str, args: dict | None = None, code_int_session_id: str = ""
     ) -> CodeIntExecutionResult:
         start_time = time.time()
         try:
@@ -66,7 +70,7 @@ class CodeInterpreterClient:
                 success=True,
             )
         except ClientError as e:
-            logging.error("***** Exception in code interpreter invocation %s", str(e))
+            logger.error("***** Exception in code interpreter invocation %s", str(e))
             execution_time = time.time() - start_time
             return CodeIntExecutionResult(
                 output="",

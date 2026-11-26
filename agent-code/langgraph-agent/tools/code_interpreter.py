@@ -1,8 +1,8 @@
 # Adapted from fullstack-solution-template-for-agentcore
 """LangGraph-specific wrapper for Code Interpreter."""
 
-from shared.code_interpreter import CodeInterpreterTools
 from langchain_core.tools import tool
+from shared.code_interpreter import CodeInterpreterTools
 
 
 class LangGraphCodeInterpreterTools:
