@@ -1263,18 +1263,18 @@ class SecurityConfig(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _org_id_from_environment(cls, data):
-        # deploy.sh validates platform.yaml before load_config reads
-        # workshop.env; on the missing-org failure it retries with the saved
-        # ORG_ID exported. An exported ORG_ID only fills an org_id the
-        # manifest leaves empty (platform.yaml > workshop.env), and is then
-        # shape- and placeholder-checked like a manifest value.
-        if (
-            isinstance(data, dict)
-            and data.get("resource_policies")
-            and not data.get("org_id")
-        ):
+        # An exported ORG_ID fills an org_id the manifest leaves empty or sets
+        # to a placeholder (the security-focused preset ships o-xxxxxxxxxx, and
+        # its documented flow is `export ORG_ID=...`). This runs before the
+        # placeholder check, so the preset deploys with a real exported id. A
+        # real manifest value is never replaced here; apply_environment_overrides
+        # applies the usual env-over-manifest precedence afterwards. deploy.sh
+        # also retries with the ORG_ID saved in workshop.env on the missing-org
+        # failure. The value is shape- and placeholder-checked either way.
+        if isinstance(data, dict) and data.get("resource_policies"):
+            current = str(data.get("org_id") or "")
             env_org = os.environ.get("ORG_ID", "")
-            if env_org:
+            if env_org and (not current or _SENTINEL_RE.search(current)):
                 data = {**data, "org_id": env_org}
         return data
 

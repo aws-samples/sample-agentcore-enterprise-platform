@@ -642,3 +642,33 @@ def test_design_option_error_lists_every_option():
     line = next(ln for ln in script.splitlines() if "Unknown option for design" in ln)
     for option in ("--profile", "--journey", "--topology", "--posture", "--region"):
         assert option in line
+
+
+def test_exported_org_id_replaces_the_shipped_placeholder():
+    """The security-focused preset ships o-xxxxxxxxxx; `export ORG_ID=...` is the
+    documented way to deploy it, so the export must win over the placeholder."""
+    manifest = "security:\n  resource_policies: true\n  org_id: o-xxxxxxxxxx\n"
+    refused = _cli(manifest, "--export")
+    assert refused.returncode != 0
+    result = _cli(manifest, "--export", env={"ORG_ID": "o-abc123def456"})
+    assert result.returncode == 0, result.stderr
+    assert "ORG_ID=o-abc123def456" in result.stdout
+
+
+def test_exported_org_id_does_not_replace_a_real_manifest_value_at_load():
+    import os
+
+    from infra_utils.platform_config import SecurityConfig
+
+    old = os.environ.get("ORG_ID")
+    os.environ["ORG_ID"] = "o-abc123def456"
+    try:
+        sec = SecurityConfig.model_validate(
+            {"resource_policies": True, "org_id": "o-realorg00001"}
+        )
+    finally:
+        if old is None:
+            os.environ.pop("ORG_ID")
+        else:
+            os.environ["ORG_ID"] = old
+    assert sec.org_id == "o-realorg00001"
