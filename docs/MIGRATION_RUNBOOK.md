@@ -110,6 +110,8 @@ displaying its value.
 check right after validating credentials and before bootstrap or any stack is
 created. A missing or unreadable secret stops the deploy and prints the
 secret names, instead of letting the runtime fail to start with HTTP 424.
+If the check cannot run because the Python dependencies are not installed,
+the deploy also stops; it never proceeds without having checked the secrets.
 
 An enabled stage uses this gate shape (references only—do not paste customer
 data or credentials). Add the exact digest printed for a data, trigger, or

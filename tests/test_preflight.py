@@ -289,6 +289,16 @@ def test_secrets_only_without_manifest_has_nothing_to_check(tmp_path: Path) -> N
     assert runner.calls == []
 
 
+def test_deploy_secret_gate_fails_closed_without_dependencies() -> None:
+    script = (Path(__file__).resolve().parents[1] / "scripts" / "deploy.sh").read_text(
+        encoding="utf-8"
+    )
+    body = script.split("check_declared_secrets() {", 1)[1].split("\n}\n", 1)[0]
+    branch = body.split("        3) ", 1)[1].split(";;", 1)[0]
+    assert "exit 1" in branch
+    assert "skipped" not in body
+
+
 def test_read_only_guard_rejects_mutating_aws_call() -> None:
     calls = [("aws", "secretsmanager", "create-secret", "--name", "example")]
 

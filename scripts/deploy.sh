@@ -562,10 +562,22 @@ check_declared_secrets() {
     fi
     log_header "Declared Secrets"
     (cd "$PROJECT_DIR" && "$py" scripts/preflight.py "${args[@]}") || rc=$?
+    # Exit 3: the manifest could not be loaded, so no secret was checked.
+    # Never treat that as a pass: prepare the venv and retry once, else stop.
+    if [ "$rc" = "3" ] && declare -F setup_venv >/dev/null; then
+        log_warn "Python dependencies missing; preparing the virtual environment before the secret check."
+        setup_venv
+        py="$PROJECT_DIR/.venv/bin/python"
+        [ -x "$py" ] || py="python3"
+        rc=0
+        (cd "$PROJECT_DIR" && "$py" scripts/preflight.py "${args[@]}") || rc=$?
+    fi
     case "$rc" in
         0) ;;
-        3) log_warn "Declared-secret check skipped: Python dependencies are not installed yet."
-           log_warn "Run '$0 doctor' after the virtual environment exists." ;;
+        3) log_error "Declared secrets could not be checked: Python dependencies are not installed."
+           log_error "No stack has been created. Create the virtual environment"
+           log_error "(python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt), then retry."
+           exit 1 ;;
         *) log_error "Declared secrets are missing or unreadable (names above)."
            log_error "No stack has been created. Create the secrets, then retry."
            exit 1 ;;
