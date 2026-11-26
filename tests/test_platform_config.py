@@ -358,6 +358,9 @@ def test_app_py_resolves_through_cfg():
         "region",  # region merges CDK_DEFAULT_REGION explicitly
         "CDK_DEFAULT_ACCOUNT",
         "env_key",  # cfg()'s own body
+        # The deployment mode is compared against platform.yaml rather than
+        # layered over it (resolve_deployment_mode), so it must bypass cfg().
+        "DEPLOYMENT_MODE",
     )
     stale = []
     for i, line in enumerate(src.splitlines(), 1):

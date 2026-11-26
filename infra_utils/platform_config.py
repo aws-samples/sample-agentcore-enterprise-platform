@@ -166,6 +166,62 @@ def _refuse_placeholders(messages: list[str]) -> None:
         raise ValueError("\n".join(messages))
 
 
+DEPLOYMENT_MODES = ("workshop", "production")
+
+
+def resolve_deployment_mode(
+    manifest_mode: str | None,
+    context_value: str = "",
+    env_value: str = "",
+    allow_override: bool = False,
+) -> str:
+    """The deployment mode app.py synthesizes, with platform.yaml as the truth.
+
+    With a manifest, ``deployment.mode`` wins. A ``-c deployment_mode`` or
+    ``DEPLOYMENT_MODE`` value that differs from it is refused, so a stray
+    environment variable in a CI shell cannot silently downgrade production.
+    Only the explicit ``-c allow_mode_override=true`` accepts the requested
+    value (context before env), with a loud warning on stderr. Without a
+    manifest the requested value (default workshop) is used as before.
+    """
+    requested = [
+        (source, value)
+        for source, value in (
+            ("-c deployment_mode", context_value),
+            ("DEPLOYMENT_MODE", env_value),
+        )
+        if value
+    ]
+    for source, value in requested:
+        if value not in DEPLOYMENT_MODES:
+            raise ValueError(
+                f"deployment_mode must be 'workshop' or 'production', got "
+                f"{value!r} from {source}"
+            )
+    if manifest_mode is None:
+        return requested[0][1] if requested else "workshop"
+    conflicts = [(s, v) for s, v in requested if v != manifest_mode]
+    if not conflicts:
+        return manifest_mode
+    described = ", ".join(f"{s}={v}" for s, v in conflicts)
+    if not allow_override:
+        raise ValueError(
+            f"platform.yaml declares deployment.mode: {manifest_mode}, but "
+            f"{described} asks for a different mode. platform.yaml is the source "
+            "of truth: unset the variable/context, or change deployment.mode in "
+            "the file. To force it anyway pass -c allow_mode_override=true."
+        )
+    mode = requested[0][1]
+    print(
+        "\n" + "!" * 72 + "\n"
+        f"[WARN] DEPLOYMENT MODE OVERRIDDEN: platform.yaml says {manifest_mode!r} "
+        f"but {described} is in effect; synthesizing in {mode!r} mode because "
+        "allow_mode_override=true.\n" + "!" * 72,
+        file=sys.stderr,
+    )
+    return mode
+
+
 # ── Layered presets: journey x topology x posture ──
 # The eight flat presets bundle three independent choices. These layers are
 # those choices factored apart; presets/*.yaml stay as golden references and
@@ -555,7 +611,9 @@ class DeploymentConfig(BaseModel):
 
     mode — workshop preserves the accelerator's disposable defaults;
         production enables retained state and requires the controls enforced
-        by PlatformConfig._production_controls_are_complete.
+        by PlatformConfig._production_controls_are_complete. This key is the
+        source of truth: a differing DEPLOYMENT_MODE / -c deployment_mode is
+        refused unless -c allow_mode_override=true (resolve_deployment_mode).
     centralized — everything in platform_account (the default).
     distributed — each team/workload account runs its own full copy of this
         file; platform_account binds that copy to its intended account and org
