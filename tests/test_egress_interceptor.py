@@ -460,3 +460,14 @@ def test_client_chosen_id_cannot_forge_log_lines():
     assert "\n" not in interceptor._loggable_id(forged)
     assert interceptor._loggable_id("req-42") == "req-42"
     assert interceptor._loggable_id(7) == "7"
+
+
+def test_request_event_with_null_gateway_response_is_a_request():
+    """Live REQUEST events carry "gatewayResponse": null. Routing them as responses
+    short-circuited tools/list with an empty body (Bug H3b)."""
+    body = {"jsonrpc": "2.0", "id": "tools/list", "method": "tools/list"}
+    out = interceptor.handler(
+        {"mcp": {"gatewayRequest": {"body": body}, "gatewayResponse": None}}, CONTEXT
+    )
+    assert "transformedGatewayResponse" not in out["mcp"]
+    assert out["mcp"]["transformedGatewayRequest"]["body"] == body

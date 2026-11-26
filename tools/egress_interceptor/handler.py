@@ -384,7 +384,11 @@ def handler(event, context):
     mcp = (event or {}).get("mcp") or {}
 
     # Response events carry gatewayRequest too, so check gatewayResponse first.
-    if "gatewayResponse" in mcp:
+    # Only a non-empty gatewayResponse marks a RESPONSE interception: live,
+    # REQUEST events arrive with "gatewayResponse": null. Treating those as
+    # responses returned transformedGatewayResponse with an empty body, which
+    # the gateway sends straight back, so tools/list came back with no tools.
+    if mcp.get("gatewayResponse"):
         return _intercept_response(mcp, context)
     if "gatewayRequest" in mcp:
         return _intercept_request(mcp, context)

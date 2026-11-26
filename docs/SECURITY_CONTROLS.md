@@ -168,18 +168,14 @@ accelerator never uses.
   - *If a `tools/list` response is blocked:* this can only happen through a scanned
     `error.message`. The client then receives the JSON-RPC error above and surfaces it as an
     error. It does not see an empty list.
-  - *Empty tool list seen live (H3b):* the root cause is not yet confirmed against live
-    traces. The handler now addresses these contract candidates:
-    - a body delivered as a JSON string is passed through byte-for-byte, and a
-      `tools/call` string body is now scanned instead of skipped;
-    - a stale `Content-Length` header is no longer returned alongside a re-serialized body.
-
-    Still open:
-    - streaming responses (`isStreamingResponse`), whose flag is now logged;
-    - whether the gateway needs more than `body` in `transformedGatewayRequest`.
-
-    Use the shape log lines (`tools=N`, `body_type`) from a live `egress` run to confirm
-    which candidate applies.
+  - *Empty tool list seen live (H3b), cause confirmed from the shape log lines:* REQUEST
+    events arrive with `"gatewayResponse": null`. The handler routed any event with that key
+    as a response, so the REQUEST call returned `transformedGatewayResponse` with an empty
+    body. The gateway sends that straight back, so the real `tools/list` never ran. Only a
+    non-empty `gatewayResponse` is now a RESPONSE interception. The handler also passes a
+    JSON-string body through byte-for-byte, scans a `tools/call` string body, and drops a
+    stale `Content-Length` header. Streaming responses (`isStreamingResponse`) are logged and
+    passed through.
 - **Caveats:**
   - There is no try/except around `ApplyGuardrail`, so a Bedrock throttle surfaces as a
     Lambda failure, not a defined fail-open or fail-closed decision.
