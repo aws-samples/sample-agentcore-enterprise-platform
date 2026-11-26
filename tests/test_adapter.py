@@ -87,6 +87,31 @@ class _ChildHandler(BaseHTTPRequestHandler):
             time.sleep(1.0)
             with contextlib.suppress(OSError):
                 self._reply(200, b"too late", "text/plain")
+        elif self.path == "/trickle":
+            with contextlib.suppress(OSError):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", "1000")
+                self.end_headers()
+                for _ in range(30):
+                    self.wfile.write(b"x")
+                    time.sleep(0.1)
+        elif self.path == "/trickle-sse":
+            with contextlib.suppress(OSError):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                for n in range(30):
+                    self.wfile.write(f"data: {n}\n\n".encode())
+                    time.sleep(0.1)
+        elif self.path == "/boom-stall":
+            with contextlib.suppress(OSError):
+                self.send_response(500)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", "100")
+                self.end_headers()
+                self.wfile.write(b"partial")
+                time.sleep(1.0)
         elif self.path == "/slow-sse":
             with contextlib.suppress(OSError):
                 self.send_response(200)
@@ -439,6 +464,31 @@ def test_forward_stalled_stream_ends_with_timeout_event(child_server):
     assert events[0] == {"delta": "a"}
     assert events[-1]["status"] == "error"
     assert events[-1]["code"] == 504
+
+
+def test_forward_slowly_progressing_body_hits_total_deadline(child_server):
+    started = time.monotonic()
+    result = adapter.forward({}, f"{child_server}/trickle", timeout=0.5)
+    assert time.monotonic() - started < 1.5
+    assert result["status"] == "error"
+    assert result["code"] == 504
+
+
+def test_forward_slowly_progressing_stream_hits_total_deadline(child_server):
+    started = time.monotonic()
+    events = list(adapter.forward({}, f"{child_server}/trickle-sse", timeout=0.5))
+    assert time.monotonic() - started < 1.5
+    assert len(events) > 1
+    assert events[-1]["status"] == "error"
+    assert events[-1]["code"] == 504
+
+
+def test_forward_non_2xx_with_stalled_body_maps_to_504(child_server):
+    started = time.monotonic()
+    result = adapter.forward({}, f"{child_server}/boom-stall", timeout=0.2)
+    assert time.monotonic() - started < 0.9
+    assert result["status"] == "error"
+    assert result["code"] == 504
 
 
 def test_forward_uses_configured_timeout(monkeypatch):

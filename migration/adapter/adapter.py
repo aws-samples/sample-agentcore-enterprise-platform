@@ -31,9 +31,10 @@ names emitted by the platform.yaml `migration:` block — see README.md):
     MIGRATION_STARTUP_TIMEOUT  seconds to wait for child health (default 60)
     MIGRATION_LIVE_HEALTH_TIMEOUT  per-invocation child health check timeout
                                   (default 2s, capped at 5s)
-    MIGRATION_INVOKE_TIMEOUT  seconds to wait for the child's reply to an
-                              invocation (default 300); on expiry the caller
-                              gets a structured 504 error
+    MIGRATION_INVOKE_TIMEOUT  total seconds an invocation may take, from
+                              connecting to the child until its reply body
+                              (or SSE stream) is fully read (default 300);
+                              on expiry the caller gets a structured 504 error
     PROJECT_NAME / ENVIRONMENT  used for the default secret naming above
 
 GET /ping is BedrockAgentCoreApp's default handler: it reflects ADAPTER
@@ -209,6 +210,44 @@ def _is_timeout(exc: BaseException) -> bool:
     )
 
 
+def _apply_deadline(resp, deadline: float) -> None:
+    """Raise TimeoutError once the deadline has passed; otherwise bound the
+    next blocking socket read by the time that is left.
+
+    urllib's timeout only limits each socket operation, so a child that keeps
+    trickling bytes could otherwise hold an invocation open forever.
+    """
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("invocation deadline exceeded")
+    # HTTPError -> HTTPResponse -> BufferedReader -> SocketIO -> socket
+    obj = resp
+    for _ in range(5):
+        sock = getattr(obj, "_sock", None)
+        if sock is not None:
+            sock.settimeout(remaining)
+            return
+        nxt = getattr(obj, "fp", None)
+        if nxt is None:
+            nxt = getattr(obj, "raw", None)
+        if nxt is None:
+            return
+        obj = nxt
+
+
+def _read_body(resp, deadline: float) -> str:
+    """Read the whole body in chunks, enforcing the invocation deadline."""
+    read = getattr(resp, "read1", None) or resp.read
+    chunks = []
+    while True:
+        _apply_deadline(resp, deadline)
+        chunk = read(65536)
+        if not chunk:
+            break
+        chunks.append(chunk)
+    return b"".join(chunks).decode(errors="replace")
+
+
 def _timeout_error(timeout: float) -> dict:
     log.warning("child invocation timed out after %gs", timeout)
     return {
@@ -332,11 +371,13 @@ def forward(payload, url: str, timeout: float | None = None):
     JSON reply → returned as-is (parsed). Plain text → wrapped as a success.
     Non-2xx → structured error. text/event-stream → a generator of the events'
     data payloads; BedrockAgentCoreApp re-emits each yield as an SSE event.
-    No reply within ``timeout`` seconds (default MIGRATION_INVOKE_TIMEOUT)
-    → structured 504 error.
+    ``timeout`` (default MIGRATION_INVOKE_TIMEOUT) is a total deadline across
+    connecting and consuming the reply, streams included; on expiry the
+    response is closed and the caller gets a structured 504 error.
     """
     if timeout is None:
         timeout = invoke_timeout(dict(os.environ))
+    deadline = time.monotonic() + timeout
     req = urllib.request.Request(
         url,
         data=json.dumps(payload if payload is not None else {}).encode(),
@@ -345,7 +386,14 @@ def forward(payload, url: str, timeout: float | None = None):
     try:
         resp = urllib.request.urlopen(req, timeout=timeout)  # nosec B310 — localhost http
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode(errors="replace")
+        try:
+            body = _read_body(exc, deadline)
+        except OSError as read_exc:
+            if _is_timeout(read_exc):
+                return _timeout_error(timeout)
+            body = "error body could not be read"
+        finally:
+            exc.close()
         return {"status": "error", "code": exc.code, "error": body[:2000]}
     except OSError as exc:
         if _is_timeout(exc):
@@ -354,9 +402,9 @@ def forward(payload, url: str, timeout: float | None = None):
 
     content_type = resp.headers.get("Content-Type", "")
     if "text/event-stream" in content_type:
-        return _stream_events(resp, timeout)
+        return _stream_events(resp, timeout, deadline)
     try:
-        body = resp.read().decode(errors="replace")
+        body = _read_body(resp, deadline)
     except TimeoutError:
         return _timeout_error(timeout)
     finally:
@@ -369,12 +417,21 @@ def forward(payload, url: str, timeout: float | None = None):
     return {"status": "success", "response": body}
 
 
-def _stream_events(resp, timeout: float = INVOKE_TIMEOUT_DEFAULT):
+def _stream_events(
+    resp, timeout: float = INVOKE_TIMEOUT_DEFAULT, deadline: float | None = None
+):
     """Yield each SSE event's data payload (parsed when JSON) from the child.
-    Sync generator: BedrockAgentCoreApp streams it back out as SSE. A stalled
-    stream ends with a structured timeout error event."""
+    Sync generator: BedrockAgentCoreApp streams it back out as SSE. A stream
+    that stalls or outlives the invocation deadline ends with a structured
+    timeout error event."""
+    if deadline is None:
+        deadline = time.monotonic() + timeout
     try:
-        for raw in resp:
+        while True:
+            _apply_deadline(resp, deadline)
+            raw = resp.readline()
+            if not raw:
+                break
             line = raw.decode(errors="replace").strip()
             if not line.startswith("data:"):
                 continue
