@@ -28,11 +28,12 @@ import aws_cdk as cdk
 from infra_utils.platform_config import (
     PlatformConfig,
     apply_environment_overrides,
+    gateway_tool_configs,
     load_platform_config,
     to_env,
 )
 from stacks.auth_stack import AuthStack
-from stacks.gateway_stack import GatewayStack
+from stacks.gateway_stack import DEFAULT_TOOL_CONFIGS, GatewayStack
 from stacks.identity_stack import IdentityStack
 from stacks.memory_stack import MemoryStack
 from stacks.networking_stack import NetworkingStack
@@ -638,6 +639,13 @@ if not is_fed_platform:
         memory_stack.add_dependency(security_stack)
 
 # ── Gateway (MCP gateway with Lambda tool targets) — platform side only ──
+# gateway.tools in platform.yaml decides the targets; without the file the
+# sample-tool default deploys exactly as before.
+tool_configs = (
+    gateway_tool_configs(platform_config.gateway.tools, DEFAULT_TOOL_CONFIGS)
+    if platform_config
+    else DEFAULT_TOOL_CONFIGS
+)
 gateway_stack = None
 if not is_fed_workload:
     gateway_stack = GatewayStack(
@@ -649,32 +657,7 @@ if not is_fed_workload:
         cognito_allowed_clients=allowed_clients,
         allowed_audience=allowed_audience,
         enable_web_search=enable_web_search,
-        tool_configs={
-            "sample-tool": {
-                "source_dir": "tools/sample_tool",
-                "env_vars": {},
-                "tool_schema": [
-                    {
-                        "Name": "text_analysis_tool",
-                        "Description": "Analyzes text to count words and find most frequent characters.",
-                        "InputSchema": {
-                            "Type": "object",
-                            "Properties": {
-                                "text": {
-                                    "Type": "string",
-                                    "Description": "Input text to analyze",
-                                },
-                                "N": {
-                                    "Type": "integer",
-                                    "Description": "Number of most frequent characters to return (default: 5)",
-                                },
-                            },
-                            "Required": ["text"],
-                        },
-                    },
-                ],
-            },
-        },
+        tool_configs=tool_configs,
         enable_egress_filter=enable_egress_filter,
         enable_cedar=enable_cedar,
         cedar_mode=cedar_mode,

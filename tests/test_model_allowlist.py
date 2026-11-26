@@ -91,6 +91,57 @@ def test_duplicates_dedupe_and_order_is_preserved():
     assert f"arn:aws:bedrock:*:*:inference-profile/{OPUS}" in resources
 
 
+GLOBAL_SONNET = "global.anthropic.claude-sonnet-4-6"
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        (
+            GLOBAL_SONNET,
+            [
+                f"arn:aws:bedrock:*:*:inference-profile/{GLOBAL_SONNET}",
+                "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*",
+                "arn:aws:bedrock:::foundation-model/anthropic.claude-sonnet-4-6*",
+            ],
+        ),
+        (
+            SONNET,
+            [
+                f"arn:aws:bedrock:*:*:inference-profile/{SONNET}",
+                "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*",
+            ],
+        ),
+        (
+            "eu.anthropic.claude-sonnet-4-6",
+            [
+                "arn:aws:bedrock:*:*:inference-profile/eu.anthropic.claude-sonnet-4-6",
+                "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*",
+            ],
+        ),
+        (
+            "anthropic.claude-sonnet-4-6",
+            ["arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*"],
+        ),
+    ],
+    ids=["global", "us", "eu", "bare"],
+)
+def test_resources_per_profile_kind(model, expected):
+    assert allowed_model_resources([model]) == expected
+
+
+def test_global_profile_passes_validation():
+    config = AgentsConfig(model_id=GLOBAL_SONNET, allowed_models=[GLOBAL_SONNET])
+    assert config.allowed_models == [GLOBAL_SONNET]
+
+
+def test_global_and_geo_mixed_dedupe_shared_foundation_model():
+    resources = allowed_model_resources([GLOBAL_SONNET, SONNET])
+    assert len(resources) == len(set(resources))
+    assert resources[0] == f"arn:aws:bedrock:*:*:inference-profile/{GLOBAL_SONNET}"
+    assert f"arn:aws:bedrock:*:*:inference-profile/{SONNET}" in resources
+
+
 # ── IAM drift (intent, not synthesis — same approach as
 #    test_runtime_role_scoping.test_ecr_pull_is_scoped_to_the_repository_arn) ──
 
