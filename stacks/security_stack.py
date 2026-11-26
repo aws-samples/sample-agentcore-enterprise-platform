@@ -97,14 +97,23 @@ class SecurityStack(cdk.Stack):
                 block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
                 versioned=retain_data,
             )
-            cloudtrail.Trail(
+            trail = cloudtrail.Trail(
                 self,
                 "AgentCoreTrail",
                 trail_name=trail_name,
+                # SSE-KMS for log files (KmsKeyId); without it CloudTrail
+                # falls back to SSE-S3 regardless of the bucket default.
+                encryption_key=self.kms_key if retain_data else None,
                 bucket=trail_bucket,
                 enable_file_validation=retain_data,
                 is_multi_region_trail=retain_data,
             )
+            if retain_data and self.kms_key:
+                # Pin KmsKeyId on the L1 so the trail always uses SSE-KMS with
+                # the CMK whose key policy grants CloudTrail above.
+                trail.node.default_child.add_property_override(
+                    "KmsKeyId", self.kms_key.key_arn
+                )
 
         if self.kms_key:
             cdk.CfnOutput(self, "KmsKeyArn", value=self.kms_key.key_arn)

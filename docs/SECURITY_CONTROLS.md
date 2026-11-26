@@ -258,6 +258,7 @@ These controls follow from the deployment mode, not from a preset key:
 
 | Control | Where |
 |---|---|
+| CloudTrail trail encrypts log files with the security CMK (SSE-KMS, `KmsKeyId`) | `stacks/security_stack.py` |
 | CloudTrail CMK key policy allows `cloudtrail.amazonaws.com` `kms:GenerateDataKey*` / `kms:DescribeKey`, conditioned on `aws:SourceArn` (this trail) and `kms:EncryptionContext:aws:cloudtrail:arn` | `stacks/security_stack.py` |
 | CloudTrail bucket S3 Block Public Access (all four settings; every mode) | `stacks/security_stack.py` |
 | Gateway role `kms:CreateGrant` on the gateway CMK with `kms:GrantIsForAWSResource=true` (whenever a gateway CMK is set) | `stacks/gateway_stack.py` |
