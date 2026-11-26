@@ -22,6 +22,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import NamedTuple
 
 from utils import get_m2m_token, get_ssm_param, resolve_region
@@ -29,14 +30,39 @@ from utils import get_m2m_token, get_ssm_param, resolve_region
 REGION = resolve_region()
 MAX_RUNTIME_RESPONSE_BYTES = 1024 * 1024
 
-# Replies that arrive as HTTP 2xx but are really a guardrail refusal. Matched
-# case-insensitively against the agent's answer text.
-GUARDRAIL_BLOCK_PHRASES = (
-    "request was blocked",
-    "blocked by guardrail",
-    "blocked by the guardrail",
-    "sorry, the model cannot answer this question",
-)
+GUARDRAIL_DIR = Path(__file__).resolve().parents[1] / "control-library" / "guardrails"
+# Bedrock's own reply when a guardrail has no configured block message.
+DEFAULT_GUARDRAIL_BLOCK_MESSAGES = ("Sorry, the model cannot answer this question.",)
+
+
+def _normalise(text: str) -> str:
+    return " ".join(text.split()).casefold()
+
+
+def _guardrail_block_messages(directory: Path = GUARDRAIL_DIR) -> frozenset[str]:
+    """The configured guardrail block messages, normalised for comparison.
+
+    Read from BlockedInputMessaging / BlockedOutputsMessaging in every
+    control-library guardrail config, so verify follows the deployed text.
+    """
+    messages = {_normalise(m) for m in DEFAULT_GUARDRAIL_BLOCK_MESSAGES}
+    for path in sorted(directory.glob("*.json")):
+        try:
+            config = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(config, dict):
+            continue
+        for key in ("BlockedInputMessaging", "BlockedOutputsMessaging"):
+            value = config.get(key)
+            if isinstance(value, str) and value.strip():
+                messages.add(_normalise(value))
+    return frozenset(messages)
+
+
+# Replies that arrive as HTTP 2xx but are really a guardrail refusal. Compared
+# against the whole answer, so an answer that merely mentions a block passes.
+GUARDRAIL_BLOCK_MESSAGES = _guardrail_block_messages()
 # A2A task states that mean the agent did not do the work.
 FAILED_TASK_STATES = frozenset({"failed", "rejected", "canceled", "cancelled"})
 
@@ -269,7 +295,17 @@ _ANSWER_KEYS = frozenset(
 )
 _NON_ANSWER_ROLES = frozenset({"user", "human", "tool", "system"})
 # Keys holding tool calls, tool inputs or tool output, never the answer.
-_NON_ANSWER_KEYS = frozenset({"toolUse", "toolResult", "tool_calls", "input", "args"})
+_NON_ANSWER_KEYS = frozenset(
+    {
+        "toolUse",
+        "toolResult",
+        "tool_calls",
+        "input",
+        "args",
+        "response_metadata",
+        "additional_kwargs",
+    }
+)
 _NON_ANSWER_TYPES = frozenset(
     {
         "human",
@@ -331,10 +367,10 @@ def check_agent_reply(body: str, *, require_answer: bool = True) -> None:
     """
     payloads = list(_runtime_payloads(body))
     for payload in payloads:
-        if not isinstance(payload, dict) or payload.get("error") is None:
+        if not isinstance(payload, dict):
             continue
-        error = payload["error"]
-        if "jsonrpc" in payload or _is_rpc_error(error):
+        error = payload.get("error")
+        if error is not None and ("jsonrpc" in payload or _is_rpc_error(error)):
             if isinstance(error, dict):
                 detail = f"{error.get('code')} {error.get('message')}"
             else:
@@ -342,6 +378,13 @@ def check_agent_reply(body: str, *, require_answer: bool = True) -> None:
             raise RuntimeVerificationError(
                 f"agent returned a JSON-RPC error: {detail[:500]}"
             )
+        # The agents yield {"status": "error", "error": ...} on exceptions,
+        # possibly after partial text. A LangGraph ToolMessage (tool_call_id)
+        # also has a status; a failed tool is the tool check's to report.
+        status = str(payload.get("status", "")).lower()
+        if status == "error" and not payload.get("tool_call_id"):
+            detail = str(error or payload.get("message") or "no error detail")
+            raise RuntimeVerificationError(f"agent reported an error: {detail[:500]}")
     for payload in payloads:
         for node in _walk_json(payload):
             status = node.get("status")
@@ -356,8 +399,7 @@ def check_agent_reply(body: str, *, require_answer: bool = True) -> None:
                     f"A2A task ended in state {state}: {detail[:500]}"
                 )
     answer = agent_answer_text(body)
-    lowered = answer.lower()
-    if any(phrase in lowered for phrase in GUARDRAIL_BLOCK_PHRASES):
+    if answer.strip() and _normalise(answer) in GUARDRAIL_BLOCK_MESSAGES:
         raise RuntimeVerificationError(
             f"agent reply is a guardrail block message: {answer.strip()[:200]!r}"
         )
@@ -442,17 +484,20 @@ def _langgraph_records(node: dict):
 
 
 def _claude_sdk_records(node: dict):
-    """Claude Agent SDK: ``tool_use`` / ``tool_result`` blocks."""
-    is_call = node.get("type") == "tool_use" or {"id", "name", "input"} <= node.keys()
-    if is_call and node.get("id") and node.get("name"):
-        yield ToolCall(str(node["id"]), str(node["name"]))
-    if node.get("tool_use_id") and (
-        node.get("type") == "tool_result" or "content" in node
-    ):
+    """Claude SDK agents: ``current_tool_use`` / ``tool_result`` events.
+
+    These are what agent-code/claude-sdk-*/agent.py yield, not raw SDK
+    message blocks.
+    """
+    call = node.get("current_tool_use")
+    if isinstance(call, dict) and call.get("toolUseId") and call.get("name"):
+        yield ToolCall(str(call["toolUseId"]), str(call["name"]))
+    result = node.get("tool_result")
+    if isinstance(result, dict) and result.get("toolUseId"):
         yield ToolResult(
-            str(node["tool_use_id"]),
-            node.get("is_error") is True,
-            _content(node.get("content", "")),
+            str(result["toolUseId"]),
+            result.get("is_error") is True,
+            _content(result.get("content", "")),
         )
 
 
@@ -460,8 +505,7 @@ def _claude_sdk_records(node: dict):
 PATTERN_PARSERS: dict[str, tuple[Parser, ...]] = {
     "orchestrator": (_strands_records,),
     "strands-agent": (_strands_records,),
-    # LangChain Bedrock/Anthropic AIMessages may also carry tool_use blocks.
-    "langgraph-agent": (_langgraph_records, _claude_sdk_records),
+    "langgraph-agent": (_langgraph_records,),
     "claude-sdk-agent": (_claude_sdk_records,),
     "claude-sdk-multi-agent": (_claude_sdk_records,),
     "agui-strands-agent": (_agui_records,),

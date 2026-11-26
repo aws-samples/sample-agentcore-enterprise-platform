@@ -73,6 +73,14 @@ def test_tool_consuming_patterns_require_a_successful_code_interpreter_result():
     assert "--require-tool" not in minimal
 
 
+@pytest.mark.parametrize("pattern", ["claude-sdk-agent", "claude-sdk-multi-agent"])
+def test_claude_patterns_require_their_own_code_interpreter_tool(pattern):
+    invoke = dict(checks_for(suffixes(), pattern))["orchestrator invoke"]
+    assert invoke[invoke.index("--require-tool") + 1] == "execute_code"
+    assert "Use execute_code " in invoke[-1]
+    assert "execute_python_securely" not in invoke[-1]
+
+
 @pytest.mark.parametrize(
     "pattern", ["strands-agent", "agui-strands-agent", "langgraph-agent"]
 )
