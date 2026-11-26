@@ -13,6 +13,15 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from infra_utils.platform_config import (
+    POSTURE_DESCRIPTIONS,
+    POSTURES,
+    SHORTCUTS,
+)
+
 OUTPUT = REPO_ROOT / "docs" / "POSTURE_TIERS.md"
 REGENERATE_COMMAND = "python scripts/gen_posture_tiers.py"
 
@@ -149,6 +158,50 @@ def format_value(value: object) -> str:
     return "`" + text.replace("|", "\\|") + "`"
 
 
+def load_postures() -> dict[str, dict[str, object]]:
+    """Return posture layer -> filtered flat keys, straight from POSTURES."""
+    return {
+        name: {k: v for k, v in flatten(layer).items() if is_relevant(k)}
+        for name, layer in POSTURES.items()
+    }
+
+
+def tier_postures() -> list[str]:
+    """One sentence fragment per tier: its posture layer and overlay keys."""
+    out = []
+    for tier, relative_path in TIER_PRESETS:
+        shortcut = SHORTCUTS[Path(relative_path).stem]
+        overlay = sorted(
+            k for k in flatten(shortcut.get("overlay", {})) if is_relevant(k)
+        )
+        text = f"**{tier}** uses posture `{shortcut['posture']}`"
+        if overlay:
+            text += " plus a shortcut overlay that sets " + ", ".join(
+                f"`{k}`" for k in overlay
+            )
+        out.append(text)
+    return out
+
+
+def _table_lines(names: list[str], tiers: dict[str, dict[str, object]]) -> list[str]:
+    lines = [
+        "| key | " + " | ".join(names) + " |",
+        "|---|" + "---|" * len(names),
+    ]
+    keys = sorted({key for tier in names for key in tiers.get(tier, {})})
+    for key in keys:
+        cells = [
+            format_value(tiers[tier][key]) if key in tiers.get(tier, {}) else ABSENT
+            for tier in names
+        ]
+        label = f"`{key}`"
+        if len(set(cells)) > 1:
+            label = f"**{label}**"
+            cells = [f"**{cell}**" for cell in cells]
+        lines.append("| " + " | ".join([label, *cells]) + " |")
+    return lines
+
+
 def render(tiers: dict[str, dict[str, object]] | None = None) -> str:
     """Render the posture tiers page as Markdown."""
     if tiers is None:
@@ -167,20 +220,32 @@ def render(tiers: dict[str, dict[str, object]] | None = None) -> str:
         f"`{ABSENT}`: the platform default applies (see [platform.yaml reference]"
         "(PLATFORM_YAML.md)). Rows in bold differ between tiers.",
         "",
-        "| key | " + " | ".join(names) + " |",
-        "|---|" + "---|" * len(names),
+        *_table_lines(names, tiers),
+        "",
+        "## Posture layers",
+        "",
+        (
+            "`deploy.sh design` composes a design from a journey, a topology and "
+            "one of these posture layers (`POSTURES` in "
+            "`infra_utils/platform_config.py`):"
+        ),
+        "",
     ]
-    keys = sorted({key for tier in names for key in tiers.get(tier, {})})
-    for key in keys:
-        cells = [
-            format_value(tiers[tier][key]) if key in tiers.get(tier, {}) else ABSENT
-            for tier in names
-        ]
-        label = f"`{key}`"
-        if len(set(cells)) > 1:
-            label = f"**{label}**"
-            cells = [f"**{cell}**" for cell in cells]
-        lines.append("| " + " | ".join([label, *cells]) + " |")
+    lines += [f"- **`{name}`**: {POSTURE_DESCRIPTIONS[name]}" for name in POSTURES]
+    lines += [
+        "",
+        "The tiers above are shortcuts built on these layers: "
+        + "; ".join(tier_postures())
+        + ".",
+        "",
+        (
+            "The table lists the security and observability keys each posture "
+            "layer sets on its own, before any shortcut overlay. Rows in bold "
+            "differ between layers."
+        ),
+        "",
+        *_table_lines(list(POSTURES), load_postures()),
+    ]
     return "\n".join(lines) + "\n"
 
 

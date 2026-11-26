@@ -226,6 +226,18 @@ def resolve_deployment_mode(
     return mode
 
 
+def resolve_synth_region(
+    context_region: str = "", manifest_region: str = "", env_region: str = ""
+) -> str:
+    """The region app.py synthesizes into.
+
+    ``-c region`` wins, then the manifest's ``region``. ``CDK_DEFAULT_REGION``
+    (set by the CDK CLI from the active profile) only fills a missing value,
+    so a plain ``cdk synth`` cannot silently build in the wrong region.
+    """
+    return context_region or manifest_region or env_region or "us-east-1"
+
+
 # ── Layered presets: journey x topology x posture ──
 # The eight flat presets bundle three independent choices. These layers are
 # those choices factored apart; presets/*.yaml stay as golden references and
@@ -361,6 +373,24 @@ POSTURES: dict[str, dict] = {
     },
 }
 
+# One line per posture layer; scripts/gen_posture_tiers.py renders these into
+# docs/POSTURE_TIERS.md so the documented names cannot drift from POSTURES.
+POSTURE_DESCRIPTIONS: dict[str, str] = {
+    "dev": (
+        "Workshop lifecycle (`deployment.mode: workshop`): disposable resources, "
+        "every security control opt-in."
+    ),
+    "hardened": (
+        "Workshop lifecycle with VPC networking, CloudTrail alerting, "
+        "traceability and alarms on; the other controls stay opt-in."
+    ),
+    "production": (
+        "Production lifecycle: retained state and every control production "
+        "validation requires, including an enterprise IdP, Cedar `ENFORCE`, "
+        "guardrails, a model allow-list and alarms."
+    ),
+}
+
 # The eight flat preset names, each a journey x topology x posture plus a
 # small overlay for the keys that are not a pure product of the axes.
 SHORTCUTS: dict[str, dict] = {
@@ -444,6 +474,127 @@ def migration_production_error(mode: str, migration_enabled: bool) -> str | None
             + MIGRATION_PRODUCTION_REASON
         )
     return None
+
+
+# The Cedar permit the gateway stack deploys (stacks/gateway_stack.py). In
+# ENFORCE mode Cedar's implicit default-deny blocks every tool it does not
+# permit, so coverage is read from that policy itself, never a second list.
+CEDAR_PERMIT_CONTROL = "control-library/cedar/gateway-default"
+CEDAR_PERMIT_CONTROL_ID = "cedar.gateway-default.permit-read"
+# Every Cedar policy the gateway deploys: CfnPolicy construct id -> control id.
+# stacks/gateway_stack.py deploys exactly these and the ENFORCE coverage check
+# (cedar_permitted_tools) reads exactly these, so the two cannot drift.
+CEDAR_POLICY_CONTROLS: dict[str, str] = {"PermitReadTools": CEDAR_PERMIT_CONTROL_ID}
+# Gateway tool actions are AgentCore::Action::"<target>___<tool>".
+_CEDAR_TOOL_ACTION_RE = re.compile(r'Action::"([^"]+?)___')
+# A permit whose head leaves action unconstrained covers every tool.
+_CEDAR_ANY_ACTION_RE = re.compile(r"permit\s*\(\s*principal[^,]*,\s*action\s*[,)]")
+_COVERAGE_GATEWAY_ARN = (
+    "arn:aws:bedrock-agentcore:us-east-1:111111111111:gateway/coverage-check"
+)
+
+
+def cedar_permitted_tools(policy_text: str | None = None) -> frozenset[str] | None:
+    """Gateway targets the deployed Cedar permit covers; None means all.
+
+    Without ``policy_text`` every control in CEDAR_POLICY_CONTROLS (the
+    policies the gateway stack deploys) is loaded and their coverage merged.
+    """
+    if policy_text is None:
+        from infra_utils.policy_loader import load_control_text
+
+        policy_text = "\n".join(
+            load_control_text(control_id, {"gateway_arn": _COVERAGE_GATEWAY_ARN})
+            for control_id in CEDAR_POLICY_CONTROLS.values()
+        )
+    if _CEDAR_ANY_ACTION_RE.search(policy_text):
+        return None
+    return frozenset(_CEDAR_TOOL_ACTION_RE.findall(policy_text))
+
+
+TOOLS_DIR = Path(__file__).resolve().parent.parent / "tools"
+
+
+def known_gateway_tools(tools_dir: Path = TOOLS_DIR) -> list[str]:
+    """Bare gateway.tools names: sample-tool plus every tools/<dir> that
+    ships a tool_spec.json (underscores become dashes)."""
+    names = {"sample-tool"}
+    if tools_dir.is_dir():
+        for spec in tools_dir.glob("*/tool_spec.json"):
+            names.add(spec.parent.name.replace("_", "-"))
+    return sorted(names)
+
+
+def gateway_tool_errors(tools: list, known: list[str] | None = None) -> list[str]:
+    """Errors for an empty gateway.tools list or unknown bare tool names."""
+    if not tools:
+        return [
+            (
+                "gateway.tools is empty: list at least one tool (for example "
+                "[sample-tool]) or omit the key for the sample-tool default"
+            )
+        ]
+    known = known if known is not None else known_gateway_tools()
+    unknown = [t for t in tools if isinstance(t, str) and t not in known]
+    if unknown:
+        return [
+            (
+                f"gateway.tools: unknown tool name(s) {', '.join(unknown)}; known "
+                f"names: {', '.join(known)} (declare any other target as a block "
+                "with name and type)"
+            )
+        ]
+    return []
+
+
+def cedar_findings(
+    *,
+    enabled: bool,
+    mode: str,
+    tool_names: list[str],
+    production: bool,
+    permitted_tools: frozenset[str] | None | Literal["deployed"] = "deployed",
+) -> tuple[list[str], list[str]]:
+    """(errors, warnings) for the Cedar settings against the gateway tools.
+
+    ENFORCE without the engine is an error. ENFORCE with tools the deployed
+    permit does not cover is an error in production and a warning in
+    workshop. ``permitted_tools`` defaults to the deployed policy's coverage
+    (cedar_permitted_tools); None means every tool is covered.
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+    if mode == "ENFORCE" and not enabled:
+        errors.append(
+            "security.cedar.mode ENFORCE requires security.cedar.enabled: true; "
+            "with the policy engine disabled the setting does nothing"
+        )
+    if enabled and mode == "ENFORCE":
+        covered = (
+            cedar_permitted_tools()
+            if permitted_tools == "deployed"
+            else permitted_tools
+        )
+        uncovered = [] if covered is None else sorted(set(tool_names) - covered)
+        if uncovered:
+            deployed = ", ".join(CEDAR_POLICY_CONTROLS.values())
+            message = (
+                "security.cedar.mode ENFORCE denies every gateway tool without a "
+                f"Cedar permit: {', '.join(uncovered)}. The deployed Cedar "
+                "policies (CEDAR_POLICY_CONTROLS in infra_utils/platform_config.py: "
+                f"{deployed}) cover only "
+                f"{', '.join(sorted(covered)) or 'no tools'}. To permit a tool, "
+                "either (1) add its actions "
+                '(AgentCore::Action::"<target>___<tool>") to the permit '
+                f"{CEDAR_PERMIT_CONTROL_ID} in {CEDAR_PERMIT_CONTROL}, or (2) add "
+                "a new Cedar control under control-library/cedar/ and register "
+                "its control id in CEDAR_POLICY_CONTROLS in "
+                "infra_utils/platform_config.py (stacks/gateway_stack.py deploys "
+                "every entry and this check reads them); then synthesize again. "
+                "Otherwise remove the tools or keep mode LOG_ONLY"
+            )
+            (errors if production else warnings).append(message)
+    return errors, warnings
 
 
 # Partial combinations (any subset of journey/topology/posture/runner) that
@@ -760,8 +911,10 @@ def deployment_placeholders(deployment: DeploymentConfig) -> list[str]:
     return out
 
 
-# IdPs whose identity.mode resolves to direct when the key is omitted. okta
-# joins once Okta direct is accepted by the validator; ping once it exists.
+# IdPs whose identity.mode resolves to direct when the key is omitted. Okta
+# direct is supported (live evidence pending) but stays opt-in through an
+# explicit mode: direct, so existing brokered Okta stacks do not switch.
+# Ping has no direct mode.
 _DIRECT_DEFAULT_IDPS = frozenset({"entra_id"})
 
 

@@ -153,8 +153,9 @@ def test_bedrock_statement_is_scoped_by_the_allowlist_with_wildcard_fallback():
     )
     # The fallback (empty allow-list) must stay the historical wildcards so
     # existing deployments synthesize byte-identical templates.
-    assert '"arn:aws:bedrock:*::foundation-model/*"' in source
-    assert '"arn:aws:bedrock:*:*:inference-profile/*"' in source
+    # The fallback ARNs use the stack partition (aws, aws-cn, ...).
+    assert 'f"arn:{partition}:bedrock:*::foundation-model/*"' in source
+    assert 'f"arn:{partition}:bedrock:*:*:inference-profile/*"' in source
     assert "from infra_utils.platform_config import allowed_model_resources" in source
 
 
