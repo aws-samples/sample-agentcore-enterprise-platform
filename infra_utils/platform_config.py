@@ -1011,6 +1011,24 @@ class SecurityConfig(BaseModel):
     traceability: bool = False
     org_id: str = ""
 
+    @model_validator(mode="before")
+    @classmethod
+    def _org_id_from_environment(cls, data):
+        # deploy.sh validates platform.yaml before load_config reads
+        # workshop.env; on the missing-org failure it retries with the saved
+        # ORG_ID exported. An exported ORG_ID only fills an org_id the
+        # manifest leaves empty (platform.yaml > workshop.env), and is then
+        # shape- and placeholder-checked like a manifest value.
+        if (
+            isinstance(data, dict)
+            and data.get("resource_policies")
+            and not data.get("org_id")
+        ):
+            env_org = os.environ.get("ORG_ID", "")
+            if env_org:
+                data = {**data, "org_id": env_org}
+        return data
+
     @field_validator("org_id")
     @classmethod
     def _org_id_shape(cls, v: str) -> str:

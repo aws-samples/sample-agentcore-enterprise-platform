@@ -257,13 +257,41 @@ else
     unset PLATFORM_ALLOW_PLACEHOLDERS
 fi
 
+# cd: infra_utils must be importable; this runs before the main-flow cd.
+validate_manifest() {
+    (cd "$PROJECT_DIR" && "$1" -m infra_utils.platform_config --export --effective-env "$PLATFORM_CONFIG" 2>&1)
+}
+
 apply_platform_config() {
     [ -f "$PLATFORM_CONFIG" ] || return 0
     local py="$PROJECT_DIR/.venv/bin/python"
     [ -x "$py" ] || py="python3"
-    local exports key value
-    # cd: infra_utils must be importable; this runs before the main-flow cd.
-    if ! exports=$(cd "$PROJECT_DIR" && "$py" -m infra_utils.platform_config --export --effective-env "$PLATFORM_CONFIG" 2>&1); then
+    local exports key value org="" ok=0
+    if exports=$(validate_manifest "$py"); then
+        ok=1
+    elif [ -z "${ORG_ID:-}" ] \
+        && echo "$exports" | grep -q "security.resource_policies requires security.org_id"; then
+        # The manifest leaves org_id empty. This runs before load_config, so
+        # an ORG_ID saved in workshop.env (platform.yaml > workshop.env >
+        # prompt) has not been read yet: supply it, or prompt as
+        # check_org_id would, then validate again. Only on this failure, so
+        # a saved value never overrides an org_id the manifest sets.
+        if [ -f "$CONFIG_FILE" ]; then
+            org=$(sed -n 's/^ORG_ID=//p' "$CONFIG_FILE" | tail -1)
+        fi
+        if [ -z "$org" ] && [ "${NON_INTERACTIVE:-0}" != "1" ]; then
+            echo ""
+            log_warn "Resource policies are enabled and require your AWS Organizations ID."
+            read -rp "  AWS Organizations ID (o-xxxx): " org
+            if [ -n "$org" ]; then ORG_ID_PROMPTED=1; fi
+        fi
+        if [ -n "$org" ]; then
+            ORG_ID="$org"
+            export ORG_ID
+            if exports=$(validate_manifest "$py"); then ok=1; fi
+        fi
+    fi
+    if [ "$ok" != "1" ]; then
         # Two different failures, two different messages. Missing dependencies:
         # continue without the file. Anything else is the manifest itself
         # (placeholders, a typo'd key): a malformed file must not silently
@@ -560,6 +588,10 @@ check_org_id() {
     # enable_resource_policies=true makes the memory stack raise a ValueError
     # mid-deploy when org_id is empty — catch that here instead.
     local org_prompted=0
+    # Prompted during apply_platform_config: persist it like a prompt here.
+    if [ "${ORG_ID_PROMPTED:-0}" = "1" ]; then
+        org_prompted=1
+    fi
     if [ "${ENABLE_RESOURCE_POLICIES:-}" = "true" ] && [ -z "${ORG_ID:-}" ]; then
         if [ "${NON_INTERACTIVE:-0}" != "1" ]; then
             echo ""

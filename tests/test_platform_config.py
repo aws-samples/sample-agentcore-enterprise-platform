@@ -115,6 +115,51 @@ def test_org_id_valid_and_empty_pass():
     assert PlatformConfig.model_validate({}).security.org_id == ""
 
 
+def _effective_env(extra_env):
+    import os
+    import subprocess
+    import sys
+    import tempfile
+
+    env = {k: v for k, v in os.environ.items() if k != "PLATFORM_ALLOW_PLACEHOLDERS"}
+    env.pop("ORG_ID", None)
+    env.update(extra_env)
+    with tempfile.TemporaryDirectory() as tmp:
+        manifest = Path(tmp) / "platform.yaml"
+        manifest.write_text("security:\n  resource_policies: true\n")
+        return subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "infra_utils.platform_config",
+                "--export",
+                "--effective-env",
+                str(manifest),
+            ],
+            check=False,
+            cwd=REPO,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+
+def test_missing_org_id_is_refused_without_a_saved_value():
+    result = _effective_env({})
+    assert result.returncode != 0
+    assert "security.resource_policies requires security.org_id" in (
+        result.stdout + result.stderr
+    )
+
+
+def test_saved_org_id_satisfies_a_manifest_without_one():
+    """deploy.sh retries validation with the ORG_ID saved in workshop.env:
+    a manifest that omits org_id must then be deployable."""
+    result = _effective_env({"ORG_ID": "o-abc123def456"})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ORG_ID=o-abc123def456" in result.stdout
+
+
 def test_org_id_placeholder_is_rejected_with_a_pointer():
     """The shipped 'o-REPLACEME' used to validate and render into IAM policies
     against an organization that does not exist."""
