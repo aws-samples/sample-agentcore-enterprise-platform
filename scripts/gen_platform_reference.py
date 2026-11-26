@@ -70,7 +70,7 @@ DESCRIPTIONS: dict[str, str] = {
     "agents.memory.relevance_score": "Long-term retrieval: minimum relevance for a record to be returned.",
     # gateway
     "gateway.web_search": "Built-in web-search connector on the gateway. `auto` turns it on only in regions where the connector exists.",
-    "gateway.tools": "Lambda tool names the gateway exposes. Schema-validated today; the deployed list still comes from `tool_configs` in `app.py` (docs/modules/gateway.md).",
+    "gateway.tools": "Gateway targets the gateway stack deploys; omitted = the `sample-tool` Lambda default. A bare name is a Lambda tool: `sample-tool`, or a handler directory under `tools/` (dashes become underscores) with its `tool_spec.json`. A block has a `name` and a `type`: `lambda` (optional `source_dir`, `tool_spec`, `env_vars`) or `openapi` (`schema_path` to a local JSON/YAML spec inlined at synth, plus `credential_provider` with `type` `api_key` or `oauth`, the AgentCore Identity provider `arn` and, for OAuth only, `scopes`). See docs/GATEWAY_TARGETS.md.",
     # security
     "security.networking": "VPC mode: runtimes in private subnets behind a NAT gateway and VPC endpoints. Adds the `networking` stack; required by migration private dependencies.",
     "security.cloudtrail_alerting": "The `security` stack: a CloudTrail trail plus alerting. Needed for `traceability` to fire at all.",
@@ -302,7 +302,9 @@ def _unwrap_optional(t: object) -> tuple[object, bool]:
 def _type_str(t: object, field) -> str:
     t, optional = _unwrap_optional(t)
     origin = typing.get_origin(t)
-    if origin is typing.Literal:
+    if origin in (typing.Union, types.UnionType):
+        out = " or ".join(_type_str(a, None) for a in typing.get_args(t))
+    elif origin is typing.Literal:
         out = "one of: " + ", ".join(f"`{a}`" for a in typing.get_args(t))
     elif origin is list:
         out = f"list of {_type_str(typing.get_args(t)[0], None)}"
