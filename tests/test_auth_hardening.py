@@ -210,11 +210,8 @@ def _load(name: str, path: Path) -> types.ModuleType:
     return module
 
 
-@pytest.fixture
-def auth_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
+def _load_auth(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     """auth.py with bedrock_agentcore stubbed and shared/__init__ bypassed."""
-    pytest.importorskip("jwt")
-    pytest.importorskip("cryptography")
     identity_auth = types.ModuleType("bedrock_agentcore.identity.auth")
     identity_auth.requires_access_token = lambda **_: lambda fn: fn
     runtime = types.ModuleType("bedrock_agentcore.runtime")
@@ -238,6 +235,65 @@ def auth_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     auth = _load("shared_auth_under_test", AGENT_SHARED / "auth.py")
     monkeypatch.setattr(auth, "COGNITO_ISSUER_URL", JWT_ISSUER)
     monkeypatch.setattr(auth, "ALLOWED_CLIENTS", (JWT_CLIENT,))
+    return auth
+
+
+@pytest.fixture
+def auth_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
+    """auth.py against the real PyJWT; skipped where PyJWT is not installed."""
+    pytest.importorskip("jwt")
+    pytest.importorskip("cryptography")
+    return _load_auth(monkeypatch)
+
+
+# The CI test job does not install PyJWT, so the real-PyJWT tests above skip
+# there. The stub below stands in for PyJWT and records what auth.py hands it,
+# so CI always exercises auth.py's verification path: that it demands exp,
+# restricts algorithms, fails closed on a PyJWT rejection, checks every aud
+# entry and retries a failed discovery.
+
+
+class _StubPyJWTError(Exception):
+    """Stands in for jwt.PyJWTError."""
+
+
+class _StubJWKClient:
+    def __init__(self, uri: str, cache_keys: bool = False) -> None:
+        self.uri = uri
+        self.cache_keys = cache_keys
+
+    def get_signing_key_from_jwt(self, token: str) -> types.SimpleNamespace:
+        return types.SimpleNamespace(key=f"key-from:{self.uri}")
+
+
+@pytest.fixture
+def stub_jwt(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
+    module = types.ModuleType("jwt")
+    module.PyJWTError = _StubPyJWTError
+    module.PyJWKClient = _StubJWKClient
+    module.calls = []
+    module.result = _claims()
+
+    def decode(**kwargs: Any) -> Any:
+        module.calls.append(kwargs)
+        if isinstance(module.result, Exception):
+            raise module.result
+        return module.result
+
+    module.decode = decode
+    monkeypatch.setitem(sys.modules, "jwt", module)
+    return module
+
+
+@pytest.fixture
+def stub_auth(
+    stub_jwt: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> types.ModuleType:
+    auth = _load_auth(monkeypatch)
+    monkeypatch.setattr(
+        auth, "_discover", lambda: {"jwks_uri": "https://keys.example.com/jwks"}
+    )
+    monkeypatch.setattr(auth, "_jwks_cache", auth.SuccessCache(ttl=3600))
     return auth
 
 
@@ -320,9 +376,49 @@ def test_hs256_token_is_rejected(auth_module, sign) -> None:
         _verify(auth_module, token)
 
 
+def test_decode_requires_exp_and_restricts_algorithms(stub_auth, stub_jwt) -> None:
+    assert _verify(stub_auth, "token") == "user-1"
+    (call,) = stub_jwt.calls
+    assert call["jwt"] == "token"
+    assert call["key"] == "key-from:https://keys.example.com/jwks"
+    assert call["algorithms"] == stub_auth.ALLOWED_ALGORITHMS
+    assert "exp" in call["options"]["require"]
+    assert call["options"]["verify_signature"] is True
+    assert call["options"]["verify_exp"] is True
+    for alg in call["algorithms"]:
+        assert alg.lower() != "none"
+        assert not alg.upper().startswith("HS")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        'Token is missing the "exp" claim',
+        "Signature has expired",
+        "The specified alg value is not allowed",
+    ],
+)
+def test_pyjwt_rejection_fails_closed(stub_auth, stub_jwt, error: str) -> None:
+    stub_jwt.result = _StubPyJWTError(error)
+    with pytest.raises(ValueError, match="JWT verification failed"):
+        _verify(stub_auth, "token")
+
+
+def test_stub_list_audience_with_our_client_is_accepted(stub_auth, stub_jwt) -> None:
+    stub_jwt.result = _claims(aud=["other-api", JWT_CLIENT])
+    assert _verify(stub_auth, "token") == "user-1"
+
+
+def test_stub_list_audience_without_our_client_is_rejected(stub_auth, stub_jwt) -> None:
+    stub_jwt.result = _claims(aud=["other-api", "another"])
+    with pytest.raises(ValueError, match="client"):
+        _verify(stub_auth, "token")
+
+
 def test_discovery_failure_is_retried_on_next_request(
-    auth_module, monkeypatch: pytest.MonkeyPatch
+    stub_auth, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    auth_module = stub_auth
     responses: list[Any] = [
         OSError("discovery down"),
         {"jwks_uri": "https://keys.example.com/jwks"},
