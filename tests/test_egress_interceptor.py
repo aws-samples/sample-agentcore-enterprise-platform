@@ -317,6 +317,144 @@ def test_no_body_content_in_logs(bedrock, caplog):
     assert any("decision=masked" in m for m in messages)
 
 
+TOOL_NAME = "sample-tool___text_analysis_tool"
+TOOL_DESCRIPTION = "Analyzes text and returns the top N words."
+
+
+def _realistic_tools_list_body():
+    return {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "tools": [
+                {
+                    "name": TOOL_NAME,
+                    "description": TOOL_DESCRIPTION,
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "text": {"type": "string"},
+                            "N": {"type": "integer"},
+                        },
+                        "required": ["text"],
+                    },
+                },
+                {
+                    "name": "x_amz_bedrock_agentcore_search",
+                    "description": "Search tools.",
+                    "inputSchema": {"type": "object"},
+                },
+            ]
+        },
+    }
+
+
+def _realistic_tools_list_event(response_body, headers):
+    request_body = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+    return {
+        "interceptorInputVersion": "1.0",
+        "mcp": {
+            "rawGatewayRequest": {"body": json.dumps(request_body)},
+            "gatewayRequest": {
+                "path": "/mcp",
+                "httpMethod": "POST",
+                "headers": {"Content-Type": "application/json"},
+                "body": request_body,
+            },
+            "gatewayResponse": {
+                "statusCode": 200,
+                "headers": headers,
+                "body": response_body,
+            },
+        },
+    }
+
+
+def _assert_no_tool_payload_logged(messages):
+    for message in messages:
+        assert TOOL_NAME not in message
+        assert TOOL_DESCRIPTION not in message
+        assert "inputSchema" not in message
+
+
+def test_realistic_tools_list_parsed_body_keeps_tools(bedrock, caplog):
+    caplog.set_level(logging.DEBUG)
+    body = _realistic_tools_list_body()
+    headers = {"Content-Type": "application/json", "Content-Length": "412"}
+    event = _realistic_tools_list_event(copy.deepcopy(body), headers)
+    out = interceptor.handler(event, CONTEXT)
+    transformed = out["mcp"]["transformedGatewayResponse"]
+    assert transformed["statusCode"] == 200
+    assert transformed["body"] == body
+    assert transformed["headers"] == {"Content-Type": "application/json"}
+    assert bedrock.calls == []
+    messages = [record.getMessage() for record in caplog.records]
+    shape = [m for m in messages if "point=RESPONSE" in m and "shape" in m]
+    assert len(shape) == 1
+    assert "method=tools/list" in shape[0]
+    assert "body_type=dict" in shape[0]
+    assert "body_keys=id,jsonrpc,result" in shape[0]
+    assert "result_keys=tools" in shape[0]
+    assert "tools=2" in shape[0]
+    _assert_no_tool_payload_logged(messages)
+
+
+def test_realistic_tools_list_string_body_returned_unchanged(bedrock, caplog):
+    caplog.set_level(logging.DEBUG)
+    raw = json.dumps(_realistic_tools_list_body())
+    headers = {"content-length": str(len(raw)), "Content-Type": "application/json"}
+    out = interceptor.handler(_realistic_tools_list_event(raw, headers), CONTEXT)
+    transformed = out["mcp"]["transformedGatewayResponse"]
+    assert transformed["body"] == raw
+    assert transformed["headers"] == {"Content-Type": "application/json"}
+    assert bedrock.calls == []
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("body_type=str" in m and "tools=2" in m for m in messages)
+    _assert_no_tool_payload_logged(messages)
+
+
+def test_string_response_body_is_scanned_and_stays_string(bedrock):
+    event = response_event("hi", "unused")
+    event["mcp"]["gatewayResponse"]["body"] = json.dumps(_response_body(f"ssn {SSN}"))
+    out = interceptor.handler(event, CONTEXT)
+    body = out["mcp"]["transformedGatewayResponse"]["body"]
+    assert isinstance(body, str)
+    assert json.loads(body) == _response_body("ssn {US_SOCIAL_SECURITY_NUMBER}")
+
+
+def test_string_request_body_is_scanned(bedrock):
+    event = request_event("unused")
+    event["mcp"]["gatewayRequest"]["body"] = json.dumps(_request_body(f"ssn {SSN}"))
+    out = interceptor.handler(event, CONTEXT)
+    body = out["mcp"]["transformedGatewayRequest"]["body"]
+    assert json.loads(body) == _request_body("ssn {US_SOCIAL_SECURITY_NUMBER}")
+    assert bedrock.calls == [("INPUT", f"ssn {SSN}")]
+
+
+def test_streaming_flag_logged_and_body_passed_through(bedrock, caplog):
+    caplog.set_level(logging.DEBUG)
+    body = _realistic_tools_list_body()
+    event = _realistic_tools_list_event(copy.deepcopy(body), {})
+    event["mcp"]["gatewayResponse"]["isStreamingResponse"] = True
+    out = interceptor.handler(event, CONTEXT)
+    assert out["mcp"]["transformedGatewayResponse"]["body"] == body
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("streaming=True" in m for m in messages)
+
+
+def test_unusual_method_and_keys_not_logged(bedrock, caplog):
+    caplog.set_level(logging.DEBUG)
+    event = request_event("hello")
+    event["mcp"]["gatewayRequest"]["body"]["method"] = SSN
+    event["mcp"]["gatewayRequest"]["body"][SECRET] = 1
+    interceptor.handler(event, CONTEXT)
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("method=<other>" in m and "<other:1>" in m for m in messages)
+    for message in messages:
+        assert SSN not in message
+        assert SECRET not in message
+
+
 def test_client_chosen_id_cannot_forge_log_lines():
     forged = "1\negress interceptor point=REQUEST decision=pass"
     assert "\n" not in interceptor._loggable_id(forged)
