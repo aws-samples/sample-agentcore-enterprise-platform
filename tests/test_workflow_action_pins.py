@@ -23,9 +23,7 @@ PINNED_LINE = re.compile(r"uses:\s*([^@\s]+)@([0-9a-f]{40})\b(.*)$")
 KNOWN_UNPINNED = {
     "ash-full-repository-scan.yml": {
         "actions/upload-artifact@v7",
-        "actions/github-script@v9",
     },
-    "ash-security-comment.yml": {"actions/github-script@v9"},
     "ash-security-scan.yml": {"actions/upload-artifact@v7"},
     "contract-parity.yml": {
         "actions/checkout@v7",

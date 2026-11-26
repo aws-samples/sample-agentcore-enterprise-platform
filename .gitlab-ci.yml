@@ -29,7 +29,7 @@ variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   # Same CDK CLI pin as .github/workflows/unit-tests.yml.
-  CDK_CLI_VERSION: "2.1029.2"
+  CDK_CLI_VERSION: "2.1149.0"
 
 .pip-cache: &pip-cache
   cache:

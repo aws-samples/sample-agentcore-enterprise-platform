@@ -34,7 +34,7 @@ jobs:
 
       - name: Install CDK and app dependencies
         run: |
-          npm install -g aws-cdk
+          npm install -g aws-cdk@2.1149.0
           pip install -r requirements.txt
 
       - name: Preset ↔ synth parity
