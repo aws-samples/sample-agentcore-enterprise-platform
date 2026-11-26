@@ -3582,5 +3582,48 @@ def _main() -> int:
     return 0
 
 
+# ── global. cross-Region inference profiles ──
+# Bedrock authorizes a global profile against three resources (AWS docs,
+# "Global cross-Region inference" IAM policy example:
+# https://docs.aws.amazon.com/bedrock/latest/userguide/global-cross-region-inference.html):
+#   arn:aws:bedrock:<region>:<account>:inference-profile/global.<model>
+#   arn:aws:bedrock:<region>::foundation-model/<model>
+#   arn:aws:bedrock:::foundation-model/<model>   (empty Region: global routing)
+# The Region/account fields are wildcarded so every Region the global profile
+# can route to is covered. The geo-prefix detection above only knows 2-4 letter
+# prefixes (us/eu/apac), so a `global.` id validated fine but rendered as a bare
+# foundation-model ARN that matches nothing: AccessDenied on every invoke.
+_GLOBAL_PROFILE_PREFIX = "global."
+
+_geo_allowed_model_resources = allowed_model_resources
+
+
+def _global_profile_resources(model: str) -> list[str]:
+    base = model[len(_GLOBAL_PROFILE_PREFIX) :]
+    return [
+        f"arn:aws:bedrock:*:*:inference-profile/{model}",
+        f"arn:aws:bedrock:*::foundation-model/{base}*",
+        f"arn:aws:bedrock:::foundation-model/{base}*",
+    ]
+
+
+def allowed_model_resources(models: list[str]) -> list[str]:
+    """IAM resource ARNs for the model allow-list, order-preserving, deduped.
+
+    `global.` profiles get the three AWS-documented ARN forms (see above);
+    us./eu./apac. geo profiles and bare model ids are unchanged.
+    """
+    out: list[str] = []
+    for model in models:
+        if model.startswith(_GLOBAL_PROFILE_PREFIX):
+            arns = _global_profile_resources(model)
+        else:
+            arns = _geo_allowed_model_resources([model])
+        for arn in arns:
+            if arn not in out:
+                out.append(arn)
+    return out
+
+
 if __name__ == "__main__":
     sys.exit(_main())
