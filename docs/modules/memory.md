@@ -28,8 +28,8 @@ the condition.
 | Resource | Name pattern | Purpose |
 |---|---|---|
 | `AWS::BedrockAgentCore::Memory` | `{project}_{environment}_memory` (hyphens become underscores) | The memory store; events expire after 30 days |
-| Memory strategy: `user_preference` | `{name}_user_pref`, namespace `USER_ID` | Always — user preference tracking |
-| Memory strategy: `semantic` (optional) | `{name}_semantic`, namespace `AGENT_ID` | Only with `use_long_term_memory=true` — semantic fact extraction |
+| Memory strategy: `user_preference` | `{name}_user_pref`, namespace `/users/{actorId}/preferences` | Always — per-user preference tracking |
+| Memory strategy: `semantic` (optional) | `{name}_semantic`, namespace `/users/{actorId}/facts` | Only with `use_long_term_memory=true` — per-user semantic fact extraction |
 | `AWS::BedrockAgentCore::ResourcePolicy` (optional) | attached to the memory ARN | Only with `enable_resource_policies=true` — in-account-only access (see Security notes) |
 | 2 × `AWS::SSM::Parameter` | `/{project}/{environment}/memory/*` | `memory-id`, `memory-arn` |
 
@@ -50,7 +50,48 @@ Two things the table implies but are worth stating: `event_expiry_days` is a
 stack parameter but `app.py` hardcodes it to `30` — it is not configurable
 today. And the two `ltm_*` retrieval knobs shape nothing in this stack; they
 are consumed by the agent at runtime (injected as env vars into the
-orchestrator by `app.py`), not by the memory resource itself.
+orchestrator by `app.py`), not by the memory resource itself. An invalid
+value at runtime is logged as a warning and the default is used, the same way
+in every Strands pattern.
+
+## Upgrading from the shared namespaces
+
+Earlier versions wrote long-term records to the literal namespaces `USER_ID`
+and `AGENT_ID`, shared by every user. Deploying this version updates the
+memory strategies **in place** (same memory id, no data migration):
+
+- New records are extracted into `/users/{actorId}/preferences` and
+  `/users/{actorId}/facts`.
+- Records written before the upgrade stay under `USER_ID` / `AGENT_ID` and
+  are **no longer read** by the agents. They still mix every user's data, so
+  delete them.
+
+Cleanup (AWS CLI; it paginates automatically):
+
+```bash
+MEMORY_ID=$(aws ssm get-parameter \
+  --name "/<project>/<environment>/memory/memory-id" \
+  --query Parameter.Value --output text)
+
+# 1. List the old records
+for ns in USER_ID AGENT_ID; do
+  aws bedrock-agentcore list-memory-records --memory-id "$MEMORY_ID" \
+    --namespace "$ns" --query 'memoryRecordSummaries[].memoryRecordId' \
+    --output text
+done
+
+# 2. Delete them
+for ns in USER_ID AGENT_ID; do
+  for id in $(aws bedrock-agentcore list-memory-records \
+      --memory-id "$MEMORY_ID" --namespace "$ns" \
+      --query 'memoryRecordSummaries[].memoryRecordId' --output text); do
+    aws bedrock-agentcore delete-memory-record \
+      --memory-id "$MEMORY_ID" --memory-record-id "$id"
+  done
+done
+```
+
+Re-run step 1 afterwards; it should print nothing.
 
 ## Interfaces
 

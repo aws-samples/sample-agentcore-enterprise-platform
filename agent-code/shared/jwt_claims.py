@@ -9,7 +9,10 @@ checks that the verified token is one we should accept: right issuer, one of our
 clients, and an identity to act as.
 """
 
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 
 
 def gateway_token_scopes(env: dict | None = None) -> list[str]:
@@ -118,24 +121,46 @@ def build_retrieval_namespaces(actor_id: str, include_facts: bool = True) -> lis
     return [template.replace("{actorId}", actor_id) for template in templates]
 
 
+def _env_setting(source, key, parse, default, valid, rule):
+    """Parse one setting; on a bad value log a warning and use the default."""
+    raw = source.get(key)
+    if not raw:
+        return default
+    try:
+        value = parse(raw)
+    except ValueError:
+        value = None
+    if value is None or not valid(value):
+        logger.warning("Invalid %s=%r (%s); using default %s", key, raw, rule, default)
+        return default
+    return value
+
+
 def ltm_retrieval_settings(env: dict | None = None) -> tuple[int, float]:
-    """(top_k, relevance_score) from LTM_TOP_K / LTM_RELEVANCE_SCORE."""
+    """(top_k, relevance_score) from LTM_TOP_K / LTM_RELEVANCE_SCORE.
+
+    An invalid value never disables memory or fails the request: it is logged
+    as a warning and the default is used, identically for every agent.
+    """
     import os
 
     source = env if env is not None else os.environ
-    raw_top_k = source.get("LTM_TOP_K") or str(DEFAULT_LTM_TOP_K)
-    raw_score = source.get("LTM_RELEVANCE_SCORE") or str(DEFAULT_LTM_RELEVANCE_SCORE)
-    try:
-        top_k = int(raw_top_k)
-        relevance_score = float(raw_score)
-    except ValueError as exc:
-        raise ValueError(
-            "LTM_TOP_K must be an integer and LTM_RELEVANCE_SCORE a number"
-        ) from exc
-    if top_k < 1:
-        raise ValueError("LTM_TOP_K must be at least 1")
-    if not 0.0 <= relevance_score <= 1.0:
-        raise ValueError("LTM_RELEVANCE_SCORE must be between 0 and 1")
+    top_k = _env_setting(
+        source,
+        "LTM_TOP_K",
+        int,
+        DEFAULT_LTM_TOP_K,
+        lambda v: v >= 1,
+        "must be an integer >= 1",
+    )
+    relevance_score = _env_setting(
+        source,
+        "LTM_RELEVANCE_SCORE",
+        float,
+        DEFAULT_LTM_RELEVANCE_SCORE,
+        lambda v: 0.0 <= v <= 1.0,
+        "must be a number between 0 and 1",
+    )
     return top_k, relevance_score
 
 

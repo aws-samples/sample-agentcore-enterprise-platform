@@ -2,7 +2,11 @@
 
 import importlib.util
 import inspect
+import logging
+import sys
+import types
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import aws_cdk as cdk
 import pytest
@@ -113,9 +117,76 @@ def test_unsafe_actor_id_rejected(actor_id):
         {"LTM_RELEVANCE_SCORE": "nan"},
     ],
 )
-def test_invalid_retrieval_settings_rejected(env):
-    with pytest.raises(ValueError):
-        jwt_claims.ltm_retrieval_settings(env)
+def test_invalid_retrieval_settings_fall_back_with_warning(env, caplog):
+    caplog.set_level(logging.WARNING)
+    assert jwt_claims.ltm_retrieval_settings(env) == (10, 0.3)
+    (key,) = env
+    assert key in caplog.text
+
+
+def test_one_invalid_setting_keeps_the_other():
+    env = {"LTM_TOP_K": "5", "LTM_RELEVANCE_SCORE": "high"}
+    assert jwt_claims.ltm_retrieval_settings(env) == (5, 0.3)
+
+
+class _StubModule(types.ModuleType):
+    def __getattr__(self, name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        value = MagicMock(name=f"{self.__name__}.{name}")
+        setattr(self, name, value)
+        return value
+
+
+_STUBBED_MODULES = (
+    "ag_ui",
+    "ag_ui.core",
+    "ag_ui_strands",
+    "bedrock_agentcore",
+    "bedrock_agentcore.memory",
+    "bedrock_agentcore.memory.integrations",
+    "bedrock_agentcore.memory.integrations.strands",
+    "bedrock_agentcore.memory.integrations.strands.config",
+    "bedrock_agentcore.memory.integrations.strands.session_manager",
+    "bedrock_agentcore.runtime",
+    "shared.auth",
+    "strands",
+    "strands.models",
+    "tools",
+    "tools.code_interpreter",
+    "tools.gateway",
+)
+
+
+def _load_agent(agent, monkeypatch):
+    """Import an agent's real agent.py with its framework dependencies stubbed."""
+    monkeypatch.syspath_prepend(str(ROOT / "agent-code"))
+    for name in _STUBBED_MODULES:
+        monkeypatch.setitem(sys.modules, name, _StubModule(name))
+    sys.modules["ag_ui_strands"].StrandsAgent = type("StrandsAgent", (), {})
+    spec = importlib.util.spec_from_file_location(
+        f"_agent_{agent.replace('-', '_')}_under_test",
+        ROOT / "agent-code" / agent / "agent.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+def test_agent_invalid_top_k_warns_and_uses_default(agent, monkeypatch, caplog):
+    module = _load_agent(agent, monkeypatch)
+    monkeypatch.setenv("LTM_TOP_K", "many")
+    monkeypatch.delenv("LTM_RELEVANCE_SCORE", raising=False)
+    monkeypatch.delenv("USE_LONG_TERM_MEMORY", raising=False)
+    caplog.set_level(logging.WARNING)
+
+    config = module._retrieval_config("sub-1", lambda **kw: kw)
+
+    assert config == {
+        "/users/sub-1/preferences": {"top_k": 10, "relevance_score": 0.3},
+    }
+    assert "LTM_TOP_K" in caplog.text
 
 
 @pytest.mark.parametrize("agent", AGENTS)
