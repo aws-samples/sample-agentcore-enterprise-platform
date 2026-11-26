@@ -5,8 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 import aws_cdk as cdk
+import pytest
 from aws_cdk.assertions import Template
 
+from infra_utils.platform_config import resolve_deployment_mode
 from stacks.auth_stack import AuthStack
 from stacks.gateway_stack import GatewayStack
 from stacks.memory_stack import MemoryStack
@@ -180,3 +182,51 @@ def test_gateway_sanitizes_production_errors_and_uses_the_cmk() -> None:
     )
     gateway = resources(workshop, "AWS::BedrockAgentCore::Gateway")[0]["Properties"]
     assert gateway["ExceptionLevel"] == "DEBUG"
+
+
+# ── deployment.mode in platform.yaml is the source of truth ──
+
+
+def test_production_manifest_refuses_workshop_env() -> None:
+    with pytest.raises(ValueError, match="allow_mode_override"):
+        resolve_deployment_mode("production", env_value="workshop")
+
+
+def test_production_manifest_refuses_workshop_context() -> None:
+    with pytest.raises(ValueError, match="-c deployment_mode=workshop"):
+        resolve_deployment_mode("production", context_value="workshop")
+
+
+def test_production_manifest_accepts_matching_values() -> None:
+    assert resolve_deployment_mode("production") == "production"
+    assert (
+        resolve_deployment_mode(
+            "production", context_value="production", env_value="production"
+        )
+        == "production"
+    )
+
+
+def test_workshop_manifest_refuses_production_env() -> None:
+    with pytest.raises(ValueError, match="deployment.mode: workshop"):
+        resolve_deployment_mode("workshop", env_value="production")
+
+
+def test_explicit_override_wins_with_a_loud_warning(capsys) -> None:
+    mode = resolve_deployment_mode(
+        "production", env_value="workshop", allow_override=True
+    )
+    assert mode == "workshop"
+    err = capsys.readouterr().err
+    assert "DEPLOYMENT MODE OVERRIDDEN" in err
+    assert "allow_mode_override=true" in err
+
+
+def test_without_manifest_behaviour_is_unchanged() -> None:
+    assert resolve_deployment_mode(None) == "workshop"
+    assert resolve_deployment_mode(None, env_value="production") == "production"
+
+
+def test_unknown_mode_value_is_refused() -> None:
+    with pytest.raises(ValueError, match="'workshop' or 'production'"):
+        resolve_deployment_mode("production", env_value="prod")

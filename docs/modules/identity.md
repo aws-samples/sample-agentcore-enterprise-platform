@@ -95,9 +95,18 @@ orchestrator and research-agent runtimes, whose
   `secretsmanager:GetSecretValue` on
   `bedrock-agentcore-identity!default/oauth2/*`. Without it, gateway tool
   loading fails and takes the whole agent invocation down with it.
+- The runtime role's workload-identity statement (`AgentCoreWorkloadIdentity`
+  in `stacks/runtime_stack.py`) grants `GetResourceOauth2Token`,
+  `CreateWorkloadIdentity`, `GetWorkloadAccessToken` and
+  `GetWorkloadAccessTokenForJWT` only on the default workload-identity
+  directory, the runtime's own identity
+  (`default/workload-identity/<runtime-name>-*`) and the default token vault —
+  never `"*"`.
 - The unverified-userId token path (`GetWorkloadAccessTokenForUserId`) is
-  denied by an org-level SCP in `control-library/terraform/org-guardrails`, not by this stack
-  — see [Security controls](../SECURITY_CONTROLS.md).
+  **no longer granted** to the runtime role at all: agents receive the
+  caller's workload token from the service. It is additionally denied
+  org-wide by an SCP in `control-library/terraform/org-guardrails`, not by
+  this stack — see [Security controls](../SECURITY_CONTROLS.md).
 
 ## Verification
 
