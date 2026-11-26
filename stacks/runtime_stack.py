@@ -383,10 +383,16 @@ class RuntimeStack(cdk.Stack):
                 }
             )
 
-        # Custom resource triggers build only when source hash changes
+        # Custom resource triggers build only when source hash changes.
+        # New logical id on purpose: CloudFormation rejects changing the
+        # service token of an existing custom resource ("Modifying service
+        # token is not allowed"), so the Provider-backed trigger replaces the
+        # old direct-Lambda BuildTriggerCR instead of updating it. The old
+        # resource's Delete reaches BuildTrigger directly and is answered by
+        # build_trigger_lambda.on_event's legacy branch.
         build_trigger = CustomResource(
             self,
-            "BuildTriggerCR",
+            "BuildTriggerProviderCR",
             service_token=build_provider.service_token,
             properties={
                 "ProjectName": build_project.project_name,

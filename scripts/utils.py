@@ -338,75 +338,6 @@ def print_section(title: str, width: int = 60) -> None:
     print("=" * width + "\n")
 
 
-RUNTIME_LOG_GROUP_PREFIX = "/aws/bedrock-agentcore/runtimes/"
-
-
-def stack_belongs_to_deployment(
-    name: str, prefix: str, expected: list[str] | tuple[str, ...] = ()
-) -> bool:
-    """True for a known stack name or one starting with exactly prefix + '-'.
-
-    Never a bare startswith on the project name: prefix 'demo' must not
-    sweep 'demo2-...' stacks of another project.
-    """
-    return name in set(expected) or name.startswith(f"{prefix}-")
-
-
-def runtime_log_group_matches(name: str, prefix: str) -> bool:
-    """True for this deployment's runtime log groups (exact prefix + '_')."""
-    rt_prefix = prefix.replace("-", "_") + "_"
-    return name.startswith(RUNTIME_LOG_GROUP_PREFIX + rt_prefix)
-
-
-def destroy_levels(stacks: list[str], deps: dict[str, list[str]]) -> list[list[str]]:
-    """Batch stacks for parallel deletion.
-
-    deps maps a stack to the stacks it depends on. Level 0 holds stacks that
-    nothing (still present) depends on; each later level holds stacks whose
-    dependents were all deleted in earlier levels. Raises on a cycle.
-    """
-    remaining = set(stacks)
-    levels: list[list[str]] = []
-    while remaining:
-        needed = {d for s in remaining for d in deps.get(s, []) if d in remaining}
-        level = sorted(remaining - needed)
-        if not level:
-            raise ValueError(f"dependency cycle among: {sorted(remaining)}")
-        levels.append(level)
-        remaining -= set(level)
-    return levels
-
-
-def _destroy_cli(argv: list[str]) -> int:
-    """stdin-driven helpers for deploy.sh destroy.
-
-    match-stacks PREFIX [EXPECTED...]  names on stdin -> matching names
-    match-log-groups PREFIX            names on stdin -> matching names
-    destroy-levels                     JSON {stacks, deps} -> one level per line
-    """
-    if not argv:
-        print(_destroy_cli.__doc__, file=sys.stderr)
-        return 2
-    cmd, args = argv[0], argv[1:]
-    if cmd == "destroy-levels":
-        data = json.load(sys.stdin)
-        for level in destroy_levels(data["stacks"], data.get("deps", {})):
-            print(" ".join(level))
-        return 0
-    if cmd in ("match-stacks", "match-log-groups") and args:
-        names = [line.strip() for line in sys.stdin if line.strip()]
-        for name in names:
-            if cmd == "match-stacks":
-                ok = stack_belongs_to_deployment(name, args[0], args[1:])
-            else:
-                ok = runtime_log_group_matches(name, args[0])
-            if ok:
-                print(name)
-        return 0
-    print(_destroy_cli.__doc__, file=sys.stderr)
-    return 2
-
-
 def create_mock_jwt(user_id: str) -> str:
     """Create a mock unsigned JWT with user_id as 'sub' claim for local testing."""
     header = (
@@ -420,7 +351,3 @@ def create_mock_jwt(user_id: str) -> str:
         .decode()
     )
     return f"{header}.{payload}."
-
-
-if __name__ == "__main__":
-    sys.exit(_destroy_cli(sys.argv[1:]))
