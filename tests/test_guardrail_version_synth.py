@@ -77,6 +77,12 @@ def test_runtime_receives_the_published_version():
     (runtime,) = runtimes.values()
     env = runtime["Properties"]["EnvironmentVariables"]
     assert env["GUARDRAIL_VERSION"] == {"Fn::GetAtt": [logical_id, "Version"]}
+    params = template.find_resources(
+        "AWS::SSM::Parameter",
+        {"Properties": {"Name": "/p/prod/runtimes/orchestrator/guardrail/version"}},
+    )
+    (param,) = params.values()
+    assert param["Properties"]["Value"] == {"Fn::GetAtt": [logical_id, "Version"]}
     assert "DRAFT" not in json.dumps(template.to_json())
 
 

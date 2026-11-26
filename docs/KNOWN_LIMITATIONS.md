@@ -37,7 +37,9 @@ Review these before an EBA or customer deployment.
    against each live Gateway target. The stacks now publish and pin the Bedrock
    Guardrail version (`CfnGuardrailVersion`). The definition hash in its
    description makes every definition change publish a new version, and agents
-   refuse `DRAFT` unless `GUARDRAIL_ALLOW_DRAFT=true` (workshop only). The
+   and the egress interceptor refuse `DRAFT` unless `GUARDRAIL_ALLOW_DRAFT=true`
+   (workshop only, ignored when `ENVIRONMENT` is `prod`). The verifier checks the
+   exact version the runtime stack pinned in SSM. The
    `PROMPT_ATTACK` filter runs at `MEDIUM` so that benign prompts pass. Tune it
    against your own traffic and keep the benign-prompt check in
    `scripts/check_guardrail_enforcement.py` passing.

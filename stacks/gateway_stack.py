@@ -159,6 +159,8 @@ class GatewayStack(cdk.Stack):
                 environment={
                     "GUARDRAIL_ID": guardrail.attr_guardrail_id,
                     "GUARDRAIL_VERSION": guardrail_version.attr_version,
+                    # Lets the handler refuse a DRAFT opt-in in production.
+                    "ENVIRONMENT": environment,
                 },
             )
 

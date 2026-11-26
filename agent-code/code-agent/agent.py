@@ -24,14 +24,20 @@ def _guardrail_version() -> str:
 
     Production never falls back to DRAFT: a missing version fails start-up.
     A workshop may use DRAFT only by opting in explicitly with
-    GUARDRAIL_VERSION=DRAFT and GUARDRAIL_ALLOW_DRAFT=true.
+    GUARDRAIL_VERSION=DRAFT and GUARDRAIL_ALLOW_DRAFT=true. The opt-in is
+    ignored when ENVIRONMENT is prod.
     """
     version = os.environ.get("GUARDRAIL_VERSION", "").strip()
-    allow_draft = os.environ.get("GUARDRAIL_ALLOW_DRAFT", "").lower() == "true"
+    environment = os.environ.get("ENVIRONMENT", "").strip().lower()
+    allow_draft = (
+        environment not in ("prod", "production")
+        and os.environ.get("GUARDRAIL_ALLOW_DRAFT", "").lower() == "true"
+    )
     if not version or (version.upper() == "DRAFT" and not allow_draft):
         raise RuntimeError(
             "GUARDRAIL_ID is set but GUARDRAIL_VERSION is not a published version "
-            f"(got {version!r}); DRAFT needs GUARDRAIL_ALLOW_DRAFT=true (workshop only)"
+            f"(got {version!r}); DRAFT needs GUARDRAIL_ALLOW_DRAFT=true, which is "
+            "workshop only and ignored when ENVIRONMENT is prod"
         )
     return version
 

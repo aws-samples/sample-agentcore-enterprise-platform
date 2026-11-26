@@ -27,6 +27,7 @@ from infra_utils.platform_config import PlatformConfig, to_env
 RUNTIME_STACK = REPO / "stacks" / "runtime_stack.py"
 GATEWAY_STACK = REPO / "stacks" / "gateway_stack.py"
 GUARDRAIL_ARTIFACT = REPO / "control-library" / "guardrails" / "egress-default.json"
+INTERCEPTOR = REPO / "tools" / "egress_interceptor" / "handler.py"
 AGENT_CODE = REPO / "agent-code"
 
 # Every pattern that can attach a Bedrock Guardrail carries the env-gated
@@ -161,12 +162,25 @@ def test_missing_version_fails_fast(agent, monkeypatch):
 @pytest.mark.parametrize("agent", GUARDRAIL_CAPABLE_AGENTS)
 def test_draft_needs_explicit_workshop_opt_in(agent, monkeypatch):
     fn = _guardrail_version_fn(agent)
+    monkeypatch.setenv("ENVIRONMENT", "dev")
     monkeypatch.setenv("GUARDRAIL_VERSION", "DRAFT")
     monkeypatch.delenv("GUARDRAIL_ALLOW_DRAFT", raising=False)
     with pytest.raises(RuntimeError):
         fn()
     monkeypatch.setenv("GUARDRAIL_ALLOW_DRAFT", "true")
     assert fn() == "DRAFT"
+
+
+@pytest.mark.parametrize("agent", GUARDRAIL_CAPABLE_AGENTS)
+def test_production_ignores_allow_draft(agent, monkeypatch):
+    fn = _guardrail_version_fn(agent)
+    monkeypatch.setenv("ENVIRONMENT", "prod")
+    monkeypatch.setenv("GUARDRAIL_VERSION", "DRAFT")
+    monkeypatch.setenv("GUARDRAIL_ALLOW_DRAFT", "true")
+    with pytest.raises(RuntimeError):
+        fn()
+    monkeypatch.setenv("GUARDRAIL_VERSION", "3")
+    assert fn() == "3"
 
 
 @pytest.mark.parametrize("agent", GUARDRAIL_CAPABLE_AGENTS)
@@ -188,6 +202,11 @@ def test_stacks_pass_the_published_version(stack):
         "attr_version on the guardrail is DRAFT"
     )
     assert "sha256" in source, "the version must track a hash of the definition"
+
+
+def test_runtime_stack_records_the_pinned_version():
+    source = RUNTIME_STACK.read_text()
+    assert "/version" in source and "SSMGuardrailVersion" in source
 
 
 def test_prompt_attack_is_not_high():
@@ -255,9 +274,13 @@ def test_sim_arn_falls_back_to_generic_without_a_list(monkeypatch, tmp_path):
 
 
 class _FakeBedrock:
-    def __init__(self, action="NONE"):
+    def __init__(self, action="NONE", params=None):
         self.action = action
         self.calls = []
+        self.params = params or {}
+
+    def get_parameter(self, Name):
+        return {"Parameter": {"Value": self.params[Name]}}
 
     def apply_guardrail(self, **kwargs):
         self.calls.append(kwargs)
@@ -295,7 +318,71 @@ def test_benign_check_passes_and_uses_the_pinned_version(monkeypatch):
     )
 
 
-def test_published_guardrail_picks_highest_non_draft(monkeypatch):
+_PIN = "/p/dev/runtimes/orchestrator/guardrail"
+
+
+def test_pinned_guardrail_uses_the_stack_pin_not_the_highest(monkeypatch):
     mod = _load_check_module()
-    monkeypatch.setattr(mod.boto3, "client", lambda *a, **k: _FakeBedrock())
-    assert mod.published_guardrail("p-dev-orchestrator-guardrail") == ("gr-1", "10")
+    fake = _FakeBedrock(params={f"{_PIN}/id": "gr-1", f"{_PIN}/version": "2"})
+    monkeypatch.setattr(mod.boto3, "client", lambda *a, **k: fake)
+    assert mod.pinned_guardrail("p", "dev") == ("gr-1", "2")
+
+
+@pytest.mark.parametrize("version", ["DRAFT", "7"])
+def test_pinned_guardrail_fails_on_draft_or_unpublished(monkeypatch, version):
+    mod = _load_check_module()
+    fake = _FakeBedrock(params={f"{_PIN}/id": "gr-1", f"{_PIN}/version": version})
+    monkeypatch.setattr(mod.boto3, "client", lambda *a, **k: fake)
+    with pytest.raises(SystemExit):
+        mod.pinned_guardrail("p", "dev")
+
+
+# ── egress interceptor fails closed and uses one pinned version ──
+
+
+def _load_interceptor(monkeypatch, **env):
+    import importlib.util
+
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+    for key in (
+        "GUARDRAIL_ID",
+        "GUARDRAIL_VERSION",
+        "GUARDRAIL_ALLOW_DRAFT",
+        "ENVIRONMENT",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    spec = importlib.util.spec_from_file_location("egress_handler", INTERCEPTOR)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_interceptor_fails_closed_without_a_version(monkeypatch):
+    with pytest.raises(RuntimeError):
+        _load_interceptor(monkeypatch, GUARDRAIL_ID="gr-1")
+
+
+def test_interceptor_refuses_draft_in_production(monkeypatch):
+    with pytest.raises(RuntimeError):
+        _load_interceptor(
+            monkeypatch,
+            GUARDRAIL_ID="gr-1",
+            GUARDRAIL_VERSION="DRAFT",
+            GUARDRAIL_ALLOW_DRAFT="true",
+            ENVIRONMENT="prod",
+        )
+
+
+def test_interceptor_uses_the_pinned_version_for_every_call(monkeypatch):
+    mod = _load_interceptor(
+        monkeypatch, GUARDRAIL_ID="gr-1", GUARDRAIL_VERSION="7", ENVIRONMENT="prod"
+    )
+    fake = _FakeBedrock("NONE")
+    monkeypatch.setattr(mod, "_bedrock", fake)
+    mod.handler({"mcp": {"gatewayRequest": {"a": "hi", "b": ["there"]}}}, None)
+    mod.handler({"mcp": {"gatewayResponse": {"c": "ok"}}}, None)
+    assert len(fake.calls) == 3
+    assert all(c["guardrailVersion"] == "7" for c in fake.calls)
+    assert all(c["guardrailIdentifier"] == "gr-1" for c in fake.calls)

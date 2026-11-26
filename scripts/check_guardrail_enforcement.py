@@ -12,8 +12,9 @@ invoke, no model call:
 
 Then a benign-prompt check against the deployed baseline guardrail:
 
-  3. The orchestrator guardrail must have a published (non-DRAFT) version.
-     ApplyGuardrail on that version with plain greetings, such as "Health
+  3. The guardrail version the runtime stack pinned (its SSM parameters
+     /<project>/<env>/runtimes/orchestrator/guardrail/{id,version}) must be
+     published and not DRAFT. ApplyGuardrail on that exact version with plain greetings, such as "Health
      check: reply with one word.", must not intervene. An over-strict
      PROMPT_ATTACK filter would otherwise make every agent unusable.
 
@@ -31,6 +32,7 @@ import sys
 from pathlib import Path
 
 import boto3
+from botocore.exceptions import ClientError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -112,23 +114,37 @@ def _list_guardrails(client, **kwargs):
             return
 
 
-def published_guardrail(name: str) -> tuple[str, str]:
-    """(id, highest published version) of the guardrail called ``name``."""
-    client = boto3.client("bedrock", region_name=REGION)
-    match = next((g for g in _list_guardrails(client) if g["name"] == name), None)
-    if match is None:
-        fail(f"guardrail {name} not found — deploy with require_guardrails=true")
-    versions = [
-        g["version"]
-        for g in _list_guardrails(client, guardrailIdentifier=match["id"])
-        if g.get("version", "DRAFT") != "DRAFT"
-    ]
-    if not versions:
+def pinned_guardrail(
+    project: str, environment: str, component: str = "orchestrator"
+) -> tuple[str, str]:
+    """(id, version) that the runtime stack pinned, read from its SSM parameters.
+
+    The highest published version is not necessarily the one the runtime
+    runs, so the check verifies the exact pin the stack injected.
+    """
+    ssm = boto3.client("ssm", region_name=REGION)
+    base = f"/{project}/{environment}/runtimes/{component}/guardrail"
+    try:
+        guardrail_id = ssm.get_parameter(Name=f"{base}/id")["Parameter"]["Value"]
+        version = ssm.get_parameter(Name=f"{base}/version")["Parameter"]["Value"]
+    except ClientError as exc:
         fail(
-            f"guardrail {name} has no published version — the runtime would "
-            "run DRAFT. Redeploy the runtime stack to create the version."
+            f"pinned guardrail parameters under {base} not readable ({exc}) — "
+            "deploy the runtime stack with require_guardrails=true"
         )
-    return match["id"], max(versions, key=int)
+    if not version or version.upper() == "DRAFT":
+        fail(f"the runtime pins guardrail version {version!r}, not a published one")
+    client = boto3.client("bedrock", region_name=REGION)
+    published = {
+        g.get("version")
+        for g in _list_guardrails(client, guardrailIdentifier=guardrail_id)
+    }
+    if version not in published:
+        fail(
+            f"pinned guardrail version {version} of {guardrail_id} is not "
+            "published. Redeploy the runtime stack."
+        )
+    return guardrail_id, version
 
 
 def check_benign_prompts(guardrail_id: str, version: str) -> None:
@@ -198,9 +214,8 @@ def main() -> None:
         )
     print("PASS: inference with a guardrail is allowed")
 
-    guardrail_name = f"{project}-{environment}-orchestrator-guardrail"
-    guardrail_id, version = published_guardrail(guardrail_name)
-    print(f"Checking guardrail {guardrail_name} version {version}")
+    guardrail_id, version = pinned_guardrail(project, environment)
+    print(f"Checking pinned guardrail {guardrail_id} version {version}")
     check_benign_prompts(guardrail_id, version)
     print("OK: the runtime role enforces guardrailed-only inference")
 

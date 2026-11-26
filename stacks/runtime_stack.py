@@ -516,6 +516,27 @@ class RuntimeStack(cdk.Stack):
             parameter_name=f"/{project_name}/{environment}/runtimes/{component_name}/id",
             string_value=self._runtime.attr_agent_runtime_id,
         )
+        if guardrail is not None and guardrail_version is not None:
+            # The exact guardrail and version injected into the runtime, so the
+            # verifier checks the pin rather than guessing the latest version.
+            guardrail_param = (
+                f"/{project_name}/{environment}/runtimes/{component_name}/guardrail"
+            )
+            ssm.StringParameter(
+                self,
+                "SSMGuardrailId",
+                parameter_name=f"{guardrail_param}/id",
+                string_value=guardrail.attr_guardrail_id,
+            )
+            ssm.StringParameter(
+                self,
+                "SSMGuardrailVersion",
+                parameter_name=f"{guardrail_param}/version",
+                string_value=guardrail_version.attr_version,
+            )
+            cdk.CfnOutput(
+                self, "GuardrailVersion", value=guardrail_version.attr_version
+            )
 
         # ── Outputs ──
         cdk.CfnOutput(

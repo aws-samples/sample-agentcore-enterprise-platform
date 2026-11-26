@@ -239,7 +239,12 @@ repo uses today.
   egress interceptor receive. Each description carries a sha256 of the guardrail definition,
   so a definition change publishes a new version. Agents fail at start-up when
   `GUARDRAIL_ID` is set without a published version. A workshop can still use `DRAFT`
-  explicitly with `GUARDRAIL_VERSION=DRAFT` and `GUARDRAIL_ALLOW_DRAFT=true`.
+  explicitly with `GUARDRAIL_VERSION=DRAFT` and `GUARDRAIL_ALLOW_DRAFT=true`. That opt-in
+  is ignored when `ENVIRONMENT` is `prod`. The egress interceptor applies the same rule and
+  fails closed at cold start, using one pinned version for every `ApplyGuardrail` call.
+- The runtime stack records the pinned guardrail in SSM
+  (`/<project>/<env>/runtimes/<component>/guardrail/{id,version}`).
+  `scripts/check_guardrail_enforcement.py` verifies that exact version, not the latest one.
 - The `PROMPT_ATTACK` filter runs at `MEDIUM` input strength. `HIGH` blocked the benign
   prompt "Health check: reply with one word." live. `scripts/check_guardrail_enforcement.py`
   fails if a plain greeting is blocked.
