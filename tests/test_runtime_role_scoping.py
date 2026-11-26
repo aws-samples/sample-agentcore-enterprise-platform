@@ -39,10 +39,32 @@ WILDCARD_ALLOWED = {
     "xray:PutTraceSegments",
     "xray:PutTelemetryRecords",
     "cloudwatch:PutMetricData",
-    # AgentCore data/control plane — scoping tracked separately, see the comment
-    # on the AgentCoreAccess statement.
-    "bedrock-agentcore:",
+    # AgentCore data plane — scoping tracked separately, see the comment on the
+    # AgentCoreAccess statement. Listed one by one (not a "bedrock-agentcore:"
+    # prefix) so workload-identity actions can never ride along on "*".
+    "bedrock-agentcore:InvokeAgentRuntime",
+    "bedrock-agentcore:InvokeGateway",
+    "bedrock-agentcore:GetGateway",
+    "bedrock-agentcore:ListGateways",
+    "bedrock-agentcore:CreateEvent",
+    "bedrock-agentcore:GetEvent",
+    "bedrock-agentcore:ListEvents",
+    "bedrock-agentcore:DeleteEvent",
+    "bedrock-agentcore:ListSessions",
+    "bedrock-agentcore:RetrieveMemoryRecords",
+    "bedrock-agentcore:StartBrowserSession",
+    "bedrock-agentcore:StopBrowserSession",
+    "bedrock-agentcore:ConnectBrowserAutomationStream",
 }
+
+# Workload-identity / token-vault actions: must never be granted on "*".
+WORKLOAD_IDENTITY_ACTIONS = (
+    "bedrock-agentcore:GetResourceOauth2Token",
+    "bedrock-agentcore:CreateWorkloadIdentity",
+    "bedrock-agentcore:GetWorkloadAccessToken",
+    "bedrock-agentcore:GetWorkloadAccessTokenForJWT",
+    "bedrock-agentcore:GetWorkloadAccessTokenForUserId",
+)
 
 
 def _policy_statements() -> list[dict]:
@@ -104,7 +126,7 @@ def test_every_remaining_wildcard_is_a_known_aws_limitation():
         if "*" not in statement["resources"]:
             continue
         for action in statement["actions"]:
-            if not any(action.startswith(a) for a in WILDCARD_ALLOWED):
+            if action not in WILDCARD_ALLOWED:
                 unexplained.append(f"{statement['sid']}: {action}")
     assert not unexplained, (
         "wildcard resource on actions that are not documented as requiring it: "
@@ -149,6 +171,41 @@ def test_code_interpreter_session_actions_are_complete_and_scoped():
     assert 'account="aws"' in source
     assert 'resource="code-interpreter"' in source
     assert 'resource_name="aws.codeinterpreter.v1"' in source
+
+
+def test_runtime_role_cannot_mint_tokens_for_arbitrary_users():
+    """ForUserId takes an unverified user id: an impersonation path (Bug H8)."""
+    for statement in _policy_statements():
+        assert (
+            "bedrock-agentcore:GetWorkloadAccessTokenForUserId"
+            not in statement["actions"]
+        ), f"{statement['sid']} grants GetWorkloadAccessTokenForUserId"
+    assert 'GetWorkloadAccessTokenForUserId"' not in RUNTIME_STACK.read_text()
+
+
+def test_workload_identity_actions_are_never_on_star():
+    offenders = []
+    for statement in _policy_statements():
+        if statement["effect"] == "DENY":
+            continue
+        if "*" not in statement["resources"]:
+            continue
+        for action in statement["actions"]:
+            if action in WORKLOAD_IDENTITY_ACTIONS:
+                offenders.append(f"{statement['sid']}: {action}")
+    assert not offenders, f"workload-identity actions on '*': {offenders}"
+
+
+def test_workload_identity_statement_is_scoped_to_own_identity():
+    statements = {s["sid"]: s for s in _policy_statements()}
+    wid = statements["AgentCoreWorkloadIdentity"]
+    assert "*" not in wid["resources"]
+    assert all(a in WORKLOAD_IDENTITY_ACTIONS for a in wid["actions"])
+    broad = statements["AgentCoreAccess"]["actions"]
+    assert not any(a in WORKLOAD_IDENTITY_ACTIONS for a in broad)
+    source = RUNTIME_STACK.read_text()
+    assert "default/workload-identity/{workload_identity_name}*" in source
+    assert "workload_identity_name=rt_name" in source
 
 
 def test_ssm_reads_are_scoped_to_the_project_path():
