@@ -7,7 +7,12 @@ on:
     types:
       - completed
 
+# Trust boundary: the artifact is produced by PR code, so its content is
+# untrusted data. The PR number and commit come only from the workflow_run
+# event (or the GitHub API keyed on its head_sha); the artifact is used solely
+# as a size-capped markdown comment body and is never executed or interpolated.
 permissions:
+  contents: read
   pull-requests: write
   actions: read
 
@@ -25,40 +30,54 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Get PR information
-        id: pr-info
-        run: |
-          if [ -f /tmp/ash-results/pr_number.txt ]; then
-            echo "pr_number=$(cat /tmp/ash-results/pr_number.txt)" >> "$GITHUB_OUTPUT"
-          else
-            exit 0
-          fi
-          if [ -f /tmp/ash-results/pr_sha.txt ]; then
-            echo "pr_sha=$(cat /tmp/ash-results/pr_sha.txt)" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Post comment on PR
-        if: steps.pr-info.outputs.pr_number
         uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
+            const { owner, repo } = context.repo;
+            const run = context.payload.workflow_run;
+            const prSha = run.head_sha;
+            const MARKER = '<!-- ASH-SECURITY-SCAN-COMMENT -->';
+            const MAX_COMMENT_BYTES = 60000;
+
+            // PR identity comes from the event, never from the artifact.
+            let prNumber = (run.pull_requests || []).map(p => p.number).find(Boolean);
+            if (!prNumber) {
+              try {
+                const { data } = await github.rest.repos.listPullRequestsAssociatedWithCommit({ owner, repo, commit_sha: prSha });
+                prNumber = data.find(p => p.head.sha === prSha)?.number;
+              } catch (e) {
+                core.info(`Commit lookup failed: ${e.message}`);
+              }
+            }
+            if (!prNumber) {
+              // Fork PRs: workflow_run.pull_requests is empty, so match open PRs on head_sha.
+              const pulls = await github.paginate(github.rest.pulls.list, { owner, repo, state: 'open', per_page: 100 });
+              prNumber = pulls.find(p => p.head.sha === prSha)?.number;
+            }
+            if (!prNumber) {
+              core.info(`No pull request found for ${prSha}`);
+              return;
+            }
+
+            // Artifact content is untrusted data: plain file only, size-capped,
+            // marker stripped, used only as a markdown comment body.
             const commentPath = '/tmp/ash-results/pr_comment.md';
-            if (!fs.existsSync(commentPath)) return;
+            if (!fs.existsSync(commentPath) || !fs.lstatSync(commentPath).isFile()) return;
+            let commentBody = fs.readFileSync(commentPath, 'utf8');
+            if (commentBody.length > MAX_COMMENT_BYTES) {
+              commentBody = commentBody.slice(0, MAX_COMMENT_BYTES) + '\n\n_(truncated)_';
+            }
+            commentBody = commentBody.split(MARKER).join('');
 
-            const commentBody = fs.readFileSync(commentPath, 'utf8');
-            const prNumber = parseInt(fs.readFileSync('/tmp/ash-results/pr_number.txt', 'utf8').trim());
-            const prSha = fs.existsSync('/tmp/ash-results/pr_sha.txt')
-              ? fs.readFileSync('/tmp/ash-results/pr_sha.txt', 'utf8').trim() : 'unknown';
-            if (!prNumber) return;
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber,
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number: prNumber, per_page: 100,
             });
 
             const ashComments = comments.filter(c =>
-              c.user.type === 'Bot' && c.body.includes('<!-- ASH-SECURITY-SCAN-COMMENT -->')
+              c.user.type === 'Bot' && c.body.includes(MARKER)
             ).sort((a, b) => b.id - a.id);
 
             // Clean up duplicates
@@ -67,7 +86,7 @@ jobs:
             }
 
             const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
-            const body = `**Commit:** \`${prSha.substring(0, 7)}\` **| Updated:** ${timestamp}\n\n${commentBody}\n\n<!-- ASH-SECURITY-SCAN-COMMENT -->`;
+            const body = `**Commit:** \`${prSha.substring(0, 7)}\` **| Updated:** ${timestamp}\n\n${commentBody}\n\n${MARKER}`;
 
             if (ashComments[0]) {
               await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: ashComments[0].id, body });

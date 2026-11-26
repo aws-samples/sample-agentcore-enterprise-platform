@@ -28,6 +28,8 @@ default:
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  # Same CDK CLI pin as .github/workflows/unit-tests.yml.
+  CDK_CLI_VERSION: "2.1029.2"
 
 .pip-cache: &pip-cache
   cache:
@@ -127,9 +129,16 @@ dockerfile-parse:
 pytest:
   stage: test
   <<: *pip-cache
+  variables:
+    CDK_DEFAULT_ACCOUNT: "111122223333"
+    CDK_DEFAULT_REGION: us-east-1
   before_script:
-    # boto3 + colorama: imported by scripts/utils.py, which the scripts tests import
-    - pip install -q pyyaml pytest boto3 colorama
+    # Same dependencies as .github/workflows/unit-tests.yml. requirements.txt brings
+    # pydantic and aws-cdk-lib; aws-cdk-lib (jsii) needs a Node runtime, and some
+    # tests call the CDK CLI.
+    - apt-get update -qq && apt-get install -y -qq git nodejs npm > /dev/null
+    - npm install -g "aws-cdk@${CDK_CLI_VERSION}" > /dev/null
+    - pip install -q -r requirements.txt pytest
   script:
     - python -m pytest tests/ -q
 
@@ -140,14 +149,14 @@ cdk-synth:
   before_script:
     - apt-get update -qq && apt-get install -y -qq python3 python3-pip python3-venv > /dev/null
     - python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt
+    - npm install -g "aws-cdk@${CDK_CLI_VERSION}" > /dev/null
   script:
     # Synth with a placeholder account — validates all stacks assemble
     # without AWS credentials. Docker asset bundling is not exercised.
     - CDK_DEFAULT_ACCOUNT=111111111111 CDK_DEFAULT_REGION=us-east-1
-      npx --yes cdk synth --app ".venv/bin/python3 app.py" --quiet
+      cdk synth --app ".venv/bin/python3 app.py" --quiet
     # Preset ↔ synth parity: app.py and the deployment contract
     # (expected_stacks) must agree on every preset's footprint.
-    - npm install -g aws-cdk > /dev/null
     - PY=.venv/bin/python3 bash scripts/check-contract.sh
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"

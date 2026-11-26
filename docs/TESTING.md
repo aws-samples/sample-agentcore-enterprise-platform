@@ -83,6 +83,24 @@ make test-controls
 
 CI runs the full `tests/` suite on every pull request and every push to `main`, with no path filter, via `.github/workflows/unit-tests.yml`.
 
+### A3b. CI gates
+
+- **GitLab/GitHub parity.** The GitLab `pytest` job installs `requirements.txt` plus `pytest`, Node, and the CDK CLI. These are the same dependencies as the GitHub `unit-tests` job. The CDK CLI is pinned once per system: in `unit-tests.yml` and in `CDK_CLI_VERSION` in `.gitlab-ci.yml`. `tests/test_ci_workflows.py` checks that the two pins match.
+- **Blocking ASH gate.** `ash-security-scan.yml` (PR scan of changed files) and `ash-full-repository-scan.yml` run ASH with `severity_threshold: HIGH`. They fail the job on any actionable finding at HIGH or CRITICAL, or if the scan itself errors. The summary and artifact steps still run with `if: always()`.
+- **Allowlist for accepted findings.** Accepted findings go in `.ash-suppressions.yaml` at the repo root. When the file exists, it is appended to the generated ASH config, so it must contain a single top-level `suppressions:` key:
+
+  ```yaml
+  # Every entry needs a reason and an owner-reviewed expiration.
+  suppressions:
+    - rule_id: "B105"
+      path: "tests/**"
+      reason: "test fixtures use dummy credentials"
+      expiration: "2026-12-31"
+  ```
+
+  Add entries only after review in the PR that introduces them.
+- **Comment workflow trust model.** `ash-security-comment.yml` runs on `workflow_run` with a write token, while the artifact it downloads was produced by PR code. The PR number therefore comes only from `github.event.workflow_run.pull_requests`. When that is empty, as for fork PRs, the workflow looks up the PR from `workflow_run.head_sha` via the API. The artifact's `pr_comment.md` is treated as untrusted data: it must be a regular file, it is capped in size, and the comment marker is stripped. It is used only as a markdown comment body and is never executed or interpolated into a shell or script.
+
 ### A4. CMK-for-Memory SCP via Terraform (item 1)
 
 ```bash

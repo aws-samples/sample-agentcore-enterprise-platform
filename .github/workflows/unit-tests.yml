@@ -28,8 +28,9 @@ jobs:
         with:
           node-version: "22"
 
+      # Keep in sync with CDK_CLI_VERSION in .gitlab-ci.yml (tests/test_ci_workflows.py checks it).
       - name: Install CDK CLI
-        run: npm install -g aws-cdk
+        run: npm install -g aws-cdk@2.1029.2
 
       - name: Install Python dependencies
         run: |
