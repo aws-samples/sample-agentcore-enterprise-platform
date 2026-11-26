@@ -118,6 +118,11 @@ jobs:
               sed -n "${TABLE_START},${TABLE_END}p" /tmp/ash-output.log | \
               sed 's/\x1b\[[0-9;]*m//g' | grep "^│" | sed 's/│/|/g' >> "$SUMMARY_FILE"
             fi
+            # ASH v3.8+ no longer prints the summary table; it writes a Markdown report.
+            REPORT="/tmp/ash-scan/.ash/ash_output/reports/ash.summary.md"
+            if [ -f "$REPORT" ]; then
+              cat "$REPORT" >> "$SUMMARY_FILE"
+            fi
             if grep -q "Actionable findings detected!" /tmp/ash-output.log; then
               echo "has_findings=true" >> "$GITHUB_OUTPUT"
             else
@@ -132,7 +137,8 @@ jobs:
         run: |
           mkdir -p /tmp/ash-artifacts
           cp /tmp/pr_comment.md /tmp/ash-artifacts/pr_comment.md 2>/dev/null || true
-          cp -r /tmp/ash-scan/.ash/ /tmp/ash-artifacts/.ash/ 2>/dev/null || true
+          # upload-artifact skips hidden paths, so copy the reports to a visible directory.
+          cp -r /tmp/ash-scan/.ash/ash_output/reports /tmp/ash-artifacts/reports 2>/dev/null || true
 
       - name: Upload ASH results
         if: steps.changed-files.outputs.any_changed == 'true' && always()

@@ -91,6 +91,10 @@ jobs:
               sed -n "${TABLE_START},${TABLE_END}p" ash-output.log | \
               sed 's/\x1b\[[0-9;]*m//g' | grep "^│" | sed 's/│/|/g' >> "$SUMMARY_FILE"
             fi
+            # ASH v3.8+ no longer prints the summary table; it writes a Markdown report.
+            if [ -f .ash/ash_output/reports/ash.summary.md ]; then
+              cat .ash/ash_output/reports/ash.summary.md >> "$SUMMARY_FILE"
+            fi
             if grep -q "Actionable findings detected!" ash-output.log; then
               echo "has_findings=true" >> "$GITHUB_OUTPUT"
             else
@@ -103,6 +107,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: ash-full-scan-${{ github.run_id }}
+          include-hidden-files: true
           path: |
             .ash/
             ash-output.log
