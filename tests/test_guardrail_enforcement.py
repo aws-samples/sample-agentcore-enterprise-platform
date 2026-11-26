@@ -244,6 +244,10 @@ def test_security_focused_preset_enables_the_control():
 def _load_check_module():
     import importlib.util
 
+    # The script imports scripts/utils.py as `utils`, as it does when run directly.
+    scripts = str(REPO / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
     spec = importlib.util.spec_from_file_location(
         "check_guardrail_enforcement",
         REPO / "scripts" / "check_guardrail_enforcement.py",
@@ -381,8 +385,23 @@ def test_interceptor_uses_the_pinned_version_for_every_call(monkeypatch):
     )
     fake = _FakeBedrock("NONE")
     monkeypatch.setattr(mod, "_bedrock", fake)
-    mod.handler({"mcp": {"gatewayRequest": {"a": "hi", "b": ["there"]}}}, None)
-    mod.handler({"mcp": {"gatewayResponse": {"c": "ok"}}}, None)
+    call = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": "t", "arguments": {"a": "hi", "b": ["there"]}},
+    }
+    mod.handler({"mcp": {"gatewayRequest": {"body": call}}}, None)
+    reply = {"jsonrpc": "2.0", "id": 1, "result": {"content": [{"text": "ok"}]}}
+    mod.handler(
+        {
+            "mcp": {
+                "gatewayRequest": {"body": call},
+                "gatewayResponse": {"statusCode": 200, "body": reply},
+            }
+        },
+        None,
+    )
     assert len(fake.calls) == 3
     assert all(c["guardrailVersion"] == "7" for c in fake.calls)
     assert all(c["guardrailIdentifier"] == "gr-1" for c in fake.calls)
