@@ -37,6 +37,7 @@ request id, the JSON-RPC id (when short and scalar), the body size and the decis
 import json
 import logging
 import os
+import re
 
 import boto3
 
@@ -106,6 +107,7 @@ _RESPONSE_CONTENT_KEYS = frozenset({"content", "structuredContent"})
 _BLOCKED_TEXT = "Blocked by egress guardrail."
 _BLOCKED_ERROR_CODE = -32000
 _MAX_LOGGED_ID_LEN = 64
+_SAFE_ID_RE = re.compile(rf"[A-Za-z0-9._:/-]{{1,{_MAX_LOGGED_ID_LEN}}}")
 
 
 def _method(body):
@@ -162,7 +164,9 @@ def _loggable_id(rpc_id) -> str:
         return "-"
     if isinstance(rpc_id, int) and not isinstance(rpc_id, bool):
         return str(rpc_id)
-    if isinstance(rpc_id, str) and len(rpc_id) <= _MAX_LOGGED_ID_LEN:
+    # Printable id characters only: a newline or control character in a
+    # client-chosen id would otherwise forge log lines.
+    if isinstance(rpc_id, str) and _SAFE_ID_RE.fullmatch(rpc_id):
         return rpc_id
     return f"<{type(rpc_id).__name__} len={_size(rpc_id)}>"
 
