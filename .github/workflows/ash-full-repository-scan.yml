@@ -65,7 +65,19 @@ jobs:
               yaml.safe_dump(cfg, f, sort_keys=False)
           PY
           fi
-          ash --mode container --config .ash_config.yaml 2>&1 | tee ash-output.log
+          # ASH builds its scanner image from public.ecr.aws, which rate-limits
+          # anonymous pulls from shared runners (HTTP 429). Retry only that build
+          # failure; a finished scan's exit code (findings, config errors) is final.
+          for attempt in 1 2 3; do
+            rc=0
+            ash --mode container --config .ash_config.yaml 2>&1 | tee ash-output.log || rc=$?
+            if [ "$rc" -eq 0 ] || ! grep -q "Error building ASH image" ash-output.log; then
+              break
+            fi
+            echo "::warning::ASH image build failed (attempt $attempt); retrying in $((attempt * 60))s"
+            sleep $((attempt * 60))
+          done
+          exit "$rc"
 
       - name: Generate scan summary
         if: always()

@@ -143,7 +143,7 @@ echo "PASS: a refused destroy is not swallowed"
 # (i) platform.yaml participates with the right precedence:
 # explicit env > platform.yaml > workshop.env.
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-eval "$(sed -n '/^PLATFORM_CONFIG=/p; /^apply_platform_config()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
+eval "$(sed -n '/^PLATFORM_CONFIG=/p; /^validate_manifest()/,/^}/p; /^apply_platform_config()/,/^}/p' "$SCRIPT_DIR/deploy.sh")"
 [ -n "$PLATFORM_CONFIG" ] || fail "apply_platform_config extraction broken"
 # The sandbox PROJECT_DIR has no venv/infra_utils — point the loader at the repo.
 # shellcheck disable=SC2034  # read by the eval'd apply_platform_config

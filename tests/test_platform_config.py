@@ -116,6 +116,51 @@ def test_org_id_valid_and_empty_pass():
     assert PlatformConfig.model_validate({}).security.org_id == ""
 
 
+def _effective_env(extra_env):
+    import os
+    import subprocess
+    import sys
+    import tempfile
+
+    env = {k: v for k, v in os.environ.items() if k != "PLATFORM_ALLOW_PLACEHOLDERS"}
+    env.pop("ORG_ID", None)
+    env.update(extra_env)
+    with tempfile.TemporaryDirectory() as tmp:
+        manifest = Path(tmp) / "platform.yaml"
+        manifest.write_text("security:\n  resource_policies: true\n")
+        return subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "infra_utils.platform_config",
+                "--export",
+                "--effective-env",
+                str(manifest),
+            ],
+            check=False,
+            cwd=REPO,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+
+def test_missing_org_id_is_refused_without_a_saved_value():
+    result = _effective_env({})
+    assert result.returncode != 0
+    assert "security.resource_policies requires security.org_id" in (
+        result.stdout + result.stderr
+    )
+
+
+def test_saved_org_id_satisfies_a_manifest_without_one():
+    """deploy.sh retries validation with the ORG_ID saved in workshop.env:
+    a manifest that omits org_id must then be deployable."""
+    result = _effective_env({"ORG_ID": "o-abc123def456"})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ORG_ID=o-abc123def456" in result.stdout
+
+
 def test_org_id_placeholder_is_rejected_with_a_pointer():
     """The shipped 'o-REPLACEME' used to validate and render into IAM policies
     against an organization that does not exist."""
@@ -372,16 +417,18 @@ def test_preset_yaml_matches_schema_dump_roundtrip():
         assert PlatformConfig.model_validate(raw)
 
 
-def test_to_env_maps_onto_the_names_deploy_already_uses():
+def test_to_env_maps_onto_the_names_deploy_already_uses(monkeypatch):
     from infra_utils.platform_config import to_env
 
+    monkeypatch.setenv("PLATFORM_ALLOW_PLACEHOLDERS", "1")
     env = to_env(load_platform_config(REPO / "presets" / "security-focused.yaml"))
     assert env["ENABLE_NETWORKING"] == "true"
     assert env["ENABLE_CEDAR"] == "true"
     assert env["CEDAR_MODE"] == "LOG_ONLY"
     assert env["ENABLE_SECURITY"] == "true"  # schema name: cloudtrail_alerting
     assert env["AGENT_PATTERN"] == "orchestrator"
-    assert "ORG_ID" not in env  # empty in the preset — deploy.sh prompts for it
+    # The preset ships an obvious placeholder a real deploy refuses.
+    assert env["ORG_ID"] == "o-xxxxxxxxxx"
     # web_search auto in us-east-1 resolves to on
     assert env["ENABLE_WEB_SEARCH"] == "true"
 
@@ -536,3 +583,92 @@ def test_resolve_region_invalid_manifest_falls_through(region_sandbox):
 
 def test_resolve_region_default_when_nothing_configured(region_sandbox):
     assert resolve_region(root=region_sandbox) == "us-east-1"
+
+
+def _cli(manifest_text, *flags, env=None):
+    import os
+    import subprocess
+    import sys
+    import tempfile
+
+    run_env = {
+        k: v for k, v in os.environ.items() if k != "PLATFORM_ALLOW_PLACEHOLDERS"
+    }
+    run_env.update(env or {})
+    with tempfile.TemporaryDirectory() as tmp:
+        manifest = Path(tmp) / "platform.yaml"
+        manifest.write_text(manifest_text)
+        return subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "infra_utils.platform_config",
+                *flags,
+                str(manifest),
+            ],
+            check=False,
+            cwd=REPO,
+            env=run_env,
+            capture_output=True,
+            text=True,
+        )
+
+
+def test_effective_env_error_is_one_line_per_field():
+    result = _cli(
+        "project: demo\n", "--export", "--effective-env", env={"AWS_REGION": "nowhere"}
+    )
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "pattern" not in result.stderr  # no raw regex
+    assert "region: not an AWS Region name" in result.stderr
+
+
+def test_stacks_for_an_unlisted_federated_account_is_not_a_traceback():
+    manifest = (
+        "deployment:\n"
+        "  strategy: federated\n"
+        "  platform_account: '111111111111'\n"
+        "  workload_accounts: ['222222222222']\n"
+    )
+    result = _cli(manifest, "--stacks", env={"CDK_DEFAULT_ACCOUNT": "333333333333"})
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert result.stderr.startswith("INVALID:")
+
+
+def test_design_option_error_lists_every_option():
+    script = (REPO / "scripts" / "deploy.sh").read_text()
+    line = next(ln for ln in script.splitlines() if "Unknown option for design" in ln)
+    for option in ("--profile", "--journey", "--topology", "--posture", "--region"):
+        assert option in line
+
+
+def test_exported_org_id_replaces_the_shipped_placeholder():
+    """The security-focused preset ships o-xxxxxxxxxx; `export ORG_ID=...` is the
+    documented way to deploy it, so the export must win over the placeholder."""
+    manifest = "security:\n  resource_policies: true\n  org_id: o-xxxxxxxxxx\n"
+    refused = _cli(manifest, "--export")
+    assert refused.returncode != 0
+    result = _cli(manifest, "--export", env={"ORG_ID": "o-abc123def456"})
+    assert result.returncode == 0, result.stderr
+    assert "ORG_ID=o-abc123def456" in result.stdout
+
+
+def test_exported_org_id_does_not_replace_a_real_manifest_value_at_load():
+    import os
+
+    from infra_utils.platform_config import SecurityConfig
+
+    old = os.environ.get("ORG_ID")
+    os.environ["ORG_ID"] = "o-abc123def456"
+    try:
+        sec = SecurityConfig.model_validate(
+            {"resource_policies": True, "org_id": "o-realorg00001"}
+        )
+    finally:
+        if old is None:
+            os.environ.pop("ORG_ID")
+        else:
+            os.environ["ORG_ID"] = old
+    assert sec.org_id == "o-realorg00001"
