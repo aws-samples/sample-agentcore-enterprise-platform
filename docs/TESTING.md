@@ -87,13 +87,13 @@ CI runs the full `tests/` suite on every pull request and every push to `main`, 
 
 - **GitLab/GitHub parity.** The GitLab `pytest` job installs `requirements.txt` plus `pytest`, Node, and the CDK CLI. These are the same dependencies as the GitHub `unit-tests` job. The CDK CLI is pinned once per system: in `unit-tests.yml` and in `CDK_CLI_VERSION` in `.gitlab-ci.yml`. `tests/test_ci_workflows.py` checks that the two pins match.
 - **Blocking ASH gate.** `ash-security-scan.yml` (PR scan of changed files) and `ash-full-repository-scan.yml` run ASH with `severity_threshold: HIGH`. They fail the job on any actionable finding at HIGH or CRITICAL, or if the scan itself errors. The summary and artifact steps still run with `if: always()`.
-- **Allowlist for accepted findings.** Accepted findings go in `.ash-suppressions.yaml` at the repo root. When the file exists, it is appended to the generated ASH config, so it must contain a single top-level `suppressions:` key:
+- **Allowlist for accepted findings.** Accepted findings go in `.ash-suppressions.yaml` at the repo root. When the file exists, the scan workflows merge its `suppressions:` list into `global_settings.suppressions` of the generated ASH config, which is where ASH v3 reads suppressions. Each entry uses ASH's suppression fields: `rule_id`, `file_path`, and optionally `line_start`, `line_end`, and `expiration`. The workflows also require a `reason`, and the scan fails if an entry is missing `rule_id`, `file_path` or `reason`.
 
   ```yaml
   # Every entry needs a reason and an owner-reviewed expiration.
   suppressions:
     - rule_id: "B105"
-      path: "tests/**"
+      file_path: "tests/**"
       reason: "test fixtures use dummy credentials"
       expiration: "2026-12-31"
   ```

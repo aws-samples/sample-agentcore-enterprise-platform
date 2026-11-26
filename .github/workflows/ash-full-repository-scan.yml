@@ -44,8 +44,26 @@ jobs:
                 max_detailed_findings: 1000
           EOF
           # Accepted findings live in .ash-suppressions.yaml (see docs/TESTING.md).
+          # ASH v3 reads suppressions from global_settings.suppressions, so merge
+          # the allowlist there instead of appending a top-level key.
           if [ -f .ash-suppressions.yaml ]; then
-            cat .ash-suppressions.yaml >> .ash_config.yaml
+            python - .ash-suppressions.yaml .ash_config.yaml <<'PY'
+          import sys
+
+          import yaml
+
+          src, dst = sys.argv[1], sys.argv[2]
+          with open(dst) as f:
+              cfg = yaml.safe_load(f)
+          with open(src) as f:
+              entries = (yaml.safe_load(f) or {}).get("suppressions") or []
+          for entry in entries:
+              if not all(entry.get(k) for k in ("rule_id", "file_path", "reason")):
+                  sys.exit(f"invalid suppression (needs rule_id, file_path, reason): {entry}")
+          cfg["global_settings"]["suppressions"] = entries
+          with open(dst, "w") as f:
+              yaml.safe_dump(cfg, f, sort_keys=False)
+          PY
           fi
           ash --mode container --config .ash_config.yaml 2>&1 | tee ash-output.log
 

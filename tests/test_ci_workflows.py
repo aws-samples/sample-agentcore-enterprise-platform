@@ -2,6 +2,9 @@
 the trust boundary of the ASH comment workflow."""
 
 import re
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -131,6 +134,64 @@ def test_ash_scan_is_blocking(name):
     assert gates
     for gate in gates:
         assert "always()" in gate.get("if", "")
+
+
+def _ash_scan_run(name):
+    steps = _steps(_workflow(name))
+    scans = [s for s in steps if re.search(r"^ash ", s.get("run", ""), re.MULTILINE)]
+    assert len(scans) == 1
+    return scans[0]["run"]
+
+
+def _heredoc(run, opener, terminator):
+    lines = run.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.rstrip().endswith(opener))
+    end = lines.index(terminator, start + 1)
+    return "\n".join(lines[start + 1 : end]) + "\n"
+
+
+def _merge_allowlist(name, entries):
+    """Run the workflow's merge snippet; return (result, merged config dict)."""
+    run = _ash_scan_run(name)
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        config = tmp_dir / ".ash_config.yaml"
+        config.write_text(_heredoc(run, "<< 'EOF'", "EOF"))
+        allowlist = tmp_dir / ASH_ALLOWLIST
+        allowlist.write_text(yaml.safe_dump({"suppressions": entries}))
+        result = subprocess.run(
+            [sys.executable, "-", str(allowlist), str(config)],
+            input=_heredoc(run, "<<'PY'", "PY"),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        return result, yaml.safe_load(config.read_text())
+
+
+@pytest.mark.parametrize("name", ASH_WORKFLOWS)
+def test_ash_suppressions_merged_into_global_settings(name):
+    assert ">> .ash_config.yaml" not in _ash_scan_run(name)
+    entry = {
+        "rule_id": "B105",
+        "file_path": "tests/**",
+        "reason": "test fixtures use dummy credentials",
+        "expiration": "2026-12-31",
+    }
+    result, cfg = _merge_allowlist(name, [entry])
+    assert result.returncode == 0, result.stderr
+    assert "suppressions" not in cfg
+    assert cfg["global_settings"]["severity_threshold"] == "HIGH"
+    assert cfg["global_settings"]["suppressions"] == [entry]
+    assert cfg["reporters"]["markdown"]["enabled"] is True
+
+
+@pytest.mark.parametrize("name", ASH_WORKFLOWS)
+def test_ash_suppressions_reject_path_key(name):
+    entry = {"rule_id": "B105", "path": "tests/**", "reason": "dummy"}
+    result, _ = _merge_allowlist(name, [entry])
+    assert result.returncode != 0
+    assert "file_path" in result.stderr
 
 
 def test_pr_scan_does_not_publish_pr_identity():
