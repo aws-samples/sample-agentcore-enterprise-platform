@@ -83,11 +83,18 @@ deployment:
 ```
 
 **1. Platform team** deploys into the platform account
-(`auth`, `identity`, `gateway`, `observability` — no runtimes):
+(`auth`, `identity`, `gateway`, `observability` — no runtimes, and so no
+networking stack even when `security.networking` is on: the VPC only hosts
+agent runtimes, which live in the workload accounts):
 
 ```bash
 AWS_PROFILE=platform ./scripts/deploy.sh deploy
 ```
+
+`./scripts/deploy.sh verify` is side-aware: in the platform account it checks
+only platform resources (identity, gateway and its policies, observability,
+alarms when enabled) and skips the memory, networking, guardrail-enforcement,
+and runtime checks, because that side deploys no agents.
 
 Then collects the federation values from stack outputs (none is secret):
 

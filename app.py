@@ -30,6 +30,7 @@ from infra_utils.platform_config import (
     apply_environment_overrides,
     gateway_tool_configs,
     load_platform_config,
+    migration_production_error,
     resolve_deployment_mode,
     to_env,
 )
@@ -296,6 +297,14 @@ if migration_enabled:
             "the customer's container comes from (migration.source in platform.yaml)."
         )
 
+# Migration x production is refused: the migrated container's Bedrock calls
+# carry no guardrail, so DenyUngovernedInference would block all of them.
+_migration_production_error = migration_production_error(
+    deployment_mode, migration_enabled
+)
+if _migration_production_error:
+    raise ValueError(_migration_production_error)
+
 # Optional Bedrock model ID override (cross-region inference profile, e.g.
 # us.anthropic.claude-sonnet-5). When unset, MODEL_ID is NOT injected into the
 # runtimes and each agent pattern falls back to its in-code DEFAULT_MODEL_ID —
@@ -408,12 +417,36 @@ cdk.Tags.of(app).add("ManagedBy", "CDK")
 cdk.Tags.of(app).add("DeploymentMode", deployment_mode)
 
 # ═══════════════════════════════════════════════════════════════
+# MULTI-ACCOUNT ROLE (federated strategy)
+# ═══════════════════════════════════════════════════════════════
+# The same platform.yaml deploys both sides: the account decides the role.
+#   platform account → shared services (auth, identity, gateway, security,
+#                      observability), no agent runtimes and so no VPC.
+#   workload account → agent runtimes + own memory + own credential provider
+#                      that exchanges the platform Cognito M2M credentials.
+# Trust is pure OAuth — verified live cross-account, docs/MULTI_ACCOUNT.md.
+federated_role = platform_config.federated_role(account) if platform_config else None
+is_fed_platform = federated_role == "platform"
+is_fed_workload = federated_role == "workload"
+fed = platform_config.deployment.federation if platform_config else None
+if is_fed_workload and not (fed and fed.is_complete):
+    raise ValueError(
+        "This account is a federated WORKLOAD account, but deployment.federation "
+        "is incomplete. The platform team provides gateway_url, issuer_url, "
+        "m2m_client_id, and m2m_client_secret_name (run `deploy.sh export` in the "
+        "platform account); the secret itself goes into THIS account's Secrets "
+        "Manager under that name."
+    )
+
+# ═══════════════════════════════════════════════════════════════
 # FOUNDATION LAYER
 # ═══════════════════════════════════════════════════════════════
 
 # ── Optional: Networking (VPC, subnets, endpoints) ──
 networking_stack = None
-if enable_networking:
+# The VPC only hosts agent runtimes, so a federated platform account (shared
+# services, no runtimes) gets none: no idle VPC or NAT gateways there.
+if enable_networking and not is_fed_platform:
     import boto3
     from botocore.exceptions import BotoCoreError, ClientError
 
@@ -475,28 +508,6 @@ if enable_security:
         enable_cloudtrail=True,
         retain_data=production_mode,
         env=cdk_env,
-    )
-
-# ═══════════════════════════════════════════════════════════════
-# MULTI-ACCOUNT ROLE (federated strategy)
-# ═══════════════════════════════════════════════════════════════
-# The same platform.yaml deploys both sides: the account decides the role.
-#   platform account → shared services (auth, identity, gateway, security,
-#                      networking, observability), no agent runtimes.
-#   workload account → agent runtimes + own memory + own credential provider
-#                      that exchanges the platform Cognito M2M credentials.
-# Trust is pure OAuth — verified live cross-account, docs/MULTI_ACCOUNT.md.
-federated_role = platform_config.federated_role(account) if platform_config else None
-is_fed_platform = federated_role == "platform"
-is_fed_workload = federated_role == "workload"
-fed = platform_config.deployment.federation if platform_config else None
-if is_fed_workload and not (fed and fed.is_complete):
-    raise ValueError(
-        "This account is a federated WORKLOAD account, but deployment.federation "
-        "is incomplete. The platform team provides gateway_url, issuer_url, "
-        "m2m_client_id, and m2m_client_secret_name (run `deploy.sh export` in the "
-        "platform account); the secret itself goes into THIS account's Secrets "
-        "Manager under that name."
     )
 
 # ═══════════════════════════════════════════════════════════════

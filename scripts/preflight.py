@@ -111,6 +111,7 @@ class Preflight:
         self.config = None
         self.account = ""
         self.role: str | None = None
+        self.missing_dependency = False
 
     def run(self) -> int:
         self._check_local_tools()
@@ -123,6 +124,29 @@ class Preflight:
         else:
             self._check_aws_identity(validate_account=False)
         return self.reporter.summary()
+
+    def run_secrets_only(self, *, skip_idp: bool = False) -> int:
+        """The doctor's declared-secret check alone, for deploy.sh.
+
+        Exit codes: 0 all declared secrets readable (or no manifest), 1 a
+        secret is missing or the manifest/account check failed, 3 the Python
+        dependencies needed to read the manifest are not installed yet.
+        """
+        if not self.manifest.is_file():
+            print("Declared secrets: no manifest, nothing to check")
+            return 0
+        if not self._load_manifest():
+            return 3 if self.missing_dependency else 1
+        if self.reporter.failed:
+            return 1
+        if not self._check_aws_identity():
+            return 1
+        missing = self._check_secrets(skip_idp=skip_idp)
+        if missing:
+            print("Missing or unreadable declared secrets: " + ", ".join(missing))
+            return 1
+        print("All declared secrets are readable. No AWS resources were changed.")
+        return 0
 
     def _check_local_tools(self) -> None:
         major, minor = self.python_version[:2]
@@ -227,6 +251,7 @@ class Preflight:
             config = load_platform_config(self.manifest)
             self.config = apply_environment_overrides(config)
         except ModuleNotFoundError as exc:
+            self.missing_dependency = True
             self.reporter.fail(
                 "Manifest",
                 f"Python dependency {exc.name!r} is missing; activate .venv and "
@@ -263,6 +288,13 @@ class Preflight:
         )
         for warning in self.config.warnings:
             self.reporter.warn("Manifest", warning)
+        from infra_utils.platform_config import migration_production_error
+
+        refusal = migration_production_error(
+            self.config.deployment.mode, self.config.migration is not None
+        )
+        if refusal:
+            self.reporter.fail("Manifest", refusal)
         return True
 
     def _check_aws_identity(self, *, validate_account: bool = True) -> bool:
@@ -371,12 +403,17 @@ class Preflight:
                 )
         return list(dict.fromkeys(required))
 
-    def _check_secrets(self) -> None:
+    def _check_secrets(self, *, skip_idp: bool = False) -> list[str]:
+        """Check every declared secret; return the names that failed."""
         assert self.config is not None
         required = self._required_secrets()
+        if skip_idp:
+            # deploy.sh upserts a supplied IdP value itself before synthesis.
+            required = [item for item in required if item[0] != "enterprise IdP"]
         if not required:
             self.reporter.pass_("Secrets Manager", "no pre-created secret is required")
-            return
+            return []
+        missing: list[str] = []
         for label, name in required:
             result = self.runner.run(
                 (
@@ -415,6 +452,8 @@ class Preflight:
                 f"{name} {reason} in account {self.account}, Region "
                 f"{self.config.region}; create or repair it before build",
             )
+            missing.append(name)
+        return missing
 
     def _effective_model(self) -> str:
         assert self.config is not None
@@ -559,7 +598,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--manifest", type=Path, default=DEFAULT_MANIFEST, help="platform.yaml path"
     )
+    parser.add_argument(
+        "--secrets-only",
+        action="store_true",
+        help="only check that declared secrets exist (used by deploy.sh)",
+    )
+    parser.add_argument(
+        "--skip-idp-secret",
+        action="store_true",
+        help="skip the IdP secret (deploy.sh is about to upsert a supplied value)",
+    )
     args = parser.parse_args(argv)
+    if args.secrets_only:
+        print("Declared secret check (read-only)")
+        return Preflight(args.manifest).run_secrets_only(skip_idp=args.skip_idp_secret)
     print("AgentCore accelerator doctor (read-only)")
     print(f"Manifest: {args.manifest}")
     print()

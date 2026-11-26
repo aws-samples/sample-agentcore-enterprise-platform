@@ -82,6 +82,14 @@ def test_federated_platform_side_runs_no_agents():
     assert {"auth", "identity", "gateway", "observability"} <= set(got)
 
 
+def test_federated_platform_side_gets_no_vpc():
+    """The VPC only hosts agent runtimes; the platform side runs none, so it
+    must not pay for an idle VPC and NAT gateways."""
+    networked = {**FEDERATED, "security": {"networking": True}}
+    assert "networking" not in suffixes(cfg(**networked), account="111111111111")
+    assert "networking" in suffixes(cfg(**networked), account="222222222222")
+
+
 def test_federated_workload_side_has_no_auth_or_gateway():
     got = suffixes(cfg(**FEDERATED), account="222222222222")
     assert "auth" not in got
