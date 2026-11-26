@@ -115,17 +115,28 @@ class ObservabilityStack(cdk.Stack):
                     },
                 )
             )
-            # CloudWatch alarms and EventBridge publish to the encrypted topics.
+            # CloudWatch alarms publish to the encrypted topics; scoped to this
+            # account's alarms.
             self.encryption_key.add_to_resource_policy(
                 iam.PolicyStatement(
                     sid="AllowAlarmPublishers",
-                    principals=[
-                        iam.ServicePrincipal("cloudwatch.amazonaws.com"),
-                        iam.ServicePrincipal("events.amazonaws.com"),
-                    ],
+                    principals=[iam.ServicePrincipal("cloudwatch.amazonaws.com")],
                     actions=["kms:Decrypt", "kms:GenerateDataKey*"],
                     resources=["*"],
                     conditions={"StringEquals": {"aws:SourceAccount": self.account}},
+                )
+            )
+            # EventBridge publishes the security alerts. It gets no source
+            # conditions: the SNS docs state that aws:SourceAccount, SourceArn
+            # and SourceOrgID are not supported in a KMS key policy for
+            # EventBridge-to-encrypted-topic delivery
+            # (https://docs.aws.amazon.com/sns/latest/dg/sns-key-management.html).
+            self.encryption_key.add_to_resource_policy(
+                iam.PolicyStatement(
+                    sid="AllowEventBridgePublisher",
+                    principals=[iam.ServicePrincipal("events.amazonaws.com")],
+                    actions=["kms:Decrypt", "kms:GenerateDataKey*"],
+                    resources=["*"],
                 )
             )
 

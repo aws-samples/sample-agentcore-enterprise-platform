@@ -12,6 +12,9 @@ from constructs import Construct
 
 from infra_utils.policy_loader import load_control
 
+# AZs used when the caller does not pin them; production runs one NAT per AZ.
+DEFAULT_MAX_AZS = 2
+
 _RETENTION_BY_DAYS = {
     30: logs.RetentionDays.ONE_MONTH,
     90: logs.RetentionDays.THREE_MONTHS,
@@ -53,13 +56,12 @@ class NetworkingStack(cdk.Stack):
         az_kwargs = (
             {"availability_zones": availability_zones}
             if availability_zones
-            else {"max_azs": 2}
+            else {"max_azs": DEFAULT_MAX_AZS}
         )
         # Production (retain_data) gets one NAT per AZ so a single-AZ failure
         # does not cut egress; the workshop keeps one NAT to save cost.
-        nat_gateways = (
-            (len(availability_zones) if availability_zones else 2) if retain_data else 1
-        )
+        az_count = len(availability_zones) if availability_zones else DEFAULT_MAX_AZS
+        nat_gateways = az_count if retain_data else 1
 
         self.vpc = ec2.Vpc(
             self,
