@@ -9,6 +9,7 @@ Source hash tracking ensures:
   - ECR images tagged with both `latest` and source hash
 """
 
+import hashlib
 import json
 import os
 
@@ -407,13 +408,30 @@ class RuntimeStack(cdk.Stack):
         # prompt-injection content filtering is equally valid at the inference
         # boundary. A runtime-specific profile can fork the artifact later.
         guardrail = None
+        guardrail_version = None
         if require_guardrails:
+            # The artifact runs the PROMPT_ATTACK filter at MEDIUM input strength.
+            # HIGH blocked the benign prompt "Health check: reply with one word."
+            # in the live test, which made every agent unusable. AWS recommends
+            # tuning filter strength against your own traffic, and MEDIUM still
+            # blocks clear jailbreak and injection attempts. The benign-prompt
+            # check in scripts/check_guardrail_enforcement.py catches any
+            # regression.
             guardrail_cfg = load_control("guardrail.egress-default")
+            # A hash of the definition sits in both descriptions. A changed
+            # definition therefore replaces the immutable CfnGuardrailVersion,
+            # which publishes a new pinned version.
+            definition_hash = hashlib.sha256(
+                json.dumps(guardrail_cfg, sort_keys=True).encode()
+            ).hexdigest()[:12]
             guardrail = bedrock.CfnGuardrail(
                 self,
                 "BaselineGuardrail",
                 name=f"{prefix}-{component_name}-guardrail",
-                description=f"Baseline inference guardrail for {component_name}.",
+                description=(
+                    f"Baseline inference guardrail for {component_name} "
+                    f"(definition sha256:{definition_hash})."
+                ),
                 blocked_input_messaging=guardrail_cfg["BlockedInputMessaging"],
                 blocked_outputs_messaging=guardrail_cfg["BlockedOutputsMessaging"],
             )
@@ -427,6 +445,13 @@ class RuntimeStack(cdk.Stack):
             ):
                 if cfn_key in guardrail_cfg:
                     guardrail.add_property_override(cfn_key, guardrail_cfg[cfn_key])
+            # Production runs a published, pinned version, never DRAFT.
+            guardrail_version = bedrock.CfnGuardrailVersion(
+                self,
+                "BaselineGuardrailVersion",
+                guardrail_identifier=guardrail.attr_guardrail_id,
+                description=f"Pinned baseline guardrail (definition sha256:{definition_hash}).",
+            )
 
         # ── AgentCore Runtime IAM Role ──
         runtime_role = iam.Role(
@@ -442,6 +467,7 @@ class RuntimeStack(cdk.Stack):
             workload_identity_name=rt_name,
             allowed_models=allowed_models,
             guardrail=guardrail,
+            sdk_local_identity=runtime_type == "a2a_agent",
         )
         if migration_secret_names:
             # The adapter resolves each declared migration secret into the
@@ -477,9 +503,9 @@ class RuntimeStack(cdk.Stack):
         # Guardrail injection sits BEFORE the extra_env_vars merge so an explicit
         # override wins. Agents attach the guardrail when GUARDRAIL_ID is present
         # (the IAM deny below is what makes skipping it fail, not convention).
-        if guardrail is not None:
+        if guardrail is not None and guardrail_version is not None:
             env_vars["GUARDRAIL_ID"] = guardrail.attr_guardrail_id
-            env_vars["GUARDRAIL_VERSION"] = guardrail.attr_version
+            env_vars["GUARDRAIL_VERSION"] = guardrail_version.attr_version
         # Migration adapter contract (migration/adapter/adapter.py), also
         # before the extra_env_vars merge so an explicit override wins.
         # ADAPTER_CHILD_CMD is baked into the image at build time, not set here.
@@ -576,6 +602,27 @@ class RuntimeStack(cdk.Stack):
             parameter_name=f"/{project_name}/{environment}/runtimes/{component_name}/id",
             string_value=self._runtime.attr_agent_runtime_id,
         )
+        if guardrail is not None and guardrail_version is not None:
+            # The exact guardrail and version injected into the runtime, so the
+            # verifier checks the pin rather than guessing the latest version.
+            guardrail_param = (
+                f"/{project_name}/{environment}/runtimes/{component_name}/guardrail"
+            )
+            ssm.StringParameter(
+                self,
+                "SSMGuardrailId",
+                parameter_name=f"{guardrail_param}/id",
+                string_value=guardrail.attr_guardrail_id,
+            )
+            ssm.StringParameter(
+                self,
+                "SSMGuardrailVersion",
+                parameter_name=f"{guardrail_param}/version",
+                string_value=guardrail_version.attr_version,
+            )
+            cdk.CfnOutput(
+                self, "GuardrailVersion", value=guardrail_version.attr_version
+            )
 
         # ── Outputs ──
         cdk.CfnOutput(
@@ -711,6 +758,7 @@ class RuntimeStack(cdk.Stack):
         workload_identity_name: str,
         allowed_models: list[str] | None = None,
         guardrail: bedrock.CfnGuardrail | None = None,
+        sdk_local_identity: bool = False,
     ) -> None:
         """Attach the standard AgentCore Runtime permissions to a role.
 
@@ -951,5 +999,53 @@ class RuntimeStack(cdk.Stack):
                     conditions={"Null": {"bedrock:GuardrailIdentifier": "true"}},
                 ),
             ]
+        if sdk_local_identity:
+            # A2A runtimes are invoked with SigV4 by the orchestrator, so the
+            # service passes them no WorkloadAccessToken. bedrock_agentcore's
+            # requires_access_token (the gateway M2M token in tools/gateway.py)
+            # then takes its local path: it creates an SDK workload identity
+            # named "workload-<hex>" and calls GetWorkloadAccessTokenForUserId
+            # with a random user id. Grant exactly that, and only on identities
+            # with the SDK's "workload-" prefix: runtime identities are named
+            # after their runtime, so this cannot mint a token for the
+            # orchestrator's or any HTTP runtime's identity. HTTP/MCP/AG-UI
+            # runtimes never get this statement.
+            sdk_identities = stack.format_arn(
+                service="bedrock-agentcore",
+                resource="workload-identity-directory",
+                resource_name="default/workload-identity/workload-*",
+                arn_format=cdk.ArnFormat.SLASH_RESOURCE_NAME,
+            )
+            statements.append(
+                iam.PolicyStatement(
+                    sid="AgentCoreSdkLocalIdentity",
+                    actions=[
+                        "bedrock-agentcore:CreateWorkloadIdentity",
+                        "bedrock-agentcore:GetWorkloadAccessTokenForUserId",
+                        "bedrock-agentcore:GetResourceOauth2Token",
+                    ],
+                    resources=[
+                        stack.format_arn(
+                            service="bedrock-agentcore",
+                            resource="workload-identity-directory",
+                            resource_name="default",
+                            arn_format=cdk.ArnFormat.SLASH_RESOURCE_NAME,
+                        ),
+                        sdk_identities,
+                        stack.format_arn(
+                            service="bedrock-agentcore",
+                            resource="token-vault",
+                            resource_name="default",
+                            arn_format=cdk.ArnFormat.SLASH_RESOURCE_NAME,
+                        ),
+                        stack.format_arn(
+                            service="bedrock-agentcore",
+                            resource="token-vault",
+                            resource_name="default/*",
+                            arn_format=cdk.ArnFormat.SLASH_RESOURCE_NAME,
+                        ),
+                    ],
+                )
+            )
         for stmt in statements:
             role.add_to_policy(stmt)

@@ -18,11 +18,6 @@ PY="${PY:-$REPO/.venv/bin/python}"
 
 export CDK_DEFAULT_ACCOUNT="${CDK_DEFAULT_ACCOUNT:-111111111111}"
 export CDK_DEFAULT_REGION="${CDK_DEFAULT_REGION:-us-east-1}"
-# security-focused ships org_id EMPTY (a placeholder must not validate, so it
-# cannot ship a real-looking one) but its memory stack hard-fails resource
-# policies without an org id. Env beats platform.yaml, so this satisfies the
-# synth; real deploys still prompt.
-export ORG_ID="${ORG_ID:-o-paritycheck123}"
 # The shipped presets carry placeholders (REPLACE_ME client ids, sentinel
 # account ids) on purpose; a real deploy refuses them. The gate only proves the
 # presets synthesize, so it downgrades those refusals to warnings.
@@ -96,6 +91,17 @@ for preset in "${CONFIGS[@]}"; do
 done
 
 fail=0
+# security-focused ships the obvious org placeholder o-xxxxxxxxxx; the synth
+# below runs with it (downgraded to a warning), and a real deploy must refuse it.
+if org_out=$(env -u PLATFORM_ALLOW_PLACEHOLDERS "$PY" -m infra_utils.platform_config presets/security-focused.yaml 2>&1); then
+    echo "FAIL: security-focused validated with its placeholder org id" >&2
+    fail=1
+elif ! grep -q "security.org_id" <<< "$org_out"; then
+    echo "FAIL: security-focused rejection does not name security.org_id" >&2
+    fail=1
+else
+    echo "PASS: security-focused placeholder org id is refused for a real deploy"
+fi
 for run in "${RUNS[@]}"; do
     preset="${run%%:*}"; acct="${run##*:}"
     name="$(basename "$preset" .yaml)"
