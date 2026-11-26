@@ -9,13 +9,14 @@ import os
 import subprocess  # nosec B404 — running our own verify scripts, no shell
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
 
-from verify import HEALTH_PROMPT, checks_for
+from verify import HEALTH_PROMPT, checks_for, run_checks
 
 from infra_utils.platform_config import PlatformConfig, discover_use_cases
 
@@ -72,6 +73,14 @@ def test_tool_consuming_patterns_require_a_successful_code_interpreter_result():
     assert "--require-tool" not in minimal
 
 
+@pytest.mark.parametrize("pattern", ["claude-sdk-agent", "claude-sdk-multi-agent"])
+def test_claude_patterns_require_their_own_code_interpreter_tool(pattern):
+    invoke = dict(checks_for(suffixes(), pattern))["orchestrator invoke"]
+    assert invoke[invoke.index("--require-tool") + 1] == "execute_code"
+    assert "Use execute_code " in invoke[-1]
+    assert "execute_python_securely" not in invoke[-1]
+
+
 @pytest.mark.parametrize(
     "pattern", ["strands-agent", "agui-strands-agent", "langgraph-agent"]
 )
@@ -83,6 +92,38 @@ def test_migration_uses_a_basic_live_invoke_not_pattern_specific_tools(pattern):
     assert invoke == ["invoke.py", "--require-success", HEALTH_PROMPT]
     assert "--require-tool" not in invoke
     assert "--agui" not in invoke
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "orchestrator",
+        "strands-agent",
+        "langgraph-agent",
+        "claude-sdk-agent",
+        "claude-sdk-multi-agent",
+        "agui-strands-agent",
+        "agui-langgraph-agent",
+    ],
+)
+def test_pattern_invokes_name_their_stream_format(pattern):
+    invoke = dict(checks_for(suffixes(), pattern))["orchestrator invoke"]
+    assert invoke[invoke.index("--pattern") + 1] == pattern
+
+
+def test_run_checks_flushes_each_stage_before_its_child_runs(capsys):
+    seen = []
+
+    def runner(cmd, **kwargs):
+        seen.append((capsys.readouterr().out, kwargs["env"]))
+        return SimpleNamespace(returncode=1 if cmd[1].endswith("b.py") else 0)
+
+    failed = run_checks([("a", ["a.py"]), ("b", ["b.py"])], runner=runner)
+
+    assert failed == ["b"]
+    assert "── a" in seen[0][0]
+    assert "── b" in seen[1][0]
+    assert all(env["PYTHONUNBUFFERED"] == "1" for _, env in seen)
 
 
 def test_migration_preserves_non_runtime_checks():

@@ -51,10 +51,26 @@ from infra_utils.platform_config import (
 
 HEALTH_PROMPT = "Health check: reply with one word."
 CODE_INTERPRETER_MARKER = "CODE_INTERPRETER_OK"
-CODE_INTERPRETER_PROMPT = (
-    "Use execute_python_securely to run print('CODE_INTERPRETER_OK'). "
-    "After the tool succeeds, reply with one word."
-)
+# The Code Interpreter tool each tool-consuming pattern must call successfully.
+# The Claude SDK patterns run it through their in-process code_int MCP server
+# (mcp__codeint__execute_code); the others reach it through the gateway.
+DEFAULT_REQUIRED_TOOL = "execute_python_securely"
+REQUIRED_TOOLS = {
+    "strands-agent": DEFAULT_REQUIRED_TOOL,
+    "langgraph-agent": DEFAULT_REQUIRED_TOOL,
+    "claude-sdk-agent": "execute_code",
+    "claude-sdk-multi-agent": "execute_code",
+    "agui-strands-agent": DEFAULT_REQUIRED_TOOL,
+    "agui-langgraph-agent": DEFAULT_REQUIRED_TOOL,
+}
+
+
+def code_interpreter_prompt(tool: str) -> str:
+    """The prompt that makes a pattern run the marker through its tool."""
+    return (
+        f"Use {tool} to run print('{CODE_INTERPRETER_MARKER}'). "
+        "After the tool succeeds, reply with one word."
+    )
 
 
 def load_config() -> PlatformConfig:
@@ -117,17 +133,21 @@ def checks_for(
             invoke_args = ["invoke.py", "--require-success", HEALTH_PROMPT]
         else:
             agui = ["--agui"] if agent_pattern.startswith("agui-") else []
+            # The pattern picks the stream parser for the tool-use check.
+            pattern_arg = ["--pattern", agent_pattern]
             if agent_pattern == "orchestrator":
-                invoke_args = ["invoke.py", *agui, HEALTH_PROMPT]
+                invoke_args = ["invoke.py", *agui, *pattern_arg, HEALTH_PROMPT]
             else:
+                tool = REQUIRED_TOOLS.get(agent_pattern, DEFAULT_REQUIRED_TOOL)
                 invoke_args = [
                     "invoke.py",
                     *agui,
+                    *pattern_arg,
                     "--require-tool",
-                    "execute_python_securely",
+                    tool,
                     "--require-tool-result",
                     CODE_INTERPRETER_MARKER,
-                    CODE_INTERPRETER_PROMPT,
+                    code_interpreter_prompt(tool),
                 ]
         checks.append(("orchestrator invoke", invoke_args))
     if "runtime-code-agent" in suffixes and agents_here:
@@ -144,6 +164,23 @@ def checks_for(
     for name in use_cases:
         checks.append((f"use case {name}", [f"../use-cases/{name}/verify.py"]))
     return checks
+
+
+def run_checks(checks: list[tuple[str, list[str]]], runner=subprocess.run) -> list[str]:
+    """Run each check in order and return the names that failed.
+
+    Headers are flushed before each child starts, and children run
+    unbuffered, so stage output never interleaves out of order."""
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    failed: list[str] = []
+    for name, argv in checks:
+        print(f"── {name} " + "─" * max(1, 58 - len(name)), flush=True)
+        cmd = [sys.executable, str(REPO / "scripts" / argv[0]), *argv[1:]]
+        result = runner(cmd, cwd=REPO / "scripts", check=False, env=env)  # nosec B603
+        if result.returncode != 0:
+            failed.append(name)
+        print(flush=True)
+    return failed
 
 
 def main() -> int:
@@ -187,23 +224,19 @@ def main() -> int:
         migration=config.migration is not None,
         role=role,
     )
-    print(f"Verifying {config.project}/{config.environment} in account {account}")
-    print(f"Footprint: {' '.join(sorted(suffixes))}\n")
+    print(
+        f"Verifying {config.project}/{config.environment} in account {account}",
+        flush=True,
+    )
+    print(f"Footprint: {' '.join(sorted(suffixes))}\n", flush=True)
 
-    failed: list[str] = []
-    for name, argv in checks:
-        print(f"── {name} " + "─" * max(1, 58 - len(name)))
-        cmd = [sys.executable, str(REPO / "scripts" / argv[0]), *argv[1:]]
-        result = subprocess.run(cmd, cwd=REPO / "scripts", check=False)  # nosec B603
-        if result.returncode != 0:
-            failed.append(name)
-        print()
+    failed = run_checks(checks)
 
-    print("═" * 60)
+    print("═" * 60, flush=True)
     if failed:
-        print(f"FAILED ({len(failed)}/{len(checks)}): {', '.join(failed)}")
+        print(f"FAILED ({len(failed)}/{len(checks)}): {', '.join(failed)}", flush=True)
         return 1
-    print(f"OK: all {len(checks)} checks passed for this footprint")
+    print(f"OK: all {len(checks)} checks passed for this footprint", flush=True)
     return 0
 
 
