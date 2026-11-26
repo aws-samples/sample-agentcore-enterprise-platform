@@ -1,14 +1,14 @@
-# Accepted ASH findings. Each entry needs rule_id, file_path and reason (see docs/TESTING.md).
+# Accepted ASH findings. Each entry needs rule_id, path and reason (see docs/TESTING.md).
 suppressions:
   - rule_id: "SECRET-HEX-HIGH-ENTROPY-STRING"
-    file_path: ".github/workflows/secret-boundary.yml"
+    path: ".github/workflows/secret-boundary.yml"
     reason: "SHA-256 checksum of the pinned gitleaks download, not a secret"
     expiration: "2027-05-31"
   - rule_id: "SECRET-HEX-HIGH-ENTROPY-STRING"
-    file_path: ".gitlab-ci.yml"
+    path: ".gitlab-ci.yml"
     reason: "SHA-256 checksum of the pinned hadolint download, not a secret"
     expiration: "2027-05-31"
   - rule_id: "zizmor/dangerous-triggers"
-    file_path: ".github/workflows/ash-security-comment.yml"
+    path: ".github/workflows/ash-security-comment.yml"
     reason: "workflow_run is required to comment on fork PRs; the artifact is treated as untrusted data (docs/TESTING.md, comment workflow trust model)"
     expiration: "2027-05-31"

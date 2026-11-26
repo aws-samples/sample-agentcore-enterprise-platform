@@ -93,8 +93,8 @@ jobs:
           with open(src) as f:
               entries = (yaml.safe_load(f) or {}).get("suppressions") or []
           for entry in entries:
-              if not all(entry.get(k) for k in ("rule_id", "file_path", "reason")):
-                  sys.exit(f"invalid suppression (needs rule_id, file_path, reason): {entry}")
+              if not all(entry.get(k) for k in ("rule_id", "path", "reason")):
+                  sys.exit(f"invalid suppression (needs rule_id, path, reason): {entry}")
           cfg["global_settings"]["suppressions"] = entries
           with open(dst, "w") as f:
               yaml.safe_dump(cfg, f, sort_keys=False)

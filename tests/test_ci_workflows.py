@@ -174,7 +174,7 @@ def test_ash_suppressions_merged_into_global_settings(name):
     assert ">> .ash_config.yaml" not in _ash_scan_run(name)
     entry = {
         "rule_id": "B105",
-        "file_path": "tests/**",
+        "path": "tests/**",
         "reason": "test fixtures use dummy credentials",
         "expiration": "2026-12-31",
     }
@@ -187,11 +187,13 @@ def test_ash_suppressions_merged_into_global_settings(name):
 
 
 @pytest.mark.parametrize("name", ASH_WORKFLOWS)
-def test_ash_suppressions_reject_path_key(name):
-    entry = {"rule_id": "B105", "path": "tests/**", "reason": "dummy"}
+def test_ash_suppressions_reject_the_old_file_path_key(name):
+    # ASH v3.8 requires `path`; an entry with only `file_path` would fail the
+    # scan's config validation, so the merge step refuses it up front.
+    entry = {"rule_id": "B105", "file_path": "tests/**", "reason": "dummy"}
     result, _ = _merge_allowlist(name, [entry])
     assert result.returncode != 0
-    assert "file_path" in result.stderr
+    assert "needs rule_id, path, reason" in result.stderr
 
 
 def test_pr_scan_does_not_publish_pr_identity():
