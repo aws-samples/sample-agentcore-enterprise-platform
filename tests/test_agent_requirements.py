@@ -8,9 +8,13 @@ from packaging.specifiers import SpecifierSet
 AGENT_CODE = Path(__file__).resolve().parents[1] / "agent-code"
 
 VULNERABLE = {
-    "pyjwt": ["2.13.0"],
+    "pyjwt": ["2.13.0", "2.14.0"],
     "mcp": ["1.29.0"],
 }
+
+# Lowest fixed release of each package. Pins are exact (==) so an unbounded range
+# cannot pull in a new major version (mcp 2.x) at image build time.
+MINIMUM = {"pyjwt": "2.15.1", "mcp": "1.30.0"}
 
 _REQ_RE = re.compile(r"^([A-Za-z0-9_.-]+)(\[[^\]]*\])?\s*(.*)$")
 
@@ -57,6 +61,23 @@ def test_pins_exclude_vulnerable_versions():
             spec = SpecifierSet(reqs[package][1])
             for bad in bad_versions:
                 assert bad not in spec, f"{path} allows vulnerable {package}=={bad}"
+
+
+def test_pins_are_exact_and_at_least_minimum():
+    from packaging.version import Version
+
+    for path in _requirement_files():
+        reqs = _parse(path)
+        for package, minimum in MINIMUM.items():
+            if package not in reqs:
+                continue
+            spec = reqs[package][1]
+            assert spec.startswith("=="), (
+                f"{path} must pin {package} exactly, got {spec!r}"
+            )
+            assert Version(spec[2:]) >= Version(minimum), (
+                f"{path} pins {package} below {minimum}"
+            )
 
 
 def test_pyjwt_keeps_crypto_extra():
