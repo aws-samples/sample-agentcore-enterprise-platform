@@ -179,6 +179,16 @@ scoped to the runtime's own workload identity (`workload-identity-directory/defa
 and the default token vault, never `"*"`. `tests/test_runtime_role_scoping.py` synthesizes a
 runtime stack and asserts on the generated role policy that both hold.
 
+One exception, A2A runtimes only (statement `AgentCoreSdkLocalIdentity`). The orchestrator
+invokes them with SigV4, so the service passes them no workload access token, and the
+`bedrock_agentcore` SDK fetches the gateway M2M token through its local path: it creates a
+workload identity named `workload-<hex>` and calls `GetWorkloadAccessTokenForUserId` with a
+random user id. A2A roles may call `CreateWorkloadIdentity`, `GetWorkloadAccessTokenForUserId`
+and `GetResourceOauth2Token` only on `workload-identity/workload-*`. Runtime identities are named
+after their runtime, so this cannot mint a token for the orchestrator's identity or any HTTP
+runtime's. The org SCP above still denies `GetWorkloadAccessTokenForUserId` where it is
+attached; exempt the A2A runtime roles there if you run multi-agent under it.
+
 The exemption parameter defaults to a role ARN that cannot exist, so the control denies
 everyone until an operator supplies a real pattern. Narrow it only for a genuine break-glass
 or migration path, and prefer removing the need over widening the pattern:

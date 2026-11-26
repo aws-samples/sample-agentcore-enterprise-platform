@@ -467,6 +467,7 @@ class RuntimeStack(cdk.Stack):
             workload_identity_name=rt_name,
             allowed_models=allowed_models,
             guardrail=guardrail,
+            sdk_local_identity=runtime_type == "a2a_agent",
         )
         if migration_secret_names:
             # The adapter resolves each declared migration secret into the
@@ -757,6 +758,7 @@ class RuntimeStack(cdk.Stack):
         workload_identity_name: str,
         allowed_models: list[str] | None = None,
         guardrail: bedrock.CfnGuardrail | None = None,
+        sdk_local_identity: bool = False,
     ) -> None:
         """Attach the standard AgentCore Runtime permissions to a role.
 
@@ -997,5 +999,53 @@ class RuntimeStack(cdk.Stack):
                     conditions={"Null": {"bedrock:GuardrailIdentifier": "true"}},
                 ),
             ]
+        if sdk_local_identity:
+            # A2A runtimes are invoked with SigV4 by the orchestrator, so the
+            # service passes them no WorkloadAccessToken. bedrock_agentcore's
+            # requires_access_token (the gateway M2M token in tools/gateway.py)
+            # then takes its local path: it creates an SDK workload identity
+            # named "workload-<hex>" and calls GetWorkloadAccessTokenForUserId
+            # with a random user id. Grant exactly that, and only on identities
+            # with the SDK's "workload-" prefix: runtime identities are named
+            # after their runtime, so this cannot mint a token for the
+            # orchestrator's or any HTTP runtime's identity. HTTP/MCP/AG-UI
+            # runtimes never get this statement.
+            sdk_identities = stack.format_arn(
+                service="bedrock-agentcore",
+                resource="workload-identity-directory",
+                resource_name="default/workload-identity/workload-*",
+                arn_format=cdk.ArnFormat.SLASH_RESOURCE_NAME,
+            )
+            statements.append(
+                iam.PolicyStatement(
+                    sid="AgentCoreSdkLocalIdentity",
+                    actions=[
+                        "bedrock-agentcore:CreateWorkloadIdentity",
+                        "bedrock-agentcore:GetWorkloadAccessTokenForUserId",
+                        "bedrock-agentcore:GetResourceOauth2Token",
+                    ],
+                    resources=[
+                        stack.format_arn(
+                            service="bedrock-agentcore",
+                            resource="workload-identity-directory",
+                            resource_name="default",
+                            arn_format=cdk.ArnFormat.SLASH_RESOURCE_NAME,
+                        ),
+                        sdk_identities,
+                        stack.format_arn(
+                            service="bedrock-agentcore",
+                            resource="token-vault",
+                            resource_name="default",
+                            arn_format=cdk.ArnFormat.SLASH_RESOURCE_NAME,
+                        ),
+                        stack.format_arn(
+                            service="bedrock-agentcore",
+                            resource="token-vault",
+                            resource_name="default/*",
+                            arn_format=cdk.ArnFormat.SLASH_RESOURCE_NAME,
+                        ),
+                    ],
+                )
+            )
         for stmt in statements:
             role.add_to_policy(stmt)
