@@ -229,6 +229,19 @@ class GatewayStack(cdk.Stack):
                 },
             )
 
+            # The gateway role may otherwise invoke only <prefix>-tool-* functions,
+            # so without this the gateway is denied (AccessDenied) on every call.
+            # Exactly the interceptor ARN; no wildcard. The resource-side permission
+            # (add_permission below) references the gateway, never the other way
+            # round, so this adds no dependency cycle.
+            gw_role.add_to_policy(
+                iam.PolicyStatement(
+                    sid="InvokeEgressInterceptor",
+                    actions=["lambda:InvokeFunction"],
+                    resources=[self._interceptor_fn.function_arn],
+                )
+            )
+
             interceptor_configurations = [
                 agentcore.CfnGateway.GatewayInterceptorConfigurationProperty(
                     interception_points=["REQUEST", "RESPONSE"],

@@ -114,13 +114,56 @@ accelerator never uses.
   Guardrails (`ApplyGuardrail`), config sourced from `control-library/guardrails/`. It performs
   **no authorization** — Cedar (item 3) is a separate control behind a separate flag, and
   `enable_egress_filter` alone gives you none of it.
-- **Masking, not blocking:** the handler raises only when an assessment comes back
-  `action == "BLOCKED"`; otherwise it substitutes anonymized text and the request proceeds.
-- **Caveats:** the `gatewayRequest`/`gatewayResponse` shape is unvalidated, so the handler
-  scans every string leaf generically and passes payload shapes it does not recognise through
-  **unchanged**. There is no try/except around `ApplyGuardrail`, so a Bedrock throttle surfaces
-  as a Lambda failure rather than a defined fail-open/fail-closed decision. Validate against
-  live Gateway traces before relying on it in production.
+- **Masking, not blocking:** the handler blocks only when an assessment comes back
+  `action == "BLOCKED"`; otherwise it substitutes anonymized text and the call proceeds.
+- **Event detection:** AgentCore response events carry both `gatewayRequest` and
+  `gatewayResponse`, so the handler checks `gatewayResponse` first. Any event that has it is
+  a RESPONSE interception, and the guardrail runs with `source=OUTPUT`. Otherwise it is a
+  REQUEST interception, scanned with `source=INPUT`.
+- **Only content is scanned, never protocol fields:**
+  - For `tools/call` requests, only `params.arguments` is scanned. Other request methods are
+    not scanned.
+  - For responses, only `result.content`, `result.structuredContent` and `error.message` are
+    scanned.
+  - Tool names, descriptions, input schemas and the JSON-RPC envelope are never sent to
+    `ApplyGuardrail` and never rewritten, so masking cannot break tool routing.
+- **Output contract:**
+  - Request pass or mask: `mcp.transformedGatewayRequest = {body}`.
+  - Response pass or mask: `mcp.transformedGatewayResponse = {statusCode, headers, body}`.
+  - Request block: short-circuits with a `transformedGatewayResponse`, so the target is
+    never called.
+  - Response block: replaces the response with a `transformedGatewayResponse`.
+  - Both block cases return status 200. The body depends on the request method:
+    - For `tools/call`, a JSON-RPC `result` with `isError: true` and the text "Blocked by
+      egress guardrail."
+    - For every other method (for example `tools/list` or `prompts/get`), a JSON-RPC error
+      `{"code": -32000, "message": "Blocked by egress guardrail."}`. An `isError` result
+      would lack the method's required fields and cause a protocol error in the client.
+- **Logging:** no log line contains a request or response body. The handler logs only:
+  - the interception point;
+  - the Lambda request id;
+  - the JSON-RPC id, only when it is an int or a string of at most 64 characters (otherwise
+    its type and length, since the client chooses it);
+  - the body size;
+  - the decision (`pass`, `masked` or `blocked`);
+  - for blocks, the guardrail filter or PII type.
+- **Invoke permission:** the gateway role holds `lambda:InvokeFunction` on the
+  `<prefix>-tool-*` functions and on exactly the interceptor function (sid
+  `InvokeEgressInterceptor`). Without it every gateway call fails with AccessDenied.
+- **`tools/list` with the filter on:**
+  - *Before this fix:* the response event was treated as a request and answered with
+    `transformedGatewayRequest`, so the gateway never got a usable response body. Clients
+    saw an error or an empty tool list.
+  - *Now:* the `tools/list` result is not scanned, because tools are protocol fields, not
+    content. It passes through unchanged.
+  - *If a `tools/list` response is blocked:* this can only happen through a scanned
+    `error.message`. The client then receives the JSON-RPC error above and surfaces it as an
+    error. It does not see an empty list.
+- **Caveats:**
+  - There is no try/except around `ApplyGuardrail`, so a Bedrock throttle surfaces as a
+    Lambda failure, not a defined fail-open or fail-closed decision.
+  - Every string leaf inside the scanned content fields is one `ApplyGuardrail` call.
+  - Validate against live Gateway traces before relying on it in production.
 - **Toggle:** `enable_egress_filter`, deployed by `gateway_stack.py` like every other flag.
 
 ## Cedar authorization (item 3)
