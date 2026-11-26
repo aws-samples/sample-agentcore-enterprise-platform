@@ -708,6 +708,7 @@ if not is_fed_platform:
         project_name=project,
         environment=env_name,
         component_name="orchestrator",
+        log_retention_days=log_retention_days,
         source_dir="agent-code",
         dockerfile_pattern=agent_pattern,
         runtime_type="orchestrator",
@@ -761,6 +762,7 @@ if enable_a2a and not is_fed_platform:
         project_name=project,
         environment=env_name,
         component_name="code-agent",
+        log_retention_days=log_retention_days,
         # Build context is agent-code/ (not the pattern dir): the A2A serving
         # helper lives in shared/, so the Dockerfile has to copy it.
         source_dir="agent-code",
@@ -790,6 +792,7 @@ if enable_a2a and not is_fed_platform:
         project_name=project,
         environment=env_name,
         component_name="research-agent",
+        log_retention_days=log_retention_days,
         source_dir="agent-code",
         dockerfile_pattern="research-agent",
         runtime_type="a2a_agent",
