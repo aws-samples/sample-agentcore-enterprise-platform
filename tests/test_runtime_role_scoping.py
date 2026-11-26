@@ -276,3 +276,55 @@ def test_ssm_reads_are_scoped_to_the_project_path():
     assert "arn:aws:ssm:*:*:parameter/{project_name}/*" in source, (
         "SSM reads must be scoped to this project's parameter path"
     )
+
+
+def _synth_statements_for(runtime_type: str, component: str) -> list[dict]:
+    cdk = pytest.importorskip("aws_cdk")
+    assertions = pytest.importorskip("aws_cdk.assertions")
+    from stacks.runtime_stack import RuntimeStack
+
+    app = cdk.App()
+    stack = RuntimeStack(
+        app,
+        f"RuntimeScoping{component.title().replace('-', '')}",
+        project_name="proj",
+        environment="dev",
+        component_name=component,
+        source_dir="infra_utils",
+        runtime_type=runtime_type,
+        env=cdk.Environment(account="111122223333", region="us-east-1"),
+    )
+    template = assertions.Template.from_stack(stack)
+    statements = []
+    for resource in template.find_resources("AWS::IAM::Policy").values():
+        statements += resource["Properties"]["PolicyDocument"]["Statement"]
+    return statements
+
+
+def test_a2a_runtime_may_mint_tokens_only_for_sdk_local_identities():
+    """A2A runtimes get no WorkloadAccessToken from the service (SigV4 inbound), so the
+    SDK's local path creates a "workload-<hex>" identity and calls ForUserId on it.
+    That grant must cover only SDK-created identities, never a runtime's own."""
+    statements = _synth_statements_for("a2a_agent", "research-agent")
+    sdk = [s for s in statements if s.get("Sid") == "AgentCoreSdkLocalIdentity"]
+    assert len(sdk) == 1
+    actions = set(_as_list(sdk[0]["Action"]))
+    assert "bedrock-agentcore:GetWorkloadAccessTokenForUserId" in actions
+    rendered = [_render(r) for r in _as_list(sdk[0]["Resource"])]
+    identities = [r for r in rendered if "/workload-identity/" in r]
+    assert identities and all(
+        r.endswith("workload-identity-directory/default/workload-identity/workload-*")
+        for r in identities
+    ), identities
+    for statement in statements:
+        if statement.get("Sid") == "AgentCoreSdkLocalIdentity":
+            continue
+        assert "bedrock-agentcore:GetWorkloadAccessTokenForUserId" not in _as_list(
+            statement["Action"]
+        )
+
+
+def test_http_runtime_has_no_sdk_local_identity_statement(synth_statements):
+    assert not any(
+        s.get("Sid") == "AgentCoreSdkLocalIdentity" for s in synth_statements
+    )
