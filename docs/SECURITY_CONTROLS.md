@@ -130,6 +130,10 @@ accelerator never uses.
 - **Output contract:**
   - Request pass or mask: `mcp.transformedGatewayRequest = {body}`.
   - Response pass or mask: `mcp.transformedGatewayResponse = {statusCode, headers, body}`.
+  - The body may arrive as a parsed map or as a JSON string. It is parsed for scanning and
+    returned in the type it arrived in. An unmasked body is returned exactly as received.
+  - `Content-Length` is dropped from passed-through headers, because the gateway
+    re-serializes the returned body.
   - Request block: short-circuits with a `transformedGatewayResponse`, so the target is
     never called.
   - Response block: replaces the response with a `transformedGatewayResponse`.
@@ -146,7 +150,12 @@ accelerator never uses.
     its type and length, since the client chooses it);
   - the body size;
   - the decision (`pass`, `masked` or `blocked`);
-  - for blocks, the guardrail filter or PII type.
+  - for blocks, the guardrail filter or PII type;
+  - one shape line per interception, which makes empty `tools/list` results diagnosable. It
+    contains the JSON-RPC method, the body type (`dict` or `str`), the top-level body keys,
+    the `result` key names, the number of tools and the streaming flag. Only known protocol
+    key names are logged; other keys are only counted. Tool names, descriptions and content
+    are never logged.
 - **Invoke permission:** the gateway role holds `lambda:InvokeFunction` on the
   `<prefix>-tool-*` functions and on exactly the interceptor function (sid
   `InvokeEgressInterceptor`). Without it every gateway call fails with AccessDenied.
@@ -159,6 +168,14 @@ accelerator never uses.
   - *If a `tools/list` response is blocked:* this can only happen through a scanned
     `error.message`. The client then receives the JSON-RPC error above and surfaces it as an
     error. It does not see an empty list.
+  - *Empty tool list seen live (H3b), cause confirmed from the shape log lines:* REQUEST
+    events arrive with `"gatewayResponse": null`. The handler routed any event with that key
+    as a response, so the REQUEST call returned `transformedGatewayResponse` with an empty
+    body. The gateway sends that straight back, so the real `tools/list` never ran. Only a
+    non-empty `gatewayResponse` is now a RESPONSE interception. The handler also passes a
+    JSON-string body through byte-for-byte, scans a `tools/call` string body, and drops a
+    stale `Content-Length` header. Streaming responses (`isStreamingResponse`) are logged and
+    passed through.
 - **Caveats:**
   - There is no try/except around `ApplyGuardrail`, so a Bedrock throttle surfaces as a
     Lambda failure, not a defined fail-open or fail-closed decision.

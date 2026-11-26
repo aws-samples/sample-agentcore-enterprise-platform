@@ -31,7 +31,13 @@ Only content is scanned, never protocol fields: params.arguments of tools/call r
 and result.content, result.structuredContent and error.message of responses. Tool names,
 descriptions and input schemas are left untouched.
 Payload content is never logged: log lines carry only the interception point, the Lambda
-request id, the JSON-RPC id (when short and scalar), the body size and the decision.
+request id, the JSON-RPC id (when short and scalar), the body size and the decision, plus
+one shape line per interception (method, body type, allow-listed top-level body and result
+key names, tool count). Tool names, descriptions and content are never logged.
+
+The body may arrive as a parsed map or as a JSON string. It is parsed for scanning and
+returned in the type it arrived in, unchanged unless masked. Content-Length is dropped from
+passed-through headers, because the gateway re-serializes the returned body.
 """
 
 import json
@@ -136,6 +142,89 @@ _BLOCKED_TEXT = "Blocked by egress guardrail."
 _BLOCKED_ERROR_CODE = -32000
 _MAX_LOGGED_ID_LEN = 64
 _SAFE_ID_RE = re.compile(rf"[A-Za-z0-9._:/-]{{1,{_MAX_LOGGED_ID_LEN}}}")
+_METHOD_RE = re.compile(r"[A-Za-z_]{1,32}(?:/[A-Za-z_]{1,32}){0,3}")
+# Only protocol key names are logged; any other key is counted, never named.
+_LOGGABLE_KEYS = frozenset(
+    {
+        "jsonrpc",
+        "id",
+        "method",
+        "params",
+        "result",
+        "error",
+        "tools",
+        "nextCursor",
+        "content",
+        "structuredContent",
+        "isError",
+        "_meta",
+    }
+)
+
+
+def _parse_body(body):
+    """Return (parsed, was_string). A body that is not JSON text is returned as is."""
+    if isinstance(body, (str, bytes)):
+        try:
+            return json.loads(body), True
+        except ValueError:
+            return body, False
+    return body, False
+
+
+def _restore_body(raw, parsed, masked, was_string):
+    """Return the original body when unchanged, else the masked body in its type."""
+    if masked == parsed:
+        return raw
+    return json.dumps(masked) if was_string else masked
+
+
+def _without_content_length(headers):
+    """Drop Content-Length: the gateway re-serializes the returned body."""
+    if not isinstance(headers, dict):
+        return headers
+    return {
+        k: v
+        for k, v in headers.items()
+        if not (isinstance(k, str) and k.lower() == "content-length")
+    }
+
+
+def _loggable_method(method) -> str:
+    if method is None:
+        return "-"
+    if isinstance(method, str) and _METHOD_RE.fullmatch(method):
+        return method
+    return "<other>"
+
+
+def _loggable_keys(node) -> str:
+    """Allow-listed key names of a dict; other keys only as a count."""
+    if not isinstance(node, dict):
+        return "-"
+    known = sorted(k for k in node if k in _LOGGABLE_KEYS)
+    other = len(node) - len(known)
+    if other:
+        known.append(f"<other:{other}>")
+    return ",".join(known) or "-"
+
+
+def _log_shape(point, context, method, raw, parsed, streaming=False):
+    """Log non-payload shape metadata only; never names, descriptions or content."""
+    result = parsed.get("result") if isinstance(parsed, dict) else None
+    tools = result.get("tools") if isinstance(result, dict) else None
+    logger.info(
+        "egress interceptor shape point=%s request_id=%s method=%s body_type=%s "
+        "body_keys=%s result_keys=%s tools=%s streaming=%s",
+        point,
+        getattr(context, "aws_request_id", "-"),
+        _loggable_method(method),
+        type(raw).__name__,
+        _loggable_keys(parsed),
+        _loggable_keys(result),
+        len(tools) if isinstance(tools, list) else "-",
+        bool(streaming),
+    )
 
 
 def _method(body):
@@ -244,42 +333,50 @@ def _blocked_gateway_response(rpc_id, method) -> dict:
 
 
 def _intercept_response(mcp: dict, context) -> dict:
-    request_body = (mcp.get("gatewayRequest") or {}).get("body")
+    request_body, _ = _parse_body((mcp.get("gatewayRequest") or {}).get("body"))
     response = mcp.get("gatewayResponse") or {}
-    body = response.get("body")
+    raw = response.get("body")
+    body, was_string = _parse_body(raw)
     rpc_id = _rpc_id(body, request_body)
     method = _method(request_body)
+    streaming = response.get("isStreamingResponse", mcp.get("isStreamingResponse"))
+    _log_shape("RESPONSE", context, method, raw, body, streaming)
     try:
         masked = _mask_response_body(body)
     except GuardrailBlocked as exc:
-        _log_decision("RESPONSE", context, rpc_id, _size(body), "blocked", str(exc))
+        _log_decision("RESPONSE", context, rpc_id, _size(raw), "blocked", str(exc))
         blocked = _blocked_gateway_response(rpc_id, method)
         return _output("transformedGatewayResponse", blocked)
     decision = "masked" if masked != body else "pass"
-    _log_decision("RESPONSE", context, rpc_id, _size(body), decision)
-    transformed = {"statusCode": response.get("statusCode", 200), "body": masked}
+    _log_decision("RESPONSE", context, rpc_id, _size(raw), decision)
+    transformed = {
+        "statusCode": response.get("statusCode", 200),
+        "body": _restore_body(raw, body, masked, was_string),
+    }
     if "headers" in response:
-        transformed["headers"] = response["headers"]
+        transformed["headers"] = _without_content_length(response["headers"])
     return _output("transformedGatewayResponse", transformed)
 
 
 def _intercept_request(mcp: dict, context) -> dict:
     request = mcp.get("gatewayRequest") or {}
-    body = request.get("body")
+    raw = request.get("body")
+    body, was_string = _parse_body(raw)
     rpc_id = _rpc_id(body)
     method = _method(body)
+    _log_shape("REQUEST", context, method, raw, body)
     try:
         masked = _mask_request_body(body, method)
     except GuardrailBlocked as exc:
-        _log_decision("REQUEST", context, rpc_id, _size(body), "blocked", str(exc))
+        _log_decision("REQUEST", context, rpc_id, _size(raw), "blocked", str(exc))
         # Short-circuit: the target is never called.
         blocked = _blocked_gateway_response(rpc_id, method)
         return _output("transformedGatewayResponse", blocked)
     decision = "masked" if masked != body else "pass"
-    _log_decision("REQUEST", context, rpc_id, _size(body), decision)
-    transformed = {"body": masked}
+    _log_decision("REQUEST", context, rpc_id, _size(raw), decision)
+    transformed = {"body": _restore_body(raw, body, masked, was_string)}
     if "headers" in request:
-        transformed["headers"] = request["headers"]
+        transformed["headers"] = _without_content_length(request["headers"])
     return _output("transformedGatewayRequest", transformed)
 
 
@@ -287,7 +384,11 @@ def handler(event, context):
     mcp = (event or {}).get("mcp") or {}
 
     # Response events carry gatewayRequest too, so check gatewayResponse first.
-    if "gatewayResponse" in mcp:
+    # Only a non-empty gatewayResponse marks a RESPONSE interception: live,
+    # REQUEST events arrive with "gatewayResponse": null. Treating those as
+    # responses returned transformedGatewayResponse with an empty body, which
+    # the gateway sends straight back, so tools/list came back with no tools.
+    if mcp.get("gatewayResponse"):
         return _intercept_response(mcp, context)
     if "gatewayRequest" in mcp:
         return _intercept_request(mcp, context)
