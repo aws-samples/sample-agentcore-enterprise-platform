@@ -133,8 +133,11 @@ _REGION_RE = r"^[a-z]{2}(-[a-z]+)+-\d$"
 # placeholders in place, so it exports PLATFORM_ALLOW_PLACEHOLDERS=1: the same
 # messages then surface as PlatformConfig.warnings instead of errors. Nothing
 # in deploy.sh sets it — a real deploy always fails closed.
+# <...> tokens anywhere (https://<org>.okta.com/...), the o-xxxxxxxxxx org
+# shape and YOUR_* tokens are placeholders too.
 _SENTINEL_RE = re.compile(
-    r"replace|change.?me|\btodo\b|^<.*>$|example\.com", re.IGNORECASE
+    r"replace|change.?me|\btodo\b|<[^<>]+>|example\.com|\bo-x{10,}\b|\byour_",
+    re.IGNORECASE,
 )
 _UUID_RE = re.compile(r"^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$", re.IGNORECASE)
 # Secrets Manager NAMES: alphanumerics and /_+=.@- only. A pasted secret VALUE
@@ -406,7 +409,7 @@ SHORTCUTS: dict[str, dict] = {
                 "egress_filter": True,
                 "require_guardrails": True,
                 "cedar": {"enabled": True, "mode": "LOG_ONLY"},
-                "org_id": "",
+                "org_id": "o-xxxxxxxxxx",
             },
             "observability": {"alarms": False},
         },
@@ -741,6 +744,19 @@ def deployment_placeholders(deployment: DeploymentConfig) -> list[str]:
                 f"{field} is a placeholder ({value!r}): copy the value from the "
                 "platform account's `deploy.sh export` output"
             )
+    s = fed.m2m_client_secret_name
+    if s and (
+        _SENTINEL_RE.search(s)
+        or not _SECRET_NAME_RE.match(s)
+        or _JWT_RE.match(s)
+        or _BLOB_RE.match(s)
+    ):
+        # The value is deliberately not echoed: it may BE the secret.
+        out.append(
+            "deployment.federation.m2m_client_secret_name is a placeholder or "
+            "looks like a secret VALUE (not shown): it must be the Secrets "
+            "Manager NAME in the workload account, e.g. agentcore/platform-m2m"
+        )
     return out
 
 
@@ -1244,6 +1260,24 @@ class SecurityConfig(BaseModel):
     traceability: bool = False
     org_id: str = ""
 
+    @model_validator(mode="before")
+    @classmethod
+    def _org_id_from_environment(cls, data):
+        # An exported ORG_ID fills an org_id the manifest leaves empty or sets
+        # to a placeholder (the security-focused preset ships o-xxxxxxxxxx, and
+        # its documented flow is `export ORG_ID=...`). This runs before the
+        # placeholder check, so the preset deploys with a real exported id. A
+        # real manifest value is never replaced here; apply_environment_overrides
+        # applies the usual env-over-manifest precedence afterwards. deploy.sh
+        # also retries with the ORG_ID saved in workshop.env on the missing-org
+        # failure. The value is shape- and placeholder-checked either way.
+        if isinstance(data, dict) and data.get("resource_policies"):
+            current = str(data.get("org_id") or "")
+            env_org = os.environ.get("ORG_ID", "")
+            if env_org and (not current or _SENTINEL_RE.search(current)):
+                data = {**data, "org_id": env_org}
+        return data
+
     @field_validator("org_id")
     @classmethod
     def _org_id_shape(cls, v: str) -> str:
@@ -1266,10 +1300,40 @@ class SecurityConfig(BaseModel):
                 "security.traceability needs security.cloudtrail_alerting: the "
                 "alert rule only fires on CloudTrail management events"
             )
+        # The Memory resource policy cannot render without an org id. Routed
+        # through the placeholder gate so destroy (which allows placeholders)
+        # never needs it; a real deploy fails closed here.
+        if self.resource_policies and not self.org_id:
+            _refuse_placeholders(
+                [
+                    (
+                        "security.resource_policies requires security.org_id: set "
+                        "it to your AWS Organizations id (o-...). Find it with: aws "
+                        "organizations describe-organization --query Organization.Id"
+                    )
+                ]
+            )
         return self
 
 
 def security_org_placeholders(org_id: str) -> list[str]:
+    """Sentinel org ids, including the o-xxxxxxxxxx the security-focused
+    preset ships so the user has to set it."""
+    out = list(_security_org_base_placeholders(org_id))
+    if (
+        org_id
+        and _SENTINEL_RE.search(org_id)
+        and not any("security.org_id" in m for m in out)
+    ):
+        out.append(
+            f"security.org_id is a placeholder ({org_id!r}): set it to your AWS "
+            "Organizations id. Find it with: aws organizations "
+            "describe-organization --query Organization.Id"
+        )
+    return out
+
+
+def _security_org_base_placeholders(org_id: str) -> list[str]:
     if org_id and re.search(r"replace|example|changeme", org_id, re.IGNORECASE):
         return [
             (
@@ -3790,25 +3854,43 @@ def _main() -> int:
     try:
         config = load_platform_config(args[0])
     except ValidationError as exc:
-        # Messages only — pydantic's str() echoes the offending input, and for
-        # identity.client_secret_name the input may BE the secret.
-        print(f"INVALID: {args[0]}", file=sys.stderr)
-        for err in exc.errors():
-            where = ".".join(str(x) for x in err["loc"]) or "platform.yaml"
-            print(
-                f"  {where}: {err['msg'].removeprefix('Value error, ')}",
-                file=sys.stderr,
-            )
-        return 1
+        return _print_invalid(args[0], exc)
     except Exception as exc:  # noqa: BLE001 — YAML syntax, missing file: print it all
         print(f"INVALID: {args[0]}\n{exc}", file=sys.stderr)
         return 1
     if "--effective-env" in flags:
         try:
             config = apply_environment_overrides(config)
-        except (ValidationError, ValueError) as exc:
-            print(f"INVALID effective environment\n{exc}", file=sys.stderr)
+        except ValidationError as exc:
+            return _print_invalid(f"{args[0]} with environment overrides", exc)
+        except ValueError as exc:
+            print(f"INVALID: {args[0]} with environment overrides", file=sys.stderr)
+            print(f"  {exc}", file=sys.stderr)
             return 1
+    try:
+        return _run_action(flags, config, args[0])
+    except ValueError as exc:
+        # Contract errors (an unlisted federated account, a use case whose
+        # stacks are missing): one clear line, never a traceback.
+        print(f"INVALID: {args[0]}", file=sys.stderr)
+        print(f"  {exc}", file=sys.stderr)
+        return 1
+
+
+def _print_invalid(source: str, exc: ValidationError) -> int:
+    """One line per field. Messages only: pydantic's str() echoes the offending
+    input, and for identity.client_secret_name the input may BE the secret."""
+    print(f"INVALID: {source}", file=sys.stderr)
+    for err in exc.errors():
+        where = ".".join(str(x) for x in err["loc"]) or "platform.yaml"
+        msg = err["msg"].removeprefix("Value error, ")
+        if err.get("type") == "string_pattern_mismatch" and where == "region":
+            msg = "not an AWS Region name such as us-east-1 or eu-west-2"
+        print(f"  {where}: {msg}", file=sys.stderr)
+    return 1
+
+
+def _run_action(flags: set[str], config: PlatformConfig, source: str) -> int:
     if "--export" not in flags:
         # --export is machine-read by deploy.sh with 2>&1; keep it key=value only.
         for warning in config.warnings:
@@ -3853,7 +3935,7 @@ def _main() -> int:
         print()
         print("\n".join(migration_readiness_lines(config)))
         return 0 if migration_cutover_ready(config) else 1
-    print(f"OK: {args[0]}")
+    print(f"OK: {source}")
     print(config.model_dump_json(indent=2))
     return 0
 

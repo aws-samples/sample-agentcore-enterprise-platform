@@ -230,6 +230,7 @@ def test_real_deploy_refuses_shape_valid_org_placeholder():
         "production.yaml",
         "platform-team.yaml",
         "distributed.yaml",
+        "security-focused.yaml",
     ],
 )
 def test_presets_with_placeholders_refuse_a_real_deploy(preset):
@@ -306,6 +307,85 @@ def test_distributed_preset_is_a_full_copy(monkeypatch):
         "runtime-orchestrator",
         "observability",
     } <= names
+
+
+# ── new placeholder shapes ───────────────────────────────────────────────────
+
+TENANT = "3f2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+
+
+def test_angle_bracket_token_in_issuer_url_is_a_placeholder():
+    msg = err(
+        identity={
+            "idp": "okta",
+            "client_id": "abc",
+            "client_secret_name": "agentcore/okta",
+            "issuer_url": "https://<org>.okta.com/oauth2/default",
+        }
+    )
+    assert "identity.issuer_url is a placeholder" in msg
+
+
+@pytest.mark.parametrize("cid", ["YOUR_CLIENT_ID", "REPLACE_ME", "app-<id>"])
+def test_your_and_bracket_client_ids_are_refused(cid):
+    msg = err(identity={**ENTRA, "tenant_id": TENANT, "client_id": cid})
+    assert "identity.client_id is a placeholder" in msg
+
+
+def test_xxx_org_id_is_a_placeholder_telling_the_user_to_set_it():
+    msg = err(security={"resource_policies": True, "org_id": "o-xxxxxxxxxx"})
+    assert "security.org_id is a placeholder" in msg
+    assert "set it" in msg
+
+
+def test_resource_policies_require_an_org_id():
+    msg = err(security={"resource_policies": True})
+    assert "security.resource_policies requires security.org_id" in msg
+
+
+def test_resource_policies_with_a_real_org_id_pass():
+    c = cfg(security={"resource_policies": True, "org_id": "o-abc123def456"})
+    assert c.security.org_id == "o-abc123def456"
+
+
+def test_destroy_path_does_not_require_an_org_id(monkeypatch):
+    # deploy.sh destroy allows placeholders, so a missing org id never blocks it.
+    monkeypatch.setenv("PLATFORM_ALLOW_PLACEHOLDERS", "1")
+    c = cfg(security={"resource_policies": True})
+    assert c.security.org_id == ""
+
+
+def test_security_focused_preset_names_the_org_field():
+    msg = _preset_errors("security-focused.yaml")
+    assert "security.org_id is a placeholder" in msg
+
+
+@pytest.mark.parametrize("name", ["YOUR_SECRET_NAME", "REPLACE_ME", "has a space"])
+def test_federation_secret_name_placeholder_is_refused(name):
+    msg = err(
+        deployment={
+            "strategy": "federated",
+            "platform_account": "222233334444",
+            "workload_accounts": ["333344445555"],
+            "federation": {"m2m_client_secret_name": name},
+        }
+    )
+    assert "deployment.federation.m2m_client_secret_name" in msg
+    assert name not in msg
+
+
+def test_federation_issuer_with_angle_token_is_refused():
+    msg = err(
+        deployment={
+            "strategy": "federated",
+            "platform_account": "222233334444",
+            "workload_accounts": ["333344445555"],
+            "federation": {
+                "issuer_url": "https://cognito-idp.us-east-1.amazonaws.com/<pool-id>"
+            },
+        }
+    )
+    assert "deployment.federation.issuer_url is a placeholder" in msg
 
 
 def test_federation_hand_over_values_are_checked():

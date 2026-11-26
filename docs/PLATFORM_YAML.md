@@ -97,7 +97,7 @@ Who issues the tokens the platform trusts.
 | `security.cedar.enabled` | bool | `False` | `ENABLE_CEDAR` | Cedar policy engine on the gateway (tool-level authorization). |
 | `security.cedar.mode` | one of: `LOG_ONLY`, `ENFORCE` | `'LOG_ONLY'` | `CEDAR_MODE` | `LOG_ONLY` records decisions without enforcing; flip to `ENFORCE` only after reading the logs on live traffic. |
 | `security.traceability` | bool | `False` | `ENABLE_TRACEABILITY` | SNS + EventBridge alerts on sensitive API calls. Requires `cloudtrail_alerting`, the rule only matches CloudTrail management events. |
-| `security.org_id` | str | `""` | `ORG_ID` | AWS Organizations id (`o-…`) the VPC endpoint and Memory policies are scoped to. Empty is fine (deploy.sh prompts); a placeholder is rejected. |
+| `security.org_id` | str | `""` | `ORG_ID` | AWS Organizations id (`o-…`) the VPC endpoint and Memory policies are scoped to. Required when `resource_policies` is on: an empty value fails validation unless `ORG_ID` is exported or saved in workshop.env (deploy.sh prompts for it). A placeholder such as `o-xxxxxxxxxx` is rejected. |
 
 ## `observability:`
 
@@ -556,9 +556,10 @@ security:
     enabled: true
     mode: LOG_ONLY
   traceability: true
-  # deploy.sh prompts for the org id, or export ORG_ID — find it with:
+  # Placeholder: set this to your AWS Organizations id before deploying (a real
+  # deploy refuses o-xxxxxxxxxx; destroy does not need it). Find it with:
   #   aws organizations describe-organization --query Organization.Id
-  org_id: ""
+  org_id: o-xxxxxxxxxx
 
 observability:
   transaction_search: true
