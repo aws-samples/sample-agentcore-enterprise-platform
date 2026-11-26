@@ -3,9 +3,11 @@
 import tempfile
 from pathlib import Path
 
+from infra_utils import platform_config
 from infra_utils.platform_config import (
     CEDAR_PERMIT_CONTROL,
     CEDAR_PERMIT_CONTROL_ID,
+    CEDAR_POLICY_CONTROLS,
     cedar_findings,
     cedar_permitted_tools,
     gateway_tool_errors,
@@ -95,6 +97,50 @@ def test_uncovered_message_names_the_deployed_permit():
     )
     assert errors and CEDAR_PERMIT_CONTROL_ID in errors[0]
     assert "crm" in errors[0]
+
+
+def test_uncovered_message_names_every_step():
+    errors, _ = cedar_findings(
+        enabled=True,
+        mode="ENFORCE",
+        tool_names=["crm"],
+        production=True,
+        permitted_tools=frozenset({"sample-tool"}),
+    )
+    message = errors[0]
+    for step in (
+        'AgentCore::Action::"<target>___<tool>"',
+        CEDAR_PERMIT_CONTROL_ID,
+        CEDAR_PERMIT_CONTROL,
+        "control-library/cedar/",
+        "CEDAR_POLICY_CONTROLS",
+        "infra_utils/platform_config.py",
+        "stacks/gateway_stack.py",
+        "LOG_ONLY",
+    ):
+        assert step in message, step
+
+
+def test_coverage_reads_every_registered_control(monkeypatch):
+    from infra_utils import policy_loader
+
+    texts = {
+        "a": 'permit(principal, action in [AgentCore::Action::"sample-tool___t"], resource);',
+        "b": 'permit(principal, action in [AgentCore::Action::"crm___lookup"], resource);',
+    }
+    monkeypatch.setattr(platform_config, "CEDAR_POLICY_CONTROLS", {"A": "a", "B": "b"})
+    monkeypatch.setattr(
+        policy_loader, "load_control_text", lambda control_id, _vars: texts[control_id]
+    )
+    assert cedar_permitted_tools() == frozenset({"sample-tool", "crm"})
+
+
+def test_gateway_stack_deploys_the_registered_controls():
+    src = (REPO / "stacks" / "gateway_stack.py").read_text()
+    assert "from infra_utils.platform_config import CEDAR_POLICY_CONTROLS" in src
+    assert "CEDAR_POLICY_CONTROLS.items()" in src
+    assert "cedar_controls = {" not in src
+    assert CEDAR_POLICY_CONTROLS["PermitReadTools"] == CEDAR_PERMIT_CONTROL_ID
 
 
 def test_empty_tools_is_an_error():

@@ -16,8 +16,10 @@ All notable changes to the accelerator are recorded here.
   `security.cedar.enabled: false`, an empty `gateway.tools` list, and unknown
   bare tool names. ENFORCE with gateway tools the deployed Cedar permit
   (`cedar.gateway-default.permit-read`) does not cover (for example web
-  search) warns in workshop mode and is refused in production; coverage is
-  read from that policy, so adding a tool's actions there is enough.
+  search) warns in workshop mode and is refused in production. Coverage is
+  read from `CEDAR_POLICY_CONTROLS` in `infra_utils/platform_config.py`, the
+  same registry the gateway stack deploys: add the tool's actions to the
+  permit, or add a control and register it there.
 - Gateway and runtime IAM ARNs use the stack partition instead of a
   hard-coded `aws`.
 - `docs/POSTURE_TIERS.md` documents the `dev`, `hardened` and `production`

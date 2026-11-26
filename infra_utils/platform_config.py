@@ -478,6 +478,10 @@ def migration_production_error(mode: str, migration_enabled: bool) -> str | None
 # permit, so coverage is read from that policy itself, never a second list.
 CEDAR_PERMIT_CONTROL = "control-library/cedar/gateway-default"
 CEDAR_PERMIT_CONTROL_ID = "cedar.gateway-default.permit-read"
+# Every Cedar policy the gateway deploys: CfnPolicy construct id -> control id.
+# stacks/gateway_stack.py deploys exactly these and the ENFORCE coverage check
+# (cedar_permitted_tools) reads exactly these, so the two cannot drift.
+CEDAR_POLICY_CONTROLS: dict[str, str] = {"PermitReadTools": CEDAR_PERMIT_CONTROL_ID}
 # Gateway tool actions are AgentCore::Action::"<target>___<tool>".
 _CEDAR_TOOL_ACTION_RE = re.compile(r'Action::"([^"]+?)___')
 # A permit whose head leaves action unconstrained covers every tool.
@@ -490,15 +494,15 @@ _COVERAGE_GATEWAY_ARN = (
 def cedar_permitted_tools(policy_text: str | None = None) -> frozenset[str] | None:
     """Gateway targets the deployed Cedar permit covers; None means all.
 
-    Without ``policy_text`` the policy the gateway stack deploys
-    (CEDAR_PERMIT_CONTROL_ID) is loaded, so adding a permit there is all a
-    custom tool needs.
+    Without ``policy_text`` every control in CEDAR_POLICY_CONTROLS (the
+    policies the gateway stack deploys) is loaded and their coverage merged.
     """
     if policy_text is None:
         from infra_utils.policy_loader import load_control_text
 
-        policy_text = load_control_text(
-            CEDAR_PERMIT_CONTROL_ID, {"gateway_arn": _COVERAGE_GATEWAY_ARN}
+        policy_text = "\n".join(
+            load_control_text(control_id, {"gateway_arn": _COVERAGE_GATEWAY_ARN})
+            for control_id in CEDAR_POLICY_CONTROLS.values()
         )
     if _CEDAR_ANY_ACTION_RE.search(policy_text):
         return None
@@ -570,13 +574,21 @@ def cedar_findings(
         )
         uncovered = [] if covered is None else sorted(set(tool_names) - covered)
         if uncovered:
+            deployed = ", ".join(CEDAR_POLICY_CONTROLS.values())
             message = (
                 "security.cedar.mode ENFORCE denies every gateway tool without a "
-                f"Cedar permit: {', '.join(uncovered)}. The deployed permit "
-                f"{CEDAR_PERMIT_CONTROL_ID} (in {CEDAR_PERMIT_CONTROL}) covers "
-                f"only {', '.join(sorted(covered)) or 'no tools'}; add the tool's "
-                'actions (AgentCore::Action::"<target>___<tool>") to that '
-                "permit, remove the tools, or keep mode LOG_ONLY"
+                f"Cedar permit: {', '.join(uncovered)}. The deployed Cedar "
+                "policies (CEDAR_POLICY_CONTROLS in infra_utils/platform_config.py: "
+                f"{deployed}) cover only "
+                f"{', '.join(sorted(covered)) or 'no tools'}. To permit a tool, "
+                "either (1) add its actions "
+                '(AgentCore::Action::"<target>___<tool>") to the permit '
+                f"{CEDAR_PERMIT_CONTROL_ID} in {CEDAR_PERMIT_CONTROL}, or (2) add "
+                "a new Cedar control under control-library/cedar/ and register "
+                "its control id in CEDAR_POLICY_CONTROLS in "
+                "infra_utils/platform_config.py (stacks/gateway_stack.py deploys "
+                "every entry and this check reads them); then synthesize again. "
+                "Otherwise remove the tools or keep mode LOG_ONLY"
             )
             (errors if production else warnings).append(message)
     return errors, warnings
