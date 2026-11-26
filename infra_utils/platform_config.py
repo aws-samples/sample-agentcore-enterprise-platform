@@ -362,6 +362,30 @@ SHORTCUTS: dict[str, dict] = {
     },
 }
 
+# Migration x production is refused rather than wired through. The migration
+# adapter only proxies to the customer container and never calls Bedrock
+# itself, so there is no guardrail id it could attach. Production requires
+# security.require_guardrails, whose DenyUngovernedInference statement on the
+# runtime role would block every guardrail-less model call the container makes.
+MIGRATION_PRODUCTION_REASON = (
+    "the migration adapter only proxies to the customer container, whose own "
+    "Bedrock calls carry no platform guardrail, so the runtime role's "
+    "DenyUngovernedInference statement (required by production) would block "
+    "every model call; rehearse the migration with deployment.mode workshop "
+    "(docs/MIGRATION_RUNBOOK.md, 'Production mode')"
+)
+
+
+def migration_production_error(mode: str, migration_enabled: bool) -> str | None:
+    """The refusal message for migration with production mode, else None."""
+    if mode == "production" and migration_enabled:
+        return (
+            "migration with deployment.mode 'production' is refused: "
+            + MIGRATION_PRODUCTION_REASON
+        )
+    return None
+
+
 # Partial combinations (any subset of journey/topology/posture/runner) that
 # are refused outright, each with the reason shown to the user.
 REFUSE: list[dict] = [
@@ -378,6 +402,10 @@ REFUSE: list[dict] = [
             "the multi-agent journey uses a claude-sdk-* pattern, which cannot "
             "attach the Bedrock Guardrail the production posture requires"
         ),
+    },
+    {
+        "when": {"journey": "migration", "posture": "production"},
+        "reason": MIGRATION_PRODUCTION_REASON,
     },
 ]
 

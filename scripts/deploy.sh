@@ -312,6 +312,7 @@ if [ "${1:-}" = "doctor" ]; then
         --manifest "$PLATFORM_CONFIG" "$@"
 fi
 
+DEPLOY_ACTION="${1:-}"
 apply_platform_config
 load_config
 
@@ -536,6 +537,39 @@ check_credentials() {
     export CDK_DEFAULT_ACCOUNT="$ACCOUNT_ID"
     export CDK_DEFAULT_REGION="$AWS_REGION"
     validate_deployment_account
+    check_declared_secrets
+}
+
+# ═══════════════════════════════════════════════════════════════
+# Declared secrets (same check as `doctor`, before any stack exists)
+# ═══════════════════════════════════════════════════════════════
+# A missing migration secret used to deploy green; the runtime then failed to
+# start with HTTP 424. Only deploying actions run it (not synth/diff/destroy).
+check_declared_secrets() {
+    case "${DEPLOY_ACTION:-}" in
+        deploy|build|workshop) ;;
+        *) return 0 ;;
+    esac
+    if [ "${PRESCAN_DRY:-0}" = "1" ] || [ ! -f "$PLATFORM_CONFIG" ]; then
+        return 0
+    fi
+    local py="$PROJECT_DIR/.venv/bin/python" rc=0
+    [ -x "$py" ] || py="python3"
+    local args=(--manifest "$PLATFORM_CONFIG" --secrets-only)
+    # A supplied IdP value is upserted by this script before synthesis.
+    if [ -n "${IDP_CLIENT_SECRET:-}" ]; then
+        args+=(--skip-idp-secret)
+    fi
+    log_header "Declared Secrets"
+    (cd "$PROJECT_DIR" && "$py" scripts/preflight.py "${args[@]}") || rc=$?
+    case "$rc" in
+        0) ;;
+        3) log_warn "Declared-secret check skipped: Python dependencies are not installed yet."
+           log_warn "Run '$0 doctor' after the virtual environment exists." ;;
+        *) log_error "Declared secrets are missing or unreadable (names above)."
+           log_error "No stack has been created. Create the secrets, then retry."
+           exit 1 ;;
+    esac
 }
 
 # ═══════════════════════════════════════════════════════════════

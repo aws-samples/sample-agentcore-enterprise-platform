@@ -14,6 +14,19 @@ The adapter exposes AgentCore's port `8080`, `POST /invocations`, and
 `GET /ping` contract, then forwards requests to the existing container's
 configured port and paths.
 
+## Production mode
+
+A `migration:` block with `deployment.mode: production` is **refused**. The
+adapter only proxies requests to the customer container; it never calls
+Bedrock itself, so there is no guardrail id it could attach. The container's
+own Bedrock calls carry no platform guardrail, and production requires
+`security.require_guardrails`, whose `DenyUngovernedInference` statement on
+the runtime role would block every one of those model calls. The refusal is
+raised by `deploy.sh design` (layered presets), `deploy.sh doctor`, the
+deploy-time secret check, and CDK synthesis. Rehearse migrations with
+`deployment.mode: workshop`; production promotion needs the container to
+carry the platform guardrail itself, which is not implemented yet.
+
 ## Responsibilities
 
 | Role | Responsibility |
@@ -92,6 +105,11 @@ confirms that CodeBuild will target `linux/arm64`. For a pre-built image it
 warns until the customer independently confirms an arm64 manifest and an
 immutable digest. It also checks every migration secret name without
 displaying its value.
+
+`deploy.sh deploy`, `build`, and `workshop` run the same declared-secret
+check right after validating credentials and before bootstrap or any stack is
+created. A missing or unreadable secret stops the deploy and prints the
+secret names, instead of letting the runtime fail to start with HTTP 424.
 
 An enabled stage uses this gate shape (references only—do not paste customer
 data or credentials). Add the exact digest printed for a data, trigger, or

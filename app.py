@@ -29,6 +29,7 @@ from infra_utils.platform_config import (
     PlatformConfig,
     apply_environment_overrides,
     load_platform_config,
+    migration_production_error,
     to_env,
 )
 from stacks.auth_stack import AuthStack
@@ -281,6 +282,14 @@ if migration_enabled:
             "migration_build_context is set — the platform needs to know where "
             "the customer's container comes from (migration.source in platform.yaml)."
         )
+
+# Migration x production is refused: the migrated container's Bedrock calls
+# carry no guardrail, so DenyUngovernedInference would block all of them.
+_migration_production_error = migration_production_error(
+    deployment_mode, migration_enabled
+)
+if _migration_production_error:
+    raise ValueError(_migration_production_error)
 
 # Optional Bedrock model ID override (cross-region inference profile, e.g.
 # us.anthropic.claude-sonnet-5). When unset, MODEL_ID is NOT injected into the

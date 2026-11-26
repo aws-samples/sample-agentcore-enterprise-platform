@@ -89,6 +89,11 @@ deployment:
 AWS_PROFILE=platform ./scripts/deploy.sh deploy
 ```
 
+`./scripts/deploy.sh verify` is side-aware: in the platform account it checks
+only platform resources (identity, gateway and its policies, observability,
+alarms when enabled) and skips the memory, networking, guardrail-enforcement,
+and runtime checks, because that side deploys no agents.
+
 Then collects the federation values from stack outputs (none is secret):
 
 ```bash
