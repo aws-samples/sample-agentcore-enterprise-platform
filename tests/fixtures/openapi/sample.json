@@ -1,0 +1,22 @@
+{
+  "openapi": "3.0.3",
+  "info": {"title": "Sample weather API", "version": "1.0.0"},
+  "servers": [{"url": "https://api.example.com/v1"}],
+  "paths": {
+    "/forecast": {
+      "get": {
+        "operationId": "getForecast",
+        "summary": "Forecast for a city",
+        "parameters": [
+          {"name": "city", "in": "query", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Forecast",
+            "content": {"application/json": {"schema": {"type": "object"}}}
+          }
+        }
+      }
+    }
+  }
+}
