@@ -19,9 +19,11 @@ from aws_cdk import (
 from aws_cdk import (
     aws_ssm as ssm,
 )
+from aws_cdk import region_info
 from constructs import Construct
 
 from infra_utils.jwt_authorizer import custom_jwt_authorizer
+from infra_utils.platform_config import CEDAR_POLICY_CONTROLS
 from infra_utils.policy_loader import load_control, load_control_text
 
 # The default target set when platform.yaml declares no gateway.tools.
@@ -51,6 +53,20 @@ DEFAULT_TOOL_CONFIGS: dict[str, dict] = {
         ],
     },
 }
+
+
+def stack_partition(stack: cdk.Stack) -> str:
+    """The stack's AWS partition (aws, aws-cn, ...).
+
+    A literal when the stack's region is concrete and known, so templates for
+    a fixed region stay readable; otherwise the AWS::Partition token.
+    """
+    region = stack.region
+    if not cdk.Token.is_unresolved(region):
+        partition = region_info.RegionInfo.get(region).partition
+        if partition:
+            return partition
+    return cdk.Aws.PARTITION
 
 
 def _openapi_credential(provider: dict) -> dict:
@@ -114,6 +130,7 @@ class GatewayStack(cdk.Stack):
 
         prefix = f"{project_name}-{environment}"
         gw_name = f"{project_name}-{environment}-gateway"
+        partition = stack_partition(self)
 
         # Gateway IAM role
         gw_role = iam.Role(
@@ -126,7 +143,7 @@ class GatewayStack(cdk.Stack):
             iam.PolicyStatement(
                 actions=["lambda:InvokeFunction"],
                 resources=[
-                    f"arn:aws:lambda:{self.region}:{self.account}:function:{prefix}-tool-*"
+                    f"arn:{partition}:lambda:{self.region}:{self.account}:function:{prefix}-tool-*"
                 ],
             )
         )
@@ -139,7 +156,7 @@ class GatewayStack(cdk.Stack):
                     sid="InvokeGateway",
                     actions=["bedrock-agentcore:InvokeGateway"],
                     resources=[
-                        f"arn:aws:bedrock-agentcore:{self.region}:{self.account}:gateway/*"
+                        f"arn:{partition}:bedrock-agentcore:{self.region}:{self.account}:gateway/*"
                     ],
                 )
             )
@@ -148,7 +165,7 @@ class GatewayStack(cdk.Stack):
                     sid="InvokeWebSearch",
                     actions=["bedrock-agentcore:InvokeWebSearch"],
                     resources=[
-                        f"arn:aws:bedrock-agentcore:{self.region}:aws:tool/web-search.v1"
+                        f"arn:{partition}:bedrock-agentcore:{self.region}:aws:tool/web-search.v1"
                     ],
                 )
             )
@@ -288,7 +305,7 @@ class GatewayStack(cdk.Stack):
                     ],
                     resources=[
                         policy_engine.attr_policy_engine_arn,
-                        f"arn:aws:bedrock-agentcore:{self.region}:{self.account}:gateway/*",
+                        f"arn:{partition}:bedrock-agentcore:{self.region}:{self.account}:gateway/*",
                     ],
                 )
             )
@@ -322,6 +339,16 @@ class GatewayStack(cdk.Stack):
                 iam.PolicyStatement(
                     actions=["kms:Decrypt", "kms:DescribeKey", "kms:GenerateDataKey"],
                     resources=[kms_key_arn],
+                )
+            )
+            # AWS documents kms:CreateGrant as required for a gateway CMK; the
+            # condition limits it to grants AWS services create for the gateway.
+            gw_role.add_to_policy(
+                iam.PolicyStatement(
+                    sid="GatewayKmsCreateGrant",
+                    actions=["kms:CreateGrant"],
+                    resources=[kms_key_arn],
+                    conditions={"Bool": {"kms:GrantIsForAWSResource": "true"}},
                 )
             )
         self._gateway = agentcore.CfnGateway(self, "Gateway", **gateway_props)
@@ -430,7 +457,7 @@ class GatewayStack(cdk.Stack):
             arns = sorted(set(provider_arns))
             vaults = sorted({arn.rsplit("/", 2)[0] for arn in arns})
             directory = (
-                f"arn:aws:bedrock-agentcore:{self.region}:{self.account}:"
+                f"arn:{partition}:bedrock-agentcore:{self.region}:{self.account}:"
                 "workload-identity-directory/default"
             )
             gw_role.add_to_policy(
@@ -493,11 +520,9 @@ class GatewayStack(cdk.Stack):
         # A policy referencing a tool action is rejected ("unrecognized action") if the
         # target defining it does not exist yet, so depend on all of them explicitly.
         if policy_engine is not None:
-            # One CfnPolicy per Cedar artifact in the control-library.
-            cedar_controls = {
-                "PermitReadTools": "cedar.gateway-default.permit-read",
-            }
-            for construct_id, control_id in cedar_controls.items():
+            # One CfnPolicy per entry of CEDAR_POLICY_CONTROLS; the synth-time
+            # ENFORCE coverage check reads the same registry.
+            for construct_id, control_id in CEDAR_POLICY_CONTROLS.items():
                 statement = load_control_text(
                     control_id, {"gateway_arn": self._gateway.attr_gateway_arn}
                 )

@@ -49,7 +49,8 @@ afterwards.
 | Entra ID brokered through Cognito | **Live verified** | End-to-end authorization-code, token exchange, and agent invocation evidence is recorded in [Enterprise IdP](ENTERPRISE_IDP.md?id=verified) |
 | Entra ID as direct issuer | **Implemented; automated evidence** | Schema, infrastructure, and verification paths exist. Run a customer-tenant authorization-code and M2M test before use |
 | Okta or Ping brokered through Cognito | **Implemented; customer validation required** | Provider construction is implemented; no v0.1.0 live tenant evidence |
-| Okta or Ping as direct issuer | **Not supported** | Direct mode currently accepts Entra ID only |
+| Okta as direct issuer | **Implemented; automated evidence, live evidence pending** | Schema, infrastructure, and verification paths exist (custom authorization server, `identity.audience`, `identity.m2m_scope`). No v0.1.0 live tenant evidence; run a customer-tenant authorization-code and M2M test before use |
+| Ping as direct issuer | **Not supported** | Ping deploys brokered through Cognito |
 
 ## Agent and model paths
 

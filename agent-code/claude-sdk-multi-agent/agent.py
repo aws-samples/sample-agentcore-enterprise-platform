@@ -234,6 +234,16 @@ Your response should:
                             yield {"data": block.text}
                 elif isinstance(msg, UserMessage):
                     for block in msg.content:
+                        if isinstance(block, ToolResultBlock):
+                            # Report every tool result so a caller (e.g.
+                            # scripts/verify.py) can tell success from failure.
+                            yield {
+                                "tool_result": {
+                                    "toolUseId": f"tool-{block.tool_use_id}",
+                                    "content": block.content,
+                                    "is_error": bool(block.is_error),
+                                }
+                            }
                         if (
                             isinstance(block, ToolResultBlock)
                             and block.content

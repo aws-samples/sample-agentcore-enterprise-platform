@@ -25,7 +25,8 @@ Off by default.
 
 | Resource | Details |
 |---|---|
-| VPC | `10.0.0.0/16`, max 2 AZs, 1 NAT gateway |
+| VPC | `10.0.0.0/16`, max 2 AZs, 1 NAT gateway (one per AZ in production mode) |
+| Flow logs | Production mode only: all traffic to `/aws/vpc/<prefix>-flow-logs`, retention from `log_retention_days` |
 | Subnets | One public + one private (`PRIVATE_WITH_EGRESS`) `/24` per AZ |
 | Runtime security group | No inbound rules; egress limited to TCP 443 (every dependency — Bedrock, AgentCore, Secrets Manager, ECR, CloudWatch Logs — is HTTPS) |
 | Interface endpoints | Bedrock Runtime, ECR (API + Docker), CloudWatch Logs, AgentCore Gateway (`com.amazonaws.<region>.bedrock-agentcore.gateway`) |
@@ -104,7 +105,8 @@ deployment contract, and module C runs it as its verification.
 ## Gotchas
 
 - **Hourly cost.** The NAT gateway and each interface endpoint bill per hour
-  whether or not agents run. The S3 gateway endpoint is free — without it,
+  whether or not agents run. Production mode runs one NAT per AZ, which adds
+  about $32/month per extra NAT (us-east-1) plus data processing. The S3 gateway endpoint is free — without it,
   ECR layer pulls would bill as NAT data processing.
 - **AZ IDs, not AZ names.** AgentCore supports VPC connectivity only in
   specific AZ *IDs* per region (three per region — see `SUPPORTED_ZONE_IDS`

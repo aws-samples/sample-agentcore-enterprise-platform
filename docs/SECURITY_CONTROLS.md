@@ -305,6 +305,25 @@ For invoke-time restrictions, per-gateway resource-based policies attached with 
 `AWS::BedrockAgentCore::ResourcePolicy` (as used for Memory in item 4) are the mechanism this
 repo uses today.
 
+## Production hardening (`deployment.mode: production`)
+
+These controls follow from the deployment mode, not from a preset key:
+
+| Control | Where |
+|---|---|
+| CloudTrail trail encrypts log files with the security CMK (SSE-KMS, `KmsKeyId`) | `stacks/security_stack.py` |
+| CloudTrail CMK key policy allows `cloudtrail.amazonaws.com` `kms:GenerateDataKey*` / `kms:DescribeKey`, conditioned on `aws:SourceArn` (this trail) and `kms:EncryptionContext:aws:cloudtrail:arn` | `stacks/security_stack.py` |
+| CloudTrail bucket S3 Block Public Access (all four settings; every mode) | `stacks/security_stack.py` |
+| Gateway role `kms:CreateGrant` on the gateway CMK with `kms:GrantIsForAWSResource=true` (whenever a gateway CMK is set) | `stacks/gateway_stack.py` |
+| One NAT gateway per AZ (workshop keeps one) | `stacks/networking_stack.py` |
+| VPC flow logs (ALL traffic) to CloudWatch Logs with `log_retention_days` retention | `stacks/networking_stack.py` |
+| Observability CMK encrypting the alarm/alert SNS topics and the runtime/gateway/memory log groups | `stacks/observability_stack.py` |
+
+Cost: each extra NAT gateway is about $32/month (us-east-1, $0.045/hour) plus $0.045/GB
+processed. With the default two AZs, production runs one more NAT than the workshop. Flow
+logs bill as CloudWatch Logs ingestion and storage. The CMKs cost $1/month each plus API
+requests.
+
 ## Safe rollout
 
 - Cedar ships `LOG_ONLY`; validate decision logs before `cedar_mode=ENFORCE`, and narrow the
@@ -324,6 +343,6 @@ repo uses today.
 - The `PROMPT_ATTACK` filter runs at `MEDIUM` input strength. `HIGH` blocked the benign
   prompt "Health check: reply with one word." live. `scripts/check_guardrail_enforcement.py`
   fails if a plain greeting is blocked.
-- Subscribe an endpoint to the item-7 SNS topic to actually receive alerts. The topic is not
-  KMS-encrypted — add a CMK if alert contents are sensitive in your environment.
+- Subscribe an endpoint to the item-7 SNS topic to actually receive alerts. In production mode
+  the topic is encrypted with the observability CMK; in workshop mode it is not KMS-encrypted.
 - Item 7 needs CloudTrail management events, so enable it together with `enable_security`.

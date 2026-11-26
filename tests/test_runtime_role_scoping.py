@@ -273,7 +273,7 @@ def test_synth_workload_identity_statement_is_scoped_to_own_identity(
 
 def test_ssm_reads_are_scoped_to_the_project_path():
     source = RUNTIME_STACK.read_text()
-    assert "arn:aws:ssm:*:*:parameter/{project_name}/*" in source, (
+    assert "arn:{partition}:ssm:*:*:parameter/{project_name}/*" in source, (
         "SSM reads must be scoped to this project's parameter path"
     )
 

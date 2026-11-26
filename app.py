@@ -28,10 +28,13 @@ import aws_cdk as cdk
 from infra_utils.platform_config import (
     PlatformConfig,
     apply_environment_overrides,
+    cedar_findings,
     gateway_tool_configs,
+    gateway_tool_errors,
     load_platform_config,
     migration_production_error,
     resolve_deployment_mode,
+    resolve_synth_region,
     to_env,
 )
 from stacks.auth_stack import AuthStack
@@ -97,11 +100,12 @@ def cfg(context_key: str, env_key: str, default: str) -> str:
 # ── Configuration (context, environment, or platform.yaml) ──
 project = cfg("project", "PROJECT_NAME", "agentcore-workshop")
 env_name = cfg("environment", "ENVIRONMENT", "dev")
-region = (
-    app.node.try_get_context("region")
-    or os.environ.get("CDK_DEFAULT_REGION", "")
-    or _yaml_env.get("AWS_REGION", "")
-    or "us-east-1"
+# Region: context > platform.yaml > CDK_DEFAULT_REGION (fills a missing value
+# only; the CDK CLI sets it from the profile) > us-east-1.
+region = resolve_synth_region(
+    context_region=app.node.try_get_context("region") or "",
+    env_region=os.environ.get("CDK_DEFAULT_REGION", ""),
+    manifest_region=_yaml_env.get("AWS_REGION", ""),
 )
 account = os.environ.get("CDK_DEFAULT_ACCOUNT", "")
 
@@ -665,11 +669,28 @@ if not is_fed_platform:
 # ── Gateway (MCP gateway with Lambda tool targets) — platform side only ──
 # gateway.tools in platform.yaml decides the targets; without the file the
 # sample-tool default deploys exactly as before.
+if platform_config:
+    _tool_errors = gateway_tool_errors(platform_config.gateway.tools)
+    if _tool_errors:
+        raise ValueError("\n".join(_tool_errors))
 tool_configs = (
     gateway_tool_configs(platform_config.gateway.tools, DEFAULT_TOOL_CONFIGS)
     if platform_config
     else DEFAULT_TOOL_CONFIGS
 )
+if not is_fed_workload:
+    # Cedar ENFORCE denies every tool without a permit; refuse in production,
+    # warn in workshop, and refuse ENFORCE with the engine disabled.
+    _cedar_errors, _cedar_warnings = cedar_findings(
+        enabled=enable_cedar,
+        mode=cedar_mode,
+        tool_names=[*tool_configs, *(["web-search"] if enable_web_search else [])],
+        production=production_mode,
+    )
+    for _warning in _cedar_warnings:
+        print(f"[WARN] {_warning}", file=sys.stderr)
+    if _cedar_errors:
+        raise ValueError("\n".join(_cedar_errors))
 gateway_stack = None
 if not is_fed_workload:
     gateway_stack = GatewayStack(
