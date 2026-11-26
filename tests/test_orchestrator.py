@@ -94,3 +94,22 @@ def test_readme_does_not_claim_delegation():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "it delegates\n# to sub-agents" not in readme
     assert "does not call the A2A sub-agents" in readme
+
+
+DELEGATION_CLAIMS = (
+    "delegating orchestrator",
+    "orchestrator (default,\ndelegating",
+    "orchestrator calls sub-agents",
+    "orchestrator decides what to delegate",
+)
+
+
+def test_docs_do_not_claim_the_orchestrator_delegates():
+    paths = [
+        *sorted((ROOT / "docs").rglob("*.md")),
+        ROOT / "migration" / "simulation" / "DEMO_SCRIPT.md",
+    ]
+    for path in paths:
+        text = path.read_text(encoding="utf-8").lower()
+        for claim in DELEGATION_CLAIMS:
+            assert claim not in text, f"{path.relative_to(ROOT)} claims: {claim!r}"
