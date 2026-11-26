@@ -21,11 +21,17 @@ Interceptor contract (AgentCore Gateway interceptors):
                                "body": <JSON-RPC result, isError=true>}}}
   RESPONSE pass/mask: {"mcp": {"transformedGatewayResponse":
                                {"statusCode": ..., "headers": ..., "body": ...}}}
-  RESPONSE block:     same as REQUEST block (well-formed MCP isError result).
+  RESPONSE block:     same as REQUEST block.
 
-Only the body is scanned, and its JSON-RPC envelope (jsonrpc/id/method) is left intact.
+  Block bodies depend on the request method: tools/call gets a well-formed tool result
+  flagged isError; every other method gets a JSON-RPC error (code -32000), because an
+  isError result lacks the fields those methods require (e.g. tools/list "tools").
+
+Only content is scanned, never protocol fields: params.arguments of tools/call requests,
+and result.content, result.structuredContent and error.message of responses. Tool names,
+descriptions and input schemas are left untouched.
 Payload content is never logged: log lines carry only the interception point, the Lambda
-request id, the JSON-RPC id, the body size and the decision.
+request id, the JSON-RPC id (when short and scalar), the body size and the decision.
 """
 
 import json
@@ -96,18 +102,46 @@ def _mask_tree(node, source: str):
     return node
 
 
-_ENVELOPE_KEYS = frozenset({"jsonrpc", "id", "method"})
+_RESPONSE_CONTENT_KEYS = frozenset({"content", "structuredContent"})
 _BLOCKED_TEXT = "Blocked by egress guardrail."
+_BLOCKED_ERROR_CODE = -32000
+_MAX_LOGGED_ID_LEN = 64
 
 
-def _mask_body(body, source: str):
-    """Mask a JSON-RPC body, leaving its envelope (jsonrpc/id/method) untouched."""
-    if isinstance(body, dict):
-        return {
-            k: v if k in _ENVELOPE_KEYS else _mask_tree(v, source)
-            for k, v in body.items()
+def _method(body):
+    """JSON-RPC method of a request body, or None."""
+    if isinstance(body, dict) and isinstance(body.get("method"), str):
+        return body["method"]
+    return None
+
+
+def _mask_request_body(body, method):
+    """Mask only tools/call params.arguments; protocol fields are never scanned."""
+    if method != "tools/call" or not isinstance(body, dict):
+        return body
+    params = body.get("params")
+    if not isinstance(params, dict) or "arguments" not in params:
+        return body
+    arguments = _mask_tree(params["arguments"], "INPUT")
+    return {**body, "params": {**params, "arguments": arguments}}
+
+
+def _mask_response_body(body):
+    """Mask only result.content, result.structuredContent and error.message."""
+    if not isinstance(body, dict):
+        return body
+    masked = dict(body)
+    result = body.get("result")
+    if isinstance(result, dict):
+        masked["result"] = {
+            k: _mask_tree(v, "OUTPUT") if k in _RESPONSE_CONTENT_KEYS else v
+            for k, v in result.items()
         }
-    return _mask_tree(body, source)
+    error = body.get("error")
+    if isinstance(error, dict) and isinstance(error.get("message"), str):
+        message = _apply_guardrail(error["message"], "OUTPUT")
+        masked["error"] = {**error, "message": message}
+    return masked
 
 
 def _rpc_id(*bodies):
@@ -122,6 +156,17 @@ def _size(body) -> int:
     return 0 if body is None else len(json.dumps(body, default=str))
 
 
+def _loggable_id(rpc_id) -> str:
+    """The client picks the id, so log it only when it is an int or a short string."""
+    if rpc_id is None:
+        return "-"
+    if isinstance(rpc_id, int) and not isinstance(rpc_id, bool):
+        return str(rpc_id)
+    if isinstance(rpc_id, str) and len(rpc_id) <= _MAX_LOGGED_ID_LEN:
+        return rpc_id
+    return f"<{type(rpc_id).__name__} len={_size(rpc_id)}>"
+
+
 def _log_decision(point, context, rpc_id, size, decision, reason=""):
     """Log ids, size and decision only; never payload content."""
     level = logging.WARNING if decision == "blocked" else logging.INFO
@@ -131,7 +176,7 @@ def _log_decision(point, context, rpc_id, size, decision, reason=""):
         "decision=%s reason=%s",
         point,
         getattr(context, "aws_request_id", "-"),
-        rpc_id,
+        _loggable_id(rpc_id),
         size,
         decision,
         reason or "-",
@@ -142,19 +187,28 @@ def _output(key: str, value: dict) -> dict:
     return {"interceptorOutputVersion": _OUTPUT_VERSION, "mcp": {key: value}}
 
 
-def _blocked_gateway_response(rpc_id) -> dict:
-    """A well-formed MCP tool result flagged isError, replacing the real payload."""
-    return {
-        "statusCode": 200,
-        "body": {
+def _blocked_gateway_response(rpc_id, method) -> dict:
+    """Blocked reply valid for the request method, replacing the real payload.
+
+    tools/call gets a tool result flagged isError; any other method gets a JSON-RPC
+    error, since an isError result lacks that method's required result fields.
+    """
+    if method == "tools/call":
+        body = {
             "jsonrpc": "2.0",
             "id": rpc_id,
             "result": {
                 "isError": True,
                 "content": [{"type": "text", "text": _BLOCKED_TEXT}],
             },
-        },
-    }
+        }
+    else:
+        body = {
+            "jsonrpc": "2.0",
+            "id": rpc_id,
+            "error": {"code": _BLOCKED_ERROR_CODE, "message": _BLOCKED_TEXT},
+        }
+    return {"statusCode": 200, "body": body}
 
 
 def _intercept_response(mcp: dict, context) -> dict:
@@ -162,11 +216,13 @@ def _intercept_response(mcp: dict, context) -> dict:
     response = mcp.get("gatewayResponse") or {}
     body = response.get("body")
     rpc_id = _rpc_id(body, request_body)
+    method = _method(request_body)
     try:
-        masked = _mask_body(body, "OUTPUT")
+        masked = _mask_response_body(body)
     except GuardrailBlocked as exc:
         _log_decision("RESPONSE", context, rpc_id, _size(body), "blocked", str(exc))
-        return _output("transformedGatewayResponse", _blocked_gateway_response(rpc_id))
+        blocked = _blocked_gateway_response(rpc_id, method)
+        return _output("transformedGatewayResponse", blocked)
     decision = "masked" if masked != body else "pass"
     _log_decision("RESPONSE", context, rpc_id, _size(body), decision)
     transformed = {"statusCode": response.get("statusCode", 200), "body": masked}
@@ -179,12 +235,14 @@ def _intercept_request(mcp: dict, context) -> dict:
     request = mcp.get("gatewayRequest") or {}
     body = request.get("body")
     rpc_id = _rpc_id(body)
+    method = _method(body)
     try:
-        masked = _mask_body(body, "INPUT")
+        masked = _mask_request_body(body, method)
     except GuardrailBlocked as exc:
         _log_decision("REQUEST", context, rpc_id, _size(body), "blocked", str(exc))
         # Short-circuit: the target is never called.
-        return _output("transformedGatewayResponse", _blocked_gateway_response(rpc_id))
+        blocked = _blocked_gateway_response(rpc_id, method)
+        return _output("transformedGatewayResponse", blocked)
     decision = "masked" if masked != body else "pass"
     _log_decision("REQUEST", context, rpc_id, _size(body), decision)
     transformed = {"body": masked}

@@ -212,6 +212,89 @@ def test_tools_list_response_keeps_tools(bedrock):
     assert out["mcp"]["transformedGatewayResponse"]["body"] == tools_body
 
 
+def _tools_list_event(response_body):
+    event = request_event("unused")
+    event["mcp"]["gatewayRequest"]["body"] = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/list",
+    }
+    event["mcp"]["gatewayResponse"] = {"statusCode": 200, "body": response_body}
+    return event
+
+
+def test_tool_name_left_untouched(bedrock):
+    event = request_event("hello")
+    event["mcp"]["gatewayRequest"]["body"]["params"]["name"] = f"tool_{SSN}"
+    out = interceptor.handler(event, CONTEXT)
+    body = out["mcp"]["transformedGatewayRequest"]["body"]
+    assert body["params"]["name"] == f"tool_{SSN}"
+    # Only the argument text is scanned, not the tool name.
+    assert bedrock.calls == [("INPUT", "hello")]
+
+
+def test_tools_list_input_schema_left_untouched(bedrock):
+    tools_body = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "tools": [
+                {
+                    "name": f"tool_{SSN}",
+                    "description": f"Example: {SSN}",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "text": {"type": "string", "description": SECRET}
+                        },
+                    },
+                }
+            ]
+        },
+    }
+    event = _tools_list_event(copy.deepcopy(tools_body))
+    out = interceptor.handler(event, CONTEXT)
+    assert out["mcp"]["transformedGatewayResponse"]["body"] == tools_body
+    assert bedrock.calls == []
+
+
+def test_blocked_tools_list_returns_jsonrpc_error(bedrock):
+    error_body = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "error": {"code": -32603, "message": f"{INJECTION} now"},
+    }
+    out = interceptor.handler(_tools_list_event(error_body), CONTEXT)
+    assert out == {
+        "interceptorOutputVersion": "1.0",
+        "mcp": {
+            "transformedGatewayResponse": {
+                "statusCode": 200,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "error": {
+                        "code": -32000,
+                        "message": "Blocked by egress guardrail.",
+                    },
+                },
+            }
+        },
+    }
+
+
+def test_long_rpc_id_not_logged(bedrock, caplog):
+    caplog.set_level(logging.DEBUG)
+    long_id = "id-" + "x" * 80
+    event = request_event("hello")
+    event["mcp"]["gatewayRequest"]["body"]["id"] = long_id
+    interceptor.handler(event, CONTEXT)
+    messages = [record.getMessage() for record in caplog.records]
+    assert messages
+    assert all(long_id not in m for m in messages)
+    assert any("rpc_id=<str len=" in m for m in messages)
+
+
 def test_no_body_content_in_logs(bedrock, caplog):
     caplog.set_level(logging.DEBUG)
     events = [
