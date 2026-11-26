@@ -1091,21 +1091,29 @@ sweep_leftovers() {
         fi
     fi
 
-    # CodeBuild and Lambda create their own log groups on first use. Those
-    # groups are not CloudFormation resources, so deleting every stack still
-    # leaves them behind. Production logs are retained evidence by design;
-    # disposable workshop/migration environments use the same explicit
-    # confirmation policy as the other sweep categories.
+    # CodeBuild, Lambda and AgentCore Runtime create their own log groups on
+    # first use. Those groups are not CloudFormation resources, so deleting
+    # every stack still leaves them behind. Production logs are retained
+    # evidence by design; disposable workshop/migration environments use the
+    # same explicit confirmation policy as the other sweep categories.
+    # Runtime groups are /aws/bedrock-agentcore/runtimes/<prefix, - as _>_*;
+    # the trailing '_' keeps 'demo' from matching 'demo2' (the same rule as
+    # scripts/destroy_plan.py runtime_log_prefix). Every name is re-checked
+    # against its prefix, so only exact-prefix matches are ever offered.
     if [ "${DEPLOYMENT_MODE:-workshop}" != "production" ]; then
         service_logs=$(
             for log_prefix in \
                 "/aws/codebuild/${PREFIX}-" \
-                "/aws/lambda/${PREFIX}-"; do
+                "/aws/lambda/${PREFIX}-" \
+                "/aws/bedrock-agentcore/runtimes/${PREFIX//-/_}_"; do
                 aws logs describe-log-groups \
                     --log-group-name-prefix "$log_prefix" \
                     --query "logGroups[].logGroupName" \
                     --output text --region "$AWS_REGION" 2>/dev/null \
-                    | tr '\t' '\n' | grep -v '^None$' | grep . || true
+                    | tr '\t' '\n' | grep -v '^None$' | grep . \
+                    | while IFS= read -r log_group; do
+                        [[ "$log_group" == "$log_prefix"* ]] && printf '%s\n' "$log_group"
+                    done || true
             done | sort -u
         )
         if [ -n "$service_logs" ]; then
@@ -1748,12 +1756,102 @@ deploy_stacks() {
 # blast radius grew when the runtimes gained a dependency on networking), so a
 # targeted destroy is always --exclusively. CloudFormation then refuses with
 # "Export ... cannot be deleted as it is in use by <stack>", naming the consumer.
-# The cascade stays for `destroy --all`, where it is what was asked for.
+# A full destroy runs by dependency level instead (destroy_by_level).
+
+# Full destroy, in parallel by dependency level. `cdk destroy --all` deleted
+# one stack at a time (a hardened multi-agent teardown took 33 minutes).
+# scripts/destroy_plan.py reads the synthesized manifest and prints one line
+# per level: first the stacks nothing remaining depends on, then the next.
+# Each level's stacks are destroyed together as background jobs against the
+# pre-synthesized assembly (--app DIR: no concurrent re-synth), with a bounded
+# wait and progress output. A failed or timed-out stack stops before the next
+# level, because those stacks are still depended on.
+# Tunables: DESTROY_LEVEL_TIMEOUT (s, default 3600), DESTROY_POLL_SECONDS (5),
+# DESTROY_PROGRESS_SECONDS (30).
+destroy_by_level() {
+    local timeout="${DESTROY_LEVEL_TIMEOUT:-3600}" poll="${DESTROY_POLL_SECONDS:-5}"
+    local progress="${DESTROY_PROGRESS_SECONDS:-30}"
+    local py="$PROJECT_DIR/.venv/bin/python" work out plan level n=0 i elapsed last failed
+    local -a levels=() stacks=() pids=() waiting=()
+    [ -x "$py" ] || py="python3"
+    [ "$poll" -ge 1 ] 2>/dev/null || poll=1
+    work=$(mktemp -d)
+    out="$work/cdk.out"
+    log_step "Synthesizing the app to plan the destroy order"
+    if ! JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+        npx cdk synth --quiet --output "$out" "${CONTEXT_ARGS[@]}" >"$work/synth.log" 2>&1; then
+        log_error "Could not synthesize the app to plan the destroy:"
+        sed 's/^/    /' "$work/synth.log" >&2
+        rm -rf "$work"
+        return 1
+    fi
+    if ! plan=$("$py" "$SCRIPT_DIR/destroy_plan.py" "$out/manifest.json"); then
+        log_error "Could not compute the destroy order (see above)."
+        rm -rf "$work"
+        return 1
+    fi
+    if [ -z "$plan" ]; then
+        log_info "No stacks to destroy."
+        rm -rf "$work"
+        return 0
+    fi
+    mapfile -t levels <<< "$plan"
+    for level in "${levels[@]}"; do
+        n=$((n + 1))
+        read -ra stacks <<< "$level"
+        log_step "Destroy level $n/${#levels[@]} (in parallel): ${stacks[*]}"
+        pids=()
+        for i in "${!stacks[@]}"; do
+            JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
+                npx cdk destroy "${stacks[$i]}" --exclusively --force --app "$out" \
+                </dev/null >"$work/${stacks[$i]}.log" 2>&1 &
+            pids+=("$!")
+        done
+        elapsed=0
+        last=0
+        while :; do
+            waiting=()
+            for i in "${!pids[@]}"; do
+                kill -0 "${pids[$i]}" 2>/dev/null && waiting+=("${stacks[$i]}")
+            done
+            [ "${#waiting[@]}" -eq 0 ] && break
+            if [ "$elapsed" -ge "$timeout" ]; then
+                log_error "Level $n still running after ${timeout}s: ${waiting[*]}"
+                kill "${pids[@]}" 2>/dev/null || true
+                break
+            fi
+            sleep "$poll"
+            elapsed=$((elapsed + poll))
+            if [ $((elapsed - last)) -ge "$progress" ]; then
+                log_info "Level $n: ${elapsed}s elapsed, waiting on: ${waiting[*]}"
+                last=$elapsed
+            fi
+        done
+        failed=0
+        for i in "${!pids[@]}"; do
+            if wait "${pids[$i]}"; then
+                log_info "Destroyed: ${stacks[$i]}"
+            else
+                failed=1
+                log_error "Failed to destroy ${stacks[$i]}:"
+                sed 's/^/    /' "$work/${stacks[$i]}.log" >&2
+            fi
+        done
+        if [ "$failed" = "1" ]; then
+            log_error "Stopping before level $((n + 1)): its stacks depend on the ones above."
+            log_error "Fix the error and re-run destroy; finished stacks are skipped."
+            rm -rf "$work"
+            return 1
+        fi
+    done
+    rm -rf "$work"
+    return 0
+}
+
 destroy_stacks() {
     local stack rc=0
     if [ "$#" -eq 0 ]; then
-        JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1 \
-            npx cdk destroy --all --force "${CONTEXT_ARGS[@]}" 2>&1 || rc=1
+        destroy_by_level || rc=1
         return "$rc"
     fi
     for stack in "$@"; do

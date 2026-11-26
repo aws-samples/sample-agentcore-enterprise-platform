@@ -246,6 +246,16 @@ Destroy resources when you no longer need them
 ./scripts/deploy.sh destroy --stack <stack-name>
 ```
 
+A full destroy runs in parallel by dependency level. `scripts/destroy_plan.py`
+reads the synthesized `cdk.out/manifest.json` and groups the stacks: first the
+stacks nothing remaining depends on, all deleted together, then the next level.
+Each level waits a bounded time (`DESTROY_LEVEL_TIMEOUT`, default 3600 seconds)
+and prints progress. A failed stack stops the later levels and the command exits
+non-zero. The post-destroy sweep also offers to delete this deployment's
+AgentCore runtime log groups (`/aws/bedrock-agentcore/runtimes/<project>_<env>_*`),
+except in production mode, under the same `--yes` / `NON_INTERACTIVE` policy as
+the other leftovers.
+
 For networking deployments, AgentCore network interfaces can outlive a runtime for up to eight hours. A cleanup may need a retry. See [Network isolation](#run-runtimes-in-your-vpc-enable_networking) for the detail.
 
 
