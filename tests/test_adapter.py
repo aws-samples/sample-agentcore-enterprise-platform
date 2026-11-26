@@ -6,10 +6,12 @@ package is absent (it lives in the containers, not this venv). No AWS, no
 network beyond 127.0.0.1.
 """
 
+import contextlib
 import importlib.util
 import json
 import sys
 import threading
+import time
 import types
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -81,6 +83,42 @@ class _ChildHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+        elif self.path == "/slow":
+            time.sleep(1.0)
+            with contextlib.suppress(OSError):
+                self._reply(200, b"too late", "text/plain")
+        elif self.path == "/trickle":
+            with contextlib.suppress(OSError):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", "1000")
+                self.end_headers()
+                for _ in range(30):
+                    self.wfile.write(b"x")
+                    time.sleep(0.1)
+        elif self.path == "/trickle-sse":
+            with contextlib.suppress(OSError):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                for n in range(30):
+                    self.wfile.write(f"data: {n}\n\n".encode())
+                    time.sleep(0.1)
+        elif self.path == "/boom-stall":
+            with contextlib.suppress(OSError):
+                self.send_response(500)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", "100")
+                self.end_headers()
+                self.wfile.write(b"partial")
+                time.sleep(1.0)
+        elif self.path == "/slow-sse":
+            with contextlib.suppress(OSError):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                self.wfile.write(b'data: {"delta": "a"}\n\n')
+                time.sleep(1.0)
         else:
             self._reply(404, b"nope", "text/plain")
 
@@ -399,3 +437,78 @@ def test_invoke_preserves_forwarding_after_health_check(monkeypatch):
         "payload": {"prompt": "hi"},
         "url": adapter._invoke_url(),
     }
+
+
+# ── invocation timeout ──
+def test_invoke_timeout_default_and_parsing():
+    assert adapter.invoke_timeout({}) == adapter.INVOKE_TIMEOUT_DEFAULT == 300.0
+    assert adapter.invoke_timeout({"MIGRATION_INVOKE_TIMEOUT": "12.5"}) == 12.5
+    for bad in ("abc", "", "0", "-1", "inf", "nan"):
+        assert (
+            adapter.invoke_timeout({"MIGRATION_INVOKE_TIMEOUT": bad})
+            == adapter.INVOKE_TIMEOUT_DEFAULT
+        )
+
+
+def test_forward_times_out_with_clear_error(child_server):
+    started = time.monotonic()
+    result = adapter.forward({}, f"{child_server}/slow", timeout=0.2)
+    assert time.monotonic() - started < 0.9
+    assert result["status"] == "error"
+    assert result["code"] == 504
+    assert "did not respond within 0.2s" in result["error"]
+
+
+def test_forward_stalled_stream_ends_with_timeout_event(child_server):
+    events = list(adapter.forward({}, f"{child_server}/slow-sse", timeout=0.2))
+    assert events[0] == {"delta": "a"}
+    assert events[-1]["status"] == "error"
+    assert events[-1]["code"] == 504
+
+
+def test_forward_slowly_progressing_body_hits_total_deadline(child_server):
+    started = time.monotonic()
+    result = adapter.forward({}, f"{child_server}/trickle", timeout=0.5)
+    assert time.monotonic() - started < 1.5
+    assert result["status"] == "error"
+    assert result["code"] == 504
+
+
+def test_forward_slowly_progressing_stream_hits_total_deadline(child_server):
+    started = time.monotonic()
+    events = list(adapter.forward({}, f"{child_server}/trickle-sse", timeout=0.5))
+    assert time.monotonic() - started < 1.5
+    assert len(events) > 1
+    assert events[-1]["status"] == "error"
+    assert events[-1]["code"] == 504
+
+
+def test_forward_non_2xx_with_stalled_body_maps_to_504(child_server):
+    started = time.monotonic()
+    result = adapter.forward({}, f"{child_server}/boom-stall", timeout=0.2)
+    assert time.monotonic() - started < 0.9
+    assert result["status"] == "error"
+    assert result["code"] == 504
+
+
+def test_forward_uses_configured_timeout(monkeypatch):
+    observed = []
+
+    def stalled(_req, timeout):
+        observed.append(timeout)
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(adapter.urllib.request, "urlopen", stalled)
+    monkeypatch.delenv("MIGRATION_INVOKE_TIMEOUT", raising=False)
+    assert adapter.forward({}, "http://127.0.0.1:1/")["code"] == 504
+    monkeypatch.setenv("MIGRATION_INVOKE_TIMEOUT", "7")
+    assert adapter.forward({}, "http://127.0.0.1:1/")["code"] == 504
+    assert observed == [adapter.INVOKE_TIMEOUT_DEFAULT, 7.0]
+
+
+def test_forward_maps_wrapped_connect_timeout_to_504(monkeypatch):
+    def connect_timeout(_req, timeout):
+        raise adapter.urllib.error.URLError(TimeoutError("timed out"))
+
+    monkeypatch.setattr(adapter.urllib.request, "urlopen", connect_timeout)
+    assert adapter.forward({}, "http://127.0.0.1:1/", timeout=1)["code"] == 504

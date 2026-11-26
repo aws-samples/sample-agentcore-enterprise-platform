@@ -136,7 +136,15 @@ def checks_for(
             # The pattern picks the stream parser for the tool-use check.
             pattern_arg = ["--pattern", agent_pattern]
             if agent_pattern == "orchestrator":
-                invoke_args = ["invoke.py", *agui, *pattern_arg, HEALTH_PROMPT]
+                # The orchestrator reports a failed run as HTTP 200 with
+                # {"status": "error"}, so transport success is not enough.
+                invoke_args = [
+                    "invoke.py",
+                    *agui,
+                    *pattern_arg,
+                    "--require-success",
+                    HEALTH_PROMPT,
+                ]
             else:
                 tool = REQUIRED_TOOLS.get(agent_pattern, DEFAULT_REQUIRED_TOOL)
                 invoke_args = [

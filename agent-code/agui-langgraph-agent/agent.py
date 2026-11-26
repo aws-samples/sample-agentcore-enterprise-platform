@@ -7,6 +7,7 @@ AgentCore proxies these unchanged when deployed with --protocol AGUI.
 
 import logging
 import os
+import uuid
 
 from ag_ui.core import RunAgentInput, RunErrorEvent
 from bedrock_agentcore.runtime import BedrockAgentCoreApp, RequestContext
@@ -90,8 +91,11 @@ def _create_checkpointer() -> AgentCoreMemorySaver:
     )
 
 
-async def create_langgraph_agent():
-    """Create a LangGraph agent with Gateway tools, Memory, and Code Interpreter."""
+async def create_langgraph_agent(code_tools: LangGraphCodeInterpreterTools):
+    """Create a LangGraph agent with Gateway tools, Memory, and Code Interpreter.
+
+    The caller owns code_tools' session and stops it after the request.
+    """
     tools = []
     try:
         mcp_client = await create_gateway_mcp_client()
@@ -102,8 +106,6 @@ async def create_langgraph_agent():
             "[AGENT] Gateway not available, continuing without gateway tools: %s", e
         )
 
-    region = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
-    code_tools = LangGraphCodeInterpreterTools(region)
     tools.append(code_tools.execute_python_securely)
 
     return create_agent(
@@ -117,31 +119,39 @@ async def create_langgraph_agent():
 
 @app.entrypoint
 async def invocations(payload: dict, context: RequestContext):
-    input_data = RunAgentInput.model_validate(payload)
-
-    user_id = extract_user_id_from_context(context)
-
-    # Build the graph before constructing the AG-UI wrapper: LangGraphAGUIAgent
-    # inspects graph.nodes in __init__, so it cannot be handed graph=None and
-    # filled in later. The entrypoint already runs per request, so the graph
-    # (and its gateway token) is still created fresh for every invocation.
-    agent = LangGraphAGUIAgent(
-        name="agui_langgraph_agent",
-        description="AG-UI LangGraph agent with Gateway MCP tools and Memory",
-        graph=await create_langgraph_agent(),
-        config={"configurable": {"actor_id": user_id}},
+    # One Code Interpreter session per request, stopped in the finally below.
+    code_tools = LangGraphCodeInterpreterTools(
+        os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
     )
-
     try:
+        input_data = RunAgentInput.model_validate(payload)
+
+        user_id = extract_user_id_from_context(context)
+
+        # Build the graph before constructing the AG-UI wrapper: LangGraphAGUIAgent
+        # inspects graph.nodes in __init__, so it cannot be handed graph=None and
+        # filled in later. The entrypoint already runs per request, so the graph
+        # (and its gateway token) is still created fresh for every invocation.
+        agent = LangGraphAGUIAgent(
+            name="agui_langgraph_agent",
+            description="AG-UI LangGraph agent with Gateway MCP tools and Memory",
+            graph=await create_langgraph_agent(code_tools),
+            config={"configurable": {"actor_id": user_id}},
+        )
+
         async for event in agent.run(input_data):
             if event is not None:
                 yield event.model_dump(mode="json", by_alias=True, exclude_none=True)
-    except Exception as exc:
-        logger.exception("Agent run failed")
+    except Exception:
+        # Details stay in the server log; the caller gets only a correlation id.
+        correlation_id = uuid.uuid4().hex
+        logger.exception("Agent run failed (correlation_id=%s)", correlation_id)
         yield RunErrorEvent(
-            message=str(exc) or type(exc).__name__,
-            code=type(exc).__name__,
+            message=f"Internal error (correlation id: {correlation_id})",
+            code="INTERNAL_ERROR",
         ).model_dump(mode="json", by_alias=True, exclude_none=True)
+    finally:
+        code_tools.cleanup()
 
 
 if __name__ == "__main__":
